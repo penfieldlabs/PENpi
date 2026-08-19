@@ -26,24 +26,98 @@ export interface FifoPlan {
 	messages: AgentMessage[];
 	/** Number of messages dropped. */
 	dropped: number;
-	/** Estimated tokens of the kept messages (excludes non-message overhead). */
+	/** Estimated tokens of the kept messages (excludes non-message overhead). 0 when not triggered. */
 	keptMessageTokens: number;
 }
 
 /**
- * Tracks what pi's usage report can't tell us: the non-message overhead
- * (system prompt + tool definitions) in tokens. See planFifoFromUsage.
+ * Tracks what pi's usage report can't tell us. See planFifoFromUsage.
+ *
+ * The provider's true usage for a full-coverage report is (to first order)
+ * `reported ≈ slope * messageEstimate + offset`, where `offset` is the fixed
+ * non-message overhead (system prompt + tool defs) and `slope >= 1` is the
+ * estimator calibration — chars/4 undercounts CJK, base64, and minified
+ * content by up to ~4x, an error that SCALES with the messages and therefore
+ * cannot be modelled as offset. One sample cannot split the two, so the state
+ * keeps TWO full-coverage anchors (lowest and highest accepted sample) and
+ * derives slope/offset by regression. Post-prune reports go stale (they cover
+ * the pruned context, not the candidate list) and are rejected by the
+ * monotone-growth acceptance rule, so they cannot corrupt the anchors.
+ *
+ * Values are stored RAW; window-dependent clamping happens at use time, so
+ * visiting a small-context model never destroys what was learned.
  */
 export interface FifoTriggerState {
-	overheadTokens: number;
+	/** Message-estimate tokens of the low/high accepted full-coverage samples (-1 = none). */
+	sampleLowTokens: number;
+	sampleLowReported: number;
+	sampleHighTokens: number;
+	sampleHighReported: number;
+	/** Context window the anchors were learned on (-1 = none). A window change
+	 * resets calibration: it signals a model switch, and calibration is
+	 * tokenizer- and system-prompt-specific. */
+	windowTokens: number;
 }
 
 export function newFifoTriggerState(): FifoTriggerState {
-	return { overheadTokens: 0 };
+	return {
+		sampleLowTokens: -1,
+		sampleLowReported: 0,
+		sampleHighTokens: -1,
+		sampleHighReported: 0,
+		windowTokens: -1,
+	};
+}
+
+/** Upper bound for learned calibration slope — 8x covers every realistic tokenizer mismatch. */
+const MAX_CALIBRATION = 8;
+
+/** Minimum anchor separation (in estimate tokens) before we trust a regression slope. */
+const MIN_SLOPE_BASELINE = 64;
+
+/** Derived calibration: `reported ≈ slope * estimate + offsetTokens`. Exported for tests/debug. */
+export function deriveCalibration(state: FifoTriggerState): { slope: number; offsetTokens: number } {
+	if (state.sampleHighTokens < 0) return { slope: 1, offsetTokens: 0 };
+	let slope = 1;
+	const dm = state.sampleHighTokens - state.sampleLowTokens;
+	if (dm >= MIN_SLOPE_BASELINE) {
+		const dr = state.sampleHighReported - state.sampleLowReported;
+		slope = Math.min(Math.max(dr / dm, 1), MAX_CALIBRATION);
+	}
+	const offsetTokens = Math.max(0, state.sampleHighReported - slope * state.sampleHighTokens);
+	return { slope, offsetTokens };
 }
 
 /** Never let a learned overhead starve the message budget entirely. */
 const MAX_OVERHEAD_FRACTION = 0.5;
+
+/**
+ * Fraction of the floor that learned overhead may consume at most. Guarantees
+ * the message budget keeps at least (1 - MAX_OVERHEAD_FLOOR_FRACTION) of the
+ * floor when the ESTIMATE path triggers. Without this, a learned overhead
+ * capped at MAX_OVERHEAD_FRACTION (0.5) collides with the default floor (0.5):
+ * budget = 0.5W - 0.5W = 0 and every prune keeps only the newest unit —
+ * single-turn amnesia that never recovers, reachable when the chars/4 token
+ * heuristic badly underestimates (CJK text, base64, minified code). A genuine
+ * provider-REPORTED overflow is unaffected: planFifo derives real overhead
+ * from currentTokens when the report wins the trigger race.
+ */
+const MAX_OVERHEAD_FLOOR_FRACTION = 0.8;
+
+/** customType of the synthetic notice injected when role repair is needed (see planFifo). */
+export const FIFO_NOTICE_CUSTOM_TYPE = "penpi-fifo-notice";
+
+/**
+ * Message roles that convertToLlm maps to a `user`-role LLM message. A pruned
+ * window must START with one of these: Anthropic's Messages API validation
+ * rejects a conversation whose first message is `assistant` (HTTP 400
+ * invalid_request_error), as do strict Anthropic-format endpoints; pi sends the
+ * hook's returned array verbatim with no leading-role repair downstream.
+ * (OpenAI-compatible APIs tolerate assistant-led lists, and Gemini's current
+ * API was observed accepting model-led contents in Aug 2026 — the repair keeps
+ * the window valid for the strictest provider it may be sent to.)
+ */
+const USER_CONVERTIBLE_ROLES = new Set(["user", "custom", "bashExecution", "branchSummary", "compactionSummary"]);
 
 /**
  * Decide a FIFO plan from pi's *reported* context usage.
@@ -74,23 +148,77 @@ export function planFifoFromUsage(
 	state: FifoTriggerState,
 ): FifoPlan {
 	const messageTokens = messages.reduce((a, m) => a + estimateTokens(m), 0);
-	if (reportedTokens != null) {
-		// Only meaningful while the reported usage still covers the whole list —
-		// once we start pruning this goes negative and the cached max is kept.
-		const observed = reportedTokens - messageTokens;
-		if (observed > state.overheadTokens) state.overheadTokens = observed;
+
+	// A context-window change signals a model switch; calibration is tokenizer-
+	// and system-prompt-specific, so stale anchors must not carry over (they
+	// would over-prune forever — anchors are otherwise monotone by design).
+	// Same-window model swaps are the residual blind spot: their stale offset
+	// persists, bounded by the floor-aware cap, until the session ends.
+	if (contextWindow > 0 && state.windowTokens > 0 && state.windowTokens !== contextWindow) {
+		const fresh = newFifoTriggerState();
+		state.sampleLowTokens = fresh.sampleLowTokens;
+		state.sampleLowReported = fresh.sampleLowReported;
+		state.sampleHighTokens = fresh.sampleHighTokens;
+		state.sampleHighReported = fresh.sampleHighReported;
 	}
-	if (contextWindow > 0) {
-		state.overheadTokens = Math.min(state.overheadTokens, contextWindow * MAX_OVERHEAD_FRACTION);
+	if (contextWindow > 0) state.windowTokens = contextWindow;
+
+	// Anchor acceptance: a sample can only be a full-coverage report if it grew
+	// past the highest accepted report (a genuine session only accumulates
+	// tokens between calls). Post-prune reports cover the PRUNED context — they
+	// shrink, fail the monotone rule, and are rejected, so learning is immune
+	// to the stale-report trap by construction.
+	//
+	// The low anchor SLIDES: once the current anchor pair is far enough apart to
+	// yield a trusted slope (MIN_SLOPE_BASELINE), an accepted sample promotes the
+	// old high to the new low. The regression is therefore always the most
+	// recent well-separated secant, so an atypical first sample (taken before
+	// tool definitions loaded, or on an unusually small turn) skews the slope
+	// only until two representative samples exist, not for the whole session.
+	if (reportedTokens != null && reportedTokens > messageTokens) {
+		if (state.sampleHighTokens < 0) {
+			state.sampleLowTokens = messageTokens;
+			state.sampleLowReported = reportedTokens;
+			state.sampleHighTokens = messageTokens;
+			state.sampleHighReported = reportedTokens;
+		} else if (reportedTokens >= state.sampleHighReported) {
+			if (messageTokens > state.sampleHighTokens) {
+				if (state.sampleHighTokens - state.sampleLowTokens >= MIN_SLOPE_BASELINE) {
+					state.sampleLowTokens = state.sampleHighTokens;
+					state.sampleLowReported = state.sampleHighReported;
+				}
+				state.sampleHighTokens = messageTokens;
+				state.sampleHighReported = reportedTokens;
+			} else if (messageTokens === state.sampleHighTokens) {
+				state.sampleHighReported = reportedTokens;
+			}
+		}
 	}
-	const estimatedTokens = messageTokens + state.overheadTokens;
+
+	const { slope, offsetTokens } = deriveCalibration(state);
+	// Clamp the OFFSET at use time only (state keeps raw anchors — see
+	// FifoTriggerState). The cap is floor-aware so a learned offset can never
+	// zero the message budget in planFifo.
+	const overheadCap =
+		contextWindow > 0
+			? Math.min(MAX_OVERHEAD_FRACTION, cfg.contextFloor * MAX_OVERHEAD_FLOOR_FRACTION) * contextWindow
+			: Number.POSITIVE_INFINITY;
+	const cappedOffset = Math.min(offsetTokens, overheadCap);
+	const estimatedTokens = messageTokens * slope + cappedOffset;
 	const triggerTokens = reportedTokens == null ? estimatedTokens : Math.max(estimatedTokens, reportedTokens);
 	return planFifo(messages, contextWindow, triggerTokens, cfg);
 }
 
-/** PENpi's own injected messages (any generation). */
+/** PENpi's own injected messages (any generation). The call-scoped FIFO notice is
+ * excluded: it is synthetic, never persisted, and must not claim the protection
+ * slot reserved for the newest orientation briefing. */
 function isPenpiMessage(m: AgentMessage): boolean {
-	return m.role === "custom" && typeof m.customType === "string" && m.customType.startsWith("penpi-");
+	return (
+		m.role === "custom" &&
+		typeof m.customType === "string" &&
+		m.customType.startsWith("penpi-") &&
+		m.customType !== FIFO_NOTICE_CUSTOM_TYPE
+	);
 }
 
 /** PENpi's own injected messages are protected from FIFO eviction. */
@@ -140,10 +268,23 @@ export function planFifo(
 
 	const perMessage = messages.map(estimateTokens);
 	const totalMessageTokens = perMessage.reduce((a, b) => a + b, 0);
-	// Non-message overhead (system prompt, tool definitions) we can't evict.
-	const overhead = Math.max(0, currentTokens - totalMessageTokens);
+	// Split (currentTokens - message estimate) into two different things:
+	//   fixedOverhead — non-message overhead (system prompt, tool defs) we cannot
+	//     evict, bounded by the floor-aware cap so it can never zero the budget;
+	//   excess — anything beyond that cap. A gap that large is not plausible fixed
+	//     overhead; it is the chars/4 estimator undercounting the MESSAGES (CJK,
+	//     base64, minified code). That part scales WITH the messages, so treating
+	//     it as unevictable would prune everything (single-turn amnesia). Model it
+	//     as a calibration ratio instead: each estimated token is really worth
+	//     ~ratio tokens, so the estimated-token budget shrinks by /ratio and
+	//     eviction converges on the floor instead of on zero.
+	const overheadRaw = Math.max(0, currentTokens - totalMessageTokens);
+	const overheadCap = Math.min(MAX_OVERHEAD_FRACTION, cfg.contextFloor * MAX_OVERHEAD_FLOOR_FRACTION) * contextWindow;
+	const fixedOverhead = Math.min(overheadRaw, overheadCap);
+	const excess = overheadRaw - fixedOverhead;
+	const ratio = totalMessageTokens > 0 ? (totalMessageTokens + excess) / totalMessageTokens : 1;
 	const floorTokens = cfg.contextFloor * contextWindow;
-	const messageBudget = Math.max(0, floorTokens - overhead);
+	const messageBudget = Math.max(0, (floorTokens - fixedOverhead) / ratio);
 
 	// Find the newest briefing, but do not let it force an otherwise avoidable
 	// overflow on a small-context model. The newest live turn takes priority.
@@ -206,7 +347,41 @@ export function planFifo(
 	const kept = messages.filter((_, i) => keep[i]);
 	const dropped = messages.length - kept.length;
 	if (dropped === 0) {
-		return { triggered: false, messages, dropped: 0, keptMessageTokens: used };
+		return { triggered: false, messages, dropped: 0, keptMessageTokens: 0 };
 	}
+
+	// Leading-role repair: the suffix walk keeps whole units, and a unit can start
+	// with an assistant message (assistant + trailing toolResults). Anthropic's
+	// validation rejects a request whose first message is `assistant` with HTTP
+	// 400, and nothing downstream repairs the leading role. Prepending a small synthetic
+	// user-convertible notice fixes the role without sacrificing kept history (a
+	// few dozen tokens live comfortably inside ceiling-vs-window headroom). The
+	// notice exists only in this call-scoped return value — it is never persisted
+	// to the session, so the next plan recomputes from the untouched full list.
+	const first = kept[0];
+	if (first !== undefined && !USER_CONVERTIBLE_ROLES.has(first.role)) {
+		const notice = makeFifoNotice(dropped, (first as { timestamp?: number }).timestamp ?? 0);
+		kept.unshift(notice);
+		used += estimateTokens(notice);
+	}
+
 	return { triggered: true, messages: kept, dropped, keptMessageTokens: used };
+}
+
+/** Synthetic user-convertible message injected in front of an assistant-led window. */
+function makeFifoNotice(dropped: number, timestamp: number): AgentMessage {
+	return {
+		role: "custom",
+		customType: FIFO_NOTICE_CUSTOM_TYPE,
+		content: [
+			{
+				type: "text",
+				text:
+					`[PENpi FIFO] ${dropped} earlier message(s) rolled out of the context window for this call. ` +
+					"The verbatim history remains in the session transcript (search_transcript) and durable facts in Penfield (recall/search).",
+			},
+		],
+		display: false,
+		timestamp,
+	} as AgentMessage;
 }

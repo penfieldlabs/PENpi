@@ -1,7 +1,7 @@
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PenfieldConfig } from "./config.ts";
-import { assertTrustedEndpoint, PenfieldClient, TokenManager, withTimeout } from "./penfield-client.ts";
+import { assertTrustedEndpoint, PENPI_VERSION, PenfieldClient, TokenManager, withTimeout } from "./penfield-client.ts";
 
 // Mock the MCP SDK so connect()/callTool() can be tested without a live server.
 const sdkState = vi.hoisted(() => ({
@@ -232,5 +232,12 @@ describe("assertTrustedEndpoint", () => {
 			/untrusted host/,
 		);
 		expect(() => assertTrustedEndpoint("https://auth-dev.penfield.app/token", "token_endpoint", AUTH)).not.toThrow();
+	});
+});
+
+describe("PENPI_VERSION", () => {
+	it("matches the extension's declared package version", async () => {
+		const pkg = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8"));
+		expect(PENPI_VERSION).toBe(pkg.version);
 	});
 });

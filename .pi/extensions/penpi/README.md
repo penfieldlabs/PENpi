@@ -25,7 +25,11 @@ the project overview and the [architecture description](../../../docs/ARCHITECTU
   drop the oldest non-protected messages down to the floor. PENpi injections are
   protected; the newest message is always kept; order is preserved. Wrapped in
   try/catch so a fault can never block the call.
-- **`session_before_compact`** — returns `{ cancel: true }`. FIFO owns context.
+- **`session_before_compact`** — reason-aware. Cancels routine `threshold` compaction
+  (FIFO owns context) and cancels when no reason is given; allows `overflow` (a single
+  atomic unit too large for the window, which FIFO cannot shrink) and `manual` (an
+  explicit `/compact` is user intent). See
+  [ADR 0023](../../../docs/adr/0023-overflow-compaction-escape-hatch.md).
 - **`session_shutdown`** — optional `save_context()` checkpoint (skipped on hot-reload),
   then disconnect.
 

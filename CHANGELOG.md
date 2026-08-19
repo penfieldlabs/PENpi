@@ -4,6 +4,156 @@ All notable changes to **PENpi**. Format: [Keep a Changelog](https://keepachange
 PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
 `packages/coding-agent/CHANGELOG.md`.)
 
+## [0.2.0] — 2026-08-19
+
+External code-review fixes (context-management correctness + injection hardening),
+plus a second review round on the fixes themselves. Versioned 0.2.0 rather than
+0.1.1 because F2 amends a headline guarantee: "PENpi never summarizes" becomes
+"never, except genuine single-unit overflow that FIFO cannot resolve" (ADR 0023).
+
+**Upstream base: Pi `0.83.0` (`845d6ff1f6643aba440341cce877ce1c43ebbc39`, published
+2026-07-29)** — the same base as 0.1.0, and the revision this release was audited
+against. It is deliberately *not* the latest Pi: `0.84.2` shipped 2026-08-14, and the
+`0.83.0...0.84.2` delta is 508 commits over 674 files, touching 35 files PENpi has also
+modified. That upgrade is scheduled as its own independently gated release rather than
+folded into an already-reviewed candidate. It is not a version-only change: Pi 0.84
+broadens automatic overflow recovery to cover responses that stop at a recoverable
+output-length limit and reports it under the same `overflow` reason PENpi allows, so it
+alters the semantics ADR 0023 documents and needs its own review and tests.
+
+### Added (second review round)
+- **Sliding low anchor:** the calibration regression re-anchors — once the anchor
+  pair spans ≥64 estimate tokens, an accepted sample promotes the old high to the
+  new low, so the slope is always the most recent well-separated secant. An
+  atypical first sample (taken before tool definitions loaded) no longer skews
+  calibration for the whole session.
+- **Window-change reset:** a context-window change resets calibration anchors —
+  it signals a model switch, and calibration is tokenizer- and system-prompt-
+  specific. Residual known limitation: a same-window model swap keeps stale
+  calibration (bounded by the floor-aware cap, conservative direction) until the
+  session ends.
+- **State-entry fidelity:** the session state entry now stores the RAW Penfield
+  briefing/reflection (Tier-3 search returns what Penfield actually holds); when
+  sanitization changed anything, the injected variant is stored alongside so an
+  audit sees exactly what the model received. (A per-session nonce fence was
+  considered and rejected: an LLM is a perceptual reader, not a parser — a forged
+  fence with the wrong nonce still looks like a fence; removing the pattern beats
+  labelling it.)
+- **Kept-token bound restored:** the tiny-window unit test re-asserts a concrete
+  bound (floor + notice allowance), and the property suite adds P6: for every
+  triggered plan, `keptMessageTokens ≤ max(floor·window, liveUnit) + 64`.
+
+### Fixed
+- **FIFO leading-role repair (F1):** a pruned window could begin with an `assistant`
+  message (the suffix walk keeps whole assistant+toolResult units), which Anthropic's
+  Messages API validation rejects with HTTP 400 — reachable in ~17% of triggering
+  windows on the suite's own fixture. (Live-checked Aug 2026: OpenAI-compatible APIs
+  tolerate assistant-led lists and Gemini's current API accepts model-led contents;
+  the repair keeps the window valid for the strictest target provider.) A triggered plan now guarantees a user-convertible first
+  message, prepending a small call-scoped `penpi-fifo-notice` custom message when
+  needed (never persisted to the session).
+- **Overflow recovery restored (F2, [ADR 0023]):** disabling compaction had also
+  disabled pi's context-overflow recovery, so a single oversized atomic unit
+  hard-failed the turn. `compaction.enabled` now gates only routine threshold
+  compaction; the `session_before_compact` hook is reason-aware (cancel `threshold`,
+  allow `overflow` and `manual`, cancel when the reason is absent).
+- **Learned-overhead ratchet (F3), generalized to two-point calibration:** the
+  trigger state now keeps two full-coverage report anchors and derives
+  `reported ≈ slope × estimate + offset` by regression — the chars/4 heuristic's
+  undercount on CJK/base64/minified content (up to ~4x) scales with the messages
+  and cannot be modelled as offset overhead. Stale post-prune reports are rejected
+  by a monotone-growth rule, the offset's use-time cap is floor-aware
+  (`min(0.5, floor × 0.8) × window`), state stores raw anchors (a small-context
+  model visit no longer destroys learning), and `planFifo` attributes over-cap
+  overhead to calibration when budgeting. Net effect: no zeroed budgets
+  (single-turn amnesia), no estimate-path blindness after pruning starts, and
+  randomized 80-turn hostile-estimator simulations stay under the real window.
+- **Degenerate FIFO tests:** the tool-pairing sweep and two sibling tests passed
+  `currentTokens=99999`, zeroing the budget at every window and testing one scenario
+  58 times. Re-parameterized with realistic totals; the sweep now asserts it
+  exercises multiple boundaries, plus the F1 leading-role invariant.
+- `keptMessageTokens` is now consistently `0` on non-triggered plans.
+
+### Security
+- **Memory delimiter forgery neutralized ([ADR 0024]):** briefing/reflection text from Penfield is
+  sanitized before injection — runs of `=` become `≡` — so stored memory content can no
+  longer fabricate the `=== END PENFIELD PERSISTENT MEMORY ===` fence and smuggle itself
+  outside the trust wrapper. Three passes are needed, because a forged fence arrives in
+  more than one shape: line-leading on real newlines; behind a JSON-escaped newline
+  (`reflect()` returns a JSON blob, so a stored memory's newlines reach us as the two
+  characters `\` + `n` and *nothing* is ever at a line start — a line-anchored rule alone
+  matches nothing and the fence passes through verbatim, verified live against a dev
+  Penfield instance); and mid-line. The last two passes are scoped to the wrapper's own
+  marker words, since a blanket rule would rewrite every `===` in stored JavaScript.
+  Runs are replaced character-for-character, so offsets into the text still hold.
+  The session state entry keeps the RAW text, with the injected variant stored alongside
+  when sanitization changed anything (see State-entry fidelity above).
+- **Dependency advisories cleared — `npm audit` is clean, production and dev.**
+  `undici` 8.5.0 → **8.10.0**: 8.5.0 sat in the range affected by the response
+  desynchronization advisory (`>=8.0.0 <8.9.0`), and `undici` is the HTTP client behind
+  every provider and Penfield call, so a retried request could be served another
+  request's response. Three transitive advisories cleared alongside it:
+  `hono` 4.12.33 → **4.12.34** (four advisories: CORS ReDoS, `memo()` cross-user data
+  disclosure, Proxy Helper `Connection` header leakage, Language Middleware DoS), reached
+  via `@modelcontextprotocol/sdk`; `undici` 6.27.0 → **6.28.0** nested inside
+  `@earendil-works/gondolin`; and `nanoid` 3.3.16 → **3.3.18** (high, dev-only, via
+  `vitest → vite → postcss`). `npm audit` and `npm audit --omit=dev` both now report
+  **0 vulnerabilities**, and registry signatures verify.
+
+  Pins are recorded as `overrides` in the root `package.json` *and* materialized in
+  `package-lock.json`, because this workspace cannot currently regenerate its lockfile
+  from scratch — npm 10.x aborts with `Cannot read properties of null (reading
+  'edgesOut')`. That failure predates this release and is independent of these pins;
+  `npm ci` is unaffected and is what CI and the documented gate use.
+
+### Documentation
+- **README no longer overstates the guarantee.** It claimed detail is "never summarized
+  away" and "nothing important is lost", which 0.2.0 deliberately no longer promises:
+  overflow recovery may summarize a single atomic unit FIFO cannot shrink. The headline,
+  the "Why" section, and the hook table now state the bounded exception and link
+  [ADR 0023]. `.pi/extensions/penpi/README.md` had the same drift on
+  `session_before_compact` ("returns `{ cancel: true }`") and now documents the
+  reason-aware behaviour.
+- **PENpi reported the wrong version to Penfield.** The MCP client handshake in
+  `penfield-client.ts` hardcoded `version: "0.1.0"`, so a 0.2.0 client would have
+  introduced itself to the server as 0.1.0. Replaced with a `PENPI_VERSION` constant that
+  a test asserts against the extension's `package.json`, so the literal cannot drift
+  past a release again.
+- **The injected protocol no longer overpromises.** `PENPI_PROTOCOL` told the *model*
+  "Nothing is lost (transcript + Penfield)" on every oriented session — the same absolute
+  guarantee 0.2.0 amends, in the one place it is a live behavioural contract rather than
+  prose. It now describes routine roll-off as recoverable and names the overflow exception.
+  Two tests pin the wording so it cannot drift back.
+- **Stale maintainer-facing docs corrected.** The `index.ts` module header still said
+  `session_before_compact → always cancel`, contradicting the reason-aware implementation
+  in the same file. `docs/ARCHITECTURE.md` still claimed "Nothing is summarized away" and
+  documented the hook as an unconditional `{cancel:true}`; both are corrected in place,
+  since it describes current architecture. ADR 0003 and ADR 0004 keep their historical text
+  and gain amendment blocks pointing at [ADR 0023] — by cross-reference rather than rewrite,
+  since accepted ADRs are immutable and 0023 already carries the superseding decision.
+- **Gondolin engine warning documented as expected.** `npm ci` emits one EBADENGINE
+  warning: the upstream Pi example extension `@earendil-works/gondolin@0.12.0` wants Node
+  >=23.6.0 while the repo supports >=22.19.0. The documented source install includes
+  Gondolin as an upstream example workspace, which causes the expected Node-engine
+  warning. PENpi and Pi core do not import or load it during normal execution, and
+  coding-agent's runtime shrinkwrap/install-lock exclude it. Left in place to avoid adding
+  divergence ahead of the Pi 0.84.2 integration; see `docs/TEST_PROTOCOL.md`.
+- **Release gate is reproducible from a clean checkout.** `docs/TEST_PROTOCOL.md` and the
+  README development section omitted `npm run build`, without which `check:penpi` and
+  `npm test -w penpi` fail on a fresh tree (`@earendil-works/pi-coding-agent` resolves
+  through `packages/coding-agent/dist`). Both now document the full sequence — install,
+  build, check, test, audit — and separate it from the developer edit-test loop.
+
+### Changed
+- Routine FIFO prune logging and the session_start banner are now gated behind
+  `PENPI_DEBUG=1` (unconditional `console.error` interleaved with the TUI frame).
+- **`npm audit` workflow runs weekly instead of daily**, and gains a dev-advisory step
+  gated at `high`. The job catches advisory drift against pinned versions, which moves on
+  a weekly cadence; running daily re-reported an identical finding for 12 consecutive days
+  before this release.
+- The two FIFO property tests declare an explicit 30s timeout. The 4,000-seed property
+  could exceed Vitest's 5s default on a cold or contended runner.
+
 ## [0.1.0] — 2026-07-31
 
 ### Added

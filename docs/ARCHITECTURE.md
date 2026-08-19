@@ -13,8 +13,11 @@ ADR in [docs/adr/](adr/).
 | 2 — Penfield | Curated, cross-session memory | MCP tools, used **deliberately** by the agent |
 | 3 — Transcript | Verbatim session JSONL | `search_transcript` tool ([ADR 0012](adr/0012-transcript-search-tier-3.md)) |
 
-Nothing is summarized away: messages leaving Tier 1 remain in Tier 3, and important
-things are stored to Tier 2.
+Routine roll-off is not summarized away: messages leaving Tier 1 remain verbatim in
+Tier 3, and important things are stored to Tier 2. The bounded exception is emergency
+overflow recovery ([ADR 0023](adr/0023-overflow-compaction-escape-hatch.md)): FIFO prunes
+whole atomic units and always keeps the newest, so a single unit too large for the window
+cannot be shrunk by pruning and may be summarized rather than hard-failing the session.
 
 ## Two layers of Penfield access ([ADR 0006](adr/0006-two-layer-penfield-access.md))
 
@@ -32,7 +35,7 @@ hands the JWT to the adapter via `PENFIELD_JWT` + a generated `mcp.json` entry.
 |------|----------|
 | `session_start` | Connect, `awaken()` + `reflect("recent")`, cache state, inject an orientation briefing + behavioral protocol; wire the conscious layer (set `PENFIELD_JWT`, write `mcp.json`) |
 | `context` | FIFO watermark pruning before every LLM call; refresh the shared token; wrapped so a fault never blocks the call |
-| `session_before_compact` | Return `{cancel:true}` — FIFO owns context |
+| `session_before_compact` | Reason-aware: `{cancel:true}` for `threshold` and for a missing reason — FIFO owns routine context; `overflow` and `manual` are allowed through ([ADR 0023](adr/0023-overflow-compaction-escape-hatch.md)) |
 | `session_shutdown` | Optional `save_context()` checkpoint (opt-in, [ADR 0010](adr/0010-save-context-on-shutdown-opt-in.md)), then disconnect |
 
 Plus the `/penpi` command (status + `/penpi login`) and the `search_transcript` tool.

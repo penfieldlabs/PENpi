@@ -34,3 +34,5 @@ the same PR (see [CONTRIBUTING.md](../../CONTRIBUTING.md)).
 | [0020](0020-pin-managed-package-installs.md) | Pin managed package installs exactly | Accepted |
 | [0021](0021-optional-user-selected-web-search.md) | Optional, user-selected web search | Accepted |
 | [0022](0022-raw-diagnostic-boundary.md) | Raw mode is an orientation diagnostic | Accepted |
+| [0023](0023-overflow-compaction-escape-hatch.md) | Overflow compaction is an escape hatch | Accepted |
+| [0024](0024-memory-fence-sanitization.md) | Neutralize forged memory fences by pattern removal | Accepted |

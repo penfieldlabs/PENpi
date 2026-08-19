@@ -758,10 +758,12 @@ export class SettingsManager {
 	}
 
 	getCompactionEnabled(): boolean {
-		// PENpi fork default: compaction OFF. PENpi replaces compaction with FIFO
-		// context management; leaving it on would let pi prepare a summary before
-		// the session_before_compact hook cancels it. Opt back in with
-		// `compaction.enabled: true` in settings.
+		// PENpi fork default: routine compaction OFF. PENpi replaces threshold
+		// compaction with FIFO context management. NOTE: this setting no longer
+		// gates OVERFLOW recovery — _checkCompaction runs its overflow case
+		// regardless, and the session_before_compact hook vetoes by reason
+		// (threshold cancelled; overflow and manual allowed). See ADR 0023.
+		// Opt routine compaction back in with `compaction.enabled: true`.
 		return this.settings.compaction?.enabled ?? false;
 	}
 

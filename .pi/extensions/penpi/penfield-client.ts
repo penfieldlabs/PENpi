@@ -347,6 +347,13 @@ export interface PenfieldClientOptions {
 	onDeviceCode?: (p: DeviceCodePrompt) => void;
 }
 
+/**
+ * Version PENpi reports to Penfield in the MCP client handshake. Must track the
+ * extension's package.json — pinned by a test, because a hardcoded literal here
+ * silently misreports the client version to the server as the release moves on.
+ */
+export const PENPI_VERSION = "0.2.0";
+
 export class PenfieldClient {
 	private readonly cfg: PenfieldConfig;
 	private client?: Client;
@@ -371,7 +378,7 @@ export class PenfieldClient {
 		const transport = new StreamableHTTPClientTransport(new URL(this.cfg.mcpUrl), {
 			fetch: authFetch,
 		});
-		const nextClient = new Client({ name: "penpi", version: "0.1.0" }, { capabilities: {} });
+		const nextClient = new Client({ name: "penpi", version: PENPI_VERSION }, { capabilities: {} });
 		try {
 			await withTimeout(nextClient.connect(transport), requestTimeoutMs(), "connect");
 			this.client = nextClient;
