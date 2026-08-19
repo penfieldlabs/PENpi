@@ -5,8 +5,8 @@
 # PENpi
 
 **PENpi is a fork of [Pi](https://pi.dev) that gives the coding agent persistent memory.**
-It replaces Pi's context *compaction* with **FIFO context management** backed by
-[Penfield](https://penfield.app) — so detail is never summarized away.
+It replaces Pi's routine context *compaction* with **FIFO context management** backed by
+[Penfield](https://penfield.app) — so your work isn't summarized away as a matter of course.
 
 > Built on Pi by **Mario Zechner / Earendil** — see [Built on Pi](#built-on-pi).
 
@@ -14,7 +14,7 @@ It replaces Pi's context *compaction* with **FIFO context management** backed by
 
 Every coding agent loses context to compaction: when the window fills, an LLM
 summarizes the oldest messages and the detail is gone. PENpi takes a different path —
-three tiers of memory, none of which summarize anything away:
+three tiers of memory, none of which summarize your work away in normal operation:
 
 - **Tier 1 — Context window (FIFO):** the oldest messages silently roll off the back.
   Pruning is *watermarked* (drop from a ceiling back down to a floor) so the session
@@ -26,8 +26,16 @@ three tiers of memory, none of which summarize anything away:
 - **Tier 3 — Session transcript:** Pi's verbatim JSONL — the searchable safety net for
   everything that rolls out of Tier 1.
 
-Messages that leave the context window are still in the transcript, and anything worth
-keeping is in Penfield. Nothing important is lost.
+Messages that leave the context window are still in the transcript verbatim and remain
+searchable; anything worth keeping durably belongs in Penfield.
+
+**The one exception.** FIFO prunes at *unit* granularity and always keeps the newest
+atomic unit (an assistant message plus its tool results). A single unit can therefore
+be too large for the window on its own — many parallel tool calls, or one enormous tool
+result. FIFO cannot shrink such a unit, so PENpi allows Pi's emergency **overflow**
+recovery to summarize it rather than hard-fail the turn. Routine threshold compaction
+stays off; this fires only when nothing else can save the session, and Pi emits
+compaction events when it does. See [ADR 0023](docs/adr/0023-overflow-compaction-escape-hatch.md).
 
 ## How it works
 
@@ -39,7 +47,7 @@ PENpi is a Pi **extension** (`.pi/extensions/penpi/`) plus two fork-level defaul
 |------|-----------------|
 | `session_start` | Penfield `awaken()` + `reflect("recent")`, injected as an orientation briefing so the agent starts oriented |
 | `context` | FIFO watermark pruning before every LLM call |
-| `session_before_compact` | cancel — FIFO owns context |
+| `session_before_compact` | reason-aware: cancels routine `threshold` compaction (FIFO owns context); allows `overflow` and `manual` ([ADR 0023](docs/adr/0023-overflow-compaction-escape-hatch.md)) |
 | `session_shutdown` | optional `save_context()` checkpoint, then disconnect |
 
 **The conscious layer:** Penfield's 17 MCP tools are exposed to the model through
@@ -159,11 +167,33 @@ Working **on PENpi itself**? Run the fork straight from this repo (no global ins
 ```
 
 
+Quick checks, once you already have a built tree:
+
 ```bash
 npm run check          # lint, format, type check (Pi's gate)
 npm test               # all workspace tests, including the PENpi extension suite
 npm test -w penpi      # just the PENpi extension tests
 ```
+
+**From a clean checkout, build first.** `@earendil-works/pi-coding-agent` resolves
+through `packages/coding-agent/dist`, which does not exist until you build — without it
+`npm run check:penpi` and `npm test -w penpi` fail with
+`Failed to resolve entry for package "@earendil-works/pi-coding-agent"`. The full release
+gate is:
+
+```bash
+npm ci                 # install from the lockfile (see note below)
+npm run build          # required — creates the dist/ that check:penpi and the penpi suite resolve
+npm run check
+npm test
+npm test -w penpi
+npm audit --omit=dev   # production advisories
+npm audit              # including dev advisories
+```
+
+> Install with `npm ci`, not `npm install`. Regenerating the lockfile from scratch
+> currently crashes npm 10.x in this workspace (`Cannot read properties of null (reading
+> 'edgesOut')`); `npm ci` installs from the committed lockfile and is what CI uses.
 
 Builds use the model-catalog snapshot committed with the source, so a fixed commit has
 fixed build and test inputs and does not depend on live provider catalogs. Maintainers

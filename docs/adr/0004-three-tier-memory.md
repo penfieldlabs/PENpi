@@ -25,5 +25,11 @@ catches everything else.
 ## Consequences
 
 - Nothing important is lost: it is in Tier 2 or recoverable from Tier 3.
+  **Amended by [ADR 0023](0023-overflow-compaction-escape-hatch.md) (0.2.0).** That
+  holds for routine FIFO roll-off, which is what this ADR decided: durable facts belong
+  in Tier 2 and rolled-off messages stay verbatim in Tier 3. It is no longer absolute.
+  FIFO prunes whole atomic units and always keeps the newest one, so a single unit can
+  exceed the window on its own; 0.2.0 lets emergency overflow recovery summarize that
+  unit rather than hard-fail the session. Bounded, self-announcing, and never routine.
 - Each tier needs a real retrieval path — Tier 3 in particular requires a search tool,
   or the promise is hollow (this gap was the motivation for ADR 0012).

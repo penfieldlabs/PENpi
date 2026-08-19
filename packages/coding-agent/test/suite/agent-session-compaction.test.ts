@@ -508,11 +508,33 @@ describe("AgentSession compaction characterization", () => {
 		await belowThresholdInternals._checkCompaction(
 			createAssistant(belowThresholdHarness, { stopReason: "stop", totalTokens: 1_000, timestamp: Date.now() }),
 		);
+		// PENpi fork: usage in THRESHOLD territory but UNDER the default 128k window,
+		// so isContextOverflow() is false. `enabled: false` suppresses routine
+		// threshold compaction; overflow is covered separately below, because the
+		// fork deliberately keeps that path reachable (ADR 0023).
 		await disabledInternals._checkCompaction(
-			createAssistant(disabledHarness, { stopReason: "stop", totalTokens: 1_000_000, timestamp: Date.now() }),
+			createAssistant(disabledHarness, { stopReason: "stop", totalTokens: 120_000, timestamp: Date.now() }),
 		);
 
 		expect(belowThresholdSpy).not.toHaveBeenCalled();
 		expect(disabledSpy).not.toHaveBeenCalled();
+	});
+
+	// PENpi fork (ADR 0023): `compaction.enabled` governs ROUTINE threshold
+	// compaction only. Overflow recovery is emergency machinery and must stay
+	// reachable when compaction is disabled — FIFO cannot shrink a single
+	// oversized atomic unit, so this path is the last resort before a hard-failed
+	// turn. The session_before_compact hook is the authoritative veto by reason.
+	it("still recovers from context overflow when compaction is disabled", async () => {
+		const harness = await createHarness({ settings: { compaction: { enabled: false } } });
+		harnesses.push(harness);
+		const sessionInternals = harness.session as unknown as SessionWithCompactionInternals;
+		const runAutoCompactionSpy = vi.spyOn(sessionInternals, "_runAutoCompaction").mockResolvedValue(false);
+
+		await sessionInternals._checkCompaction(
+			createAssistant(harness, { stopReason: "stop", totalTokens: 1_000_000, timestamp: Date.now() }),
+		);
+
+		expect(runAutoCompactionSpy).toHaveBeenCalledWith("overflow", expect.anything());
 	});
 });

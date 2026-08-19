@@ -21,9 +21,19 @@ in the transcript ([0004](0004-three-tier-memory.md)). Compaction is **off by de
 (fork core default `getCompactionEnabled()=false` + shipped `settings.json` +
 `session_before_compact` returns `{cancel:true}` as belt-and-suspenders).
 
+> **Amended by [ADR 0023](0023-overflow-compaction-escape-hatch.md) (0.2.0).** The decision
+> above stands for routine context management: threshold compaction is still cancelled and
+> FIFO still owns the normal path. Two details are no longer accurate as written. The hook
+> is now reason-aware rather than an unconditional `{cancel:true}` — it cancels `threshold`
+> and a missing reason, and allows `overflow` and `manual`. And "nothing lost to
+> summarization" holds only for routine roll-off: FIFO prunes whole atomic units and always
+> keeps the newest, so a single unit too large for the window cannot be shrunk by pruning,
+> and 0.2.0 lets emergency overflow recovery summarize it rather than hard-fail the turn.
+
 ## Consequences
 
-- No lossy summaries; a sawtooth utilization curve (floor↔ceiling) instead of riding at ~100%.
+- No lossy summaries on the routine path (see the amendment above for the overflow
+  exception); a sawtooth utilization curve (floor↔ceiling) instead of riding at ~100%.
 - Recall of dropped content depends on Tier 2 (Penfield) and Tier 3 (transcript search).
 - Pruning strategy is intentionally simple; token estimation and smarter eviction
   (drop tool results first, etc.) are flagged for benchmarking before optimizing.

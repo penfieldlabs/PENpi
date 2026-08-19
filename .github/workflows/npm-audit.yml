@@ -1,8 +1,12 @@
 name: npm audit
 
 on:
+  # Weekly, not daily: this job catches advisory *drift* against pinned versions,
+  # which moves on a weekly cadence. A daily run on a repo that changes in bursts
+  # just re-reports the same finding six extra times — as it did for 12 days
+  # straight before 0.2.0.
   schedule:
-    - cron: '37 7 * * *'
+    - cron: '37 7 * * 1'
   workflow_dispatch:
 
 permissions:
@@ -26,6 +30,12 @@ jobs:
 
       - name: Audit production vulnerabilities
         run: npm audit --omit=dev --audit-level=moderate
+
+      # Dev-only advisories can't reach a user, but a high one still warrants a look
+      # (it ran on a maintainer's machine and in CI). Gated at `high` so routine
+      # moderate churn in the test toolchain doesn't red the build.
+      - name: Audit dev vulnerabilities
+        run: npm audit --audit-level=high
 
       - name: Verify registry signatures
         run: npm audit signatures --omit=dev

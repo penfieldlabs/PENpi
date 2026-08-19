@@ -1952,7 +1952,12 @@ export class AgentSession {
 	 */
 	private async _checkCompaction(assistantMessage: AssistantMessage, skipAbortedCheck = true): Promise<boolean> {
 		const settings = this.settingsManager.getCompactionSettings();
-		if (!settings.enabled) return false;
+		// PENpi fork: `compaction.enabled` gates only ROUTINE threshold compaction
+		// (Case 2 below — the guard moved there). Overflow recovery (Case 1) is
+		// emergency machinery and must stay reachable even with compaction disabled:
+		// FIFO cannot shrink a single oversized atomic unit (assistant + its tool
+		// results), so this path is the last resort before a hard-failed turn.
+		// The session_before_compact hook still vetoes by reason. See ADR 0023.
 
 		// Skip if message was aborted (user cancelled) - unless skipAbortedCheck is false
 		if (skipAbortedCheck && assistantMessage.stopReason === "aborted") return false;
@@ -2009,6 +2014,10 @@ export class AgentSession {
 			}
 			return await this._runAutoCompaction("overflow", willRetry);
 		}
+
+		// PENpi fork: routine threshold compaction respects the enabled setting
+		// (guard moved here from the top of the method so Case 1 stays reachable).
+		if (!settings.enabled) return false;
 
 		// Case 2: Threshold - context is getting large
 		// For error messages or all-zero usage messages, estimate from the last valid response.
