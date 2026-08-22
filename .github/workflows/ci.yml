@@ -26,7 +26,13 @@ jobs:
           node-version: 22
           cache: npm
 
+      # Capped because this step has hung on an unresponsive apt mirror: PR #12 sat
+      # here for 6h0m43s until GitHub's job ceiling killed it, having never reached
+      # npm. It normally completes in well under a minute, so 10 minutes is generous
+      # while turning a stuck mirror into a fast, obvious failure instead of six
+      # wasted runner-hours.
       - name: Install system dependencies
+        timeout-minutes: 10
         run: |
           sudo apt-get update
           sudo apt-get install -y libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev fd-find ripgrep
