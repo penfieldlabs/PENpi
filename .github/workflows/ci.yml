@@ -16,6 +16,12 @@ concurrency:
 jobs:
   build-check-test:
     runs-on: ubuntu-latest
+    # Backstop for the whole job. Without it the default is GitHub's 360-minute
+    # ceiling, so any hung step burns six runner-hours before anyone finds out.
+    # Observed runs are 3-9 minutes, so 30 absorbs a cold cache or a slow runner
+    # while still failing in a useful timeframe. The apt step carries its own
+    # tighter cap below, since that is the one that has actually stalled.
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
