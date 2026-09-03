@@ -1,3 +1,6 @@
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import penpi, { FENCE_LABELS, penpiCore, sanitizeMemoryText } from "./index.ts";
 
@@ -32,13 +35,18 @@ function makeFakePi(flagValues: Record<string, boolean> = {}) {
 
 function makeCtx(usage?: { tokens: number | null; contextWindow: number }) {
 	const notifies: Array<{ msg: string; level?: string }> = [];
+	const reloads: number[] = [];
 	return {
 		ctx: {
 			cwd: "/tmp/penpi-test-cwd",
 			ui: { notify: (msg: string, level?: string) => notifies.push({ msg, level }) },
 			getContextUsage: () => usage,
+			reload: async () => {
+				reloads.push(Date.now());
+			},
 		},
 		notifies,
+		reloads,
 	};
 }
 
@@ -274,13 +282,19 @@ describe("dedupe guard (default export)", () => {
 });
 
 describe("/penpi login command", () => {
-	it("runs login then orients (injects briefing)", async () => {
+	it("runs login, wires MCP, and reloads instead of orienting inline", async () => {
+		// Changed contract. Login used to orient immediately, but on a first
+		// unauthenticated launch the adapter has already initialised without a
+		// Penfield entry, so no direct tools are registered and orienting changes
+		// nothing. Login now writes the entry and reloads; the reload's session_start
+		// orients exactly once, with the tools present.
 		const { commands, sent, stub } = load({}, { auth: true });
-		const { ctx, notifies } = makeCtx();
+		const { ctx, notifies, reloads } = makeCtx();
 		await commands.penpi("login", ctx);
 		expect(stub.client.login).toHaveBeenCalled();
-		expect(stub.client.awaken).toHaveBeenCalled();
-		expect(sent[0]?.customType).toBe("penpi-briefing");
+		expect(reloads.length).toBe(1);
+		expect(stub.client.awaken, "orientation belongs to the reload's session_start").not.toHaveBeenCalled();
+		expect(sent.find((m: any) => m.customType === "penpi-briefing")).toBeUndefined();
 		expect(notifies.some((n) => /login complete/i.test(n.msg))).toBe(true);
 	});
 
@@ -418,5 +432,241 @@ describe("injected protocol states the guarantee accurately", () => {
 		const content = await inject();
 		expect(content).toMatch(/routine roll-off stays recoverable/i);
 		expect(content).toMatch(/overflow recovery may summarize/i);
+	});
+});
+
+describe("continuous-fire warning", () => {
+	// A window small enough that every call is over ceiling.
+	const over = () => makeCtx({ tokens: 100_000, contextWindow: 1000 });
+	const msgs = Array.from({ length: 12 }, (_, i) => user(`M${i} ${"x".repeat(400)}`));
+
+	it("warns via ui.notify after 3 consecutive triggers, once per session", async () => {
+		const { handlers } = load({}, { auth: true });
+		const seen: string[] = [];
+		for (let i = 0; i < 6; i++) {
+			const { ctx, notifies } = over();
+			// The conversation must actually GROW between calls: an identical list is
+			// a retry, which deliberately does not count (see the retry suite below).
+			const grown = [...msgs, { role: "user", content: [{ type: "text", text: `turn${i}` }], timestamp: 500 + i }];
+			await handlers.context({ messages: grown as never }, ctx);
+			for (const n of notifies) seen.push(n.msg);
+		}
+		const warnings = seen.filter((m) => /consecutive calls/i.test(m));
+		expect(warnings).toHaveLength(1);
+		expect(warnings[0]).toMatch(/Standing instructions may have been evicted/i);
+	});
+
+	it("resets the counter when FIFO returns a no-op", async () => {
+		const { handlers } = load({}, { auth: true });
+		const seen: string[] = [];
+		// two over-ceiling calls, then a no-op, then two more: never reaches 3 in a row
+		let t = 0;
+		for (const usage of [over(), over(), makeCtx({ tokens: 1, contextWindow: 1_000_000 }), over(), over()]) {
+			t += 1;
+			const grown = [...msgs, { role: "user", content: [{ type: "text", text: `t${t}` }], timestamp: 900 + t }];
+			await handlers.context({ messages: grown as never }, usage.ctx);
+			for (const n of usage.notifies) seen.push(n.msg);
+		}
+		expect(seen.filter((m) => /consecutive calls/i.test(m))).toHaveLength(0);
+	});
+});
+
+describe("continuous-fire warning does not fire on retries", () => {
+	// A provider retry re-issues the SAME candidate list: agent-session removes the
+	// failed assistant message from live state before retrying, and the context hook
+	// reads live state. Counting a retry as continued growth is a false positive on
+	// a user-facing warning.
+	const over = () => makeCtx({ tokens: 100_000, contextWindow: 1000 });
+	const msgs = Array.from({ length: 12 }, (_, i) => user(`M${i} ${"x".repeat(400)}`));
+
+	it("stays silent when the same conversation is re-issued 6 times (retry storm)", async () => {
+		const { handlers } = load({}, { auth: true });
+		const seen: string[] = [];
+		for (let i = 0; i < 6; i++) {
+			const { ctx, notifies } = over();
+			await handlers.context({ messages: msgs }, ctx); // identical list every time
+			for (const n of notifies) seen.push(n.msg);
+		}
+		expect(seen.filter((m) => /consecutive calls/i.test(m))).toHaveLength(0);
+	});
+
+	it("still warns when the conversation genuinely grows", async () => {
+		const { handlers } = load({}, { auth: true });
+		const seen: string[] = [];
+		for (let i = 0; i < 5; i++) {
+			const { ctx, notifies } = over();
+			// each call adds a message with a distinct timestamp: real progress
+			const grown = [
+				...msgs,
+				...Array.from({ length: i + 1 }, (_, k) => ({
+					role: "user",
+					content: [{ type: "text", text: `new${k}` }],
+					timestamp: 1000 + i * 10 + k,
+				})),
+			];
+			await handlers.context({ messages: grown as never }, ctx);
+			for (const n of notifies) seen.push(n.msg);
+		}
+		expect(seen.filter((m) => /consecutive calls/i.test(m))).toHaveLength(1);
+	});
+
+	it("a no-op between triggers resets both the count and the fingerprint", async () => {
+		const { handlers } = load({}, { auth: true });
+		const seen: string[] = [];
+		const grow = (n: number) => [...msgs, { role: "user", content: [{ type: "text", text: "g" }], timestamp: n }];
+		for (const [usage, list] of [
+			[over(), grow(1)],
+			[over(), grow(2)],
+			[makeCtx({ tokens: 1, contextWindow: 1_000_000 }), grow(3)], // no-op
+			[over(), grow(4)],
+			[over(), grow(5)],
+		] as const) {
+			await handlers.context({ messages: list as never }, usage.ctx);
+			for (const n of usage.notifies) seen.push(n.msg);
+		}
+		expect(seen.filter((m) => /consecutive calls/i.test(m))).toHaveLength(0);
+	});
+});
+
+describe("/penpi login wires MCP then reloads", () => {
+	it("writes the Penfield entry and calls ctx.reload()", async () => {
+		// On a first unauthenticated launch the adapter initialises before any
+		// Penfield entry exists, so it has nothing to register direct tools from.
+		// Writing the entry and reloading is what makes tools available without the
+		// user restarting.
+		const wired: string[] = [];
+		const f = makeFakePi();
+		const stub = makeStubClient({ auth: true });
+		penpiCore(f.pi as never, {
+			makeClient: () => stub.client,
+			ensureMcpEntry: (() => {
+				wired.push("ensureMcp");
+				return "/tmp/penpi-test-mcp.json";
+			}) as never,
+		});
+		const { ctx, reloads, notifies } = makeCtx();
+		await f.commands.penpi("login", ctx);
+
+		expect(stub.client.login).toHaveBeenCalled();
+		expect(wired).toContain("ensureMcp");
+		expect(reloads.length, "ctx.reload() must be called so the adapter re-reads its config").toBe(1);
+		expect(notifies.some((n) => /reloading conscious tools/i.test(n.msg))).toBe(true);
+	});
+
+	it("does not orient inline — the reload's session_start does that once", async () => {
+		const f = makeFakePi();
+		const stub = makeStubClient({ auth: true });
+		penpiCore(f.pi as never, {
+			makeClient: () => stub.client,
+			ensureMcpEntry: (() => "/tmp/penpi-test-mcp.json") as never,
+		});
+		const { ctx } = makeCtx();
+		await f.commands.penpi("login", ctx);
+		// Orienting here as well as on the reload would awaken/reflect twice.
+		expect(stub.client.awaken).not.toHaveBeenCalled();
+	});
+});
+
+describe("clean profile: PENpi writes MCP configuration before the first model turn", () => {
+	// SCOPE: these are COMPONENT tests, not an integration proof. They drive
+	// penpiCore with a fake Pi host. They do NOT load pi-mcp-adapter, start an MCP
+	// server, or observe a single tool being registered.
+	//
+	// What they do assert is PENpi's half of the contract: on a profile with no
+	// agent directory, no mcp.json and no metadata cache, PENpi writes a lazy
+	// Penfield entry and publishes the bearer token during session_start — before
+	// the model takes its first turn and before the injected protocol can direct it
+	// to use Penfield tools.
+	//
+	// The other half — that the adapter then registers and activates those tools —
+	// is proved separately in mcp-integration.test.ts, which loads the real
+	// pi-mcp-adapter through Pi's real extension loader against a controlled MCP
+	// server. Keep both: this suite pins PENpi's behaviour cheaply, that one pins
+	// the cross-package outcome.
+	//
+	// Automatic orientation does NOT depend on any of this: it uses PenfieldClient
+	// directly. What depends on it is the conscious layer — the tools the model calls.
+	let profile = "";
+	let previousAgentDir: string | undefined;
+
+	beforeEach(() => {
+		profile = mkdtempSync(join(tmpdir(), "penpi-clean-profile-"));
+		previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+		process.env.PI_CODING_AGENT_DIR = profile;
+	});
+	afterEach(() => {
+		if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+		rmSync(profile, { recursive: true, force: true });
+	});
+
+	/** Load PENpi with the REAL mcp.json writer against the clean profile. */
+	function loadWithRealMcp(clientOver: Record<string, unknown> = { auth: true }) {
+		const f = makeFakePi();
+		const stub = makeStubClient(clientOver);
+		penpiCore(f.pi as never, { makeClient: () => stub.client });
+		return { ...f, stub };
+	}
+
+	it("starts with genuinely nothing: no agent dir contents, no mcp.json, no cache", () => {
+		expect(readdirSync(profile)).toHaveLength(0);
+		expect(existsSync(join(profile, "mcp.json"))).toBe(false);
+	});
+
+	it("writes a lazy Penfield entry during session_start, with no restart or manual edit", async () => {
+		const { handlers } = loadWithRealMcp();
+		await handlers.session_start({ reason: "startup" }, makeCtx().ctx);
+
+		const mcpPath = join(profile, "mcp.json");
+		expect(existsSync(mcpPath), "mcp.json must exist after session_start on a clean profile").toBe(true);
+
+		const entry = JSON.parse(readFileSync(mcpPath, "utf8")).mcpServers.penfield;
+		expect(entry, "a penfield server entry must be present").toBeDefined();
+		// Lazy, not eager: an eager entry is read while extensions are still loading
+		// on the NEXT launch, before this handler has published the JWT, and that
+		// connection 401s without retry. See mcp-config.ts.
+		expect(entry.lifecycle).toBe("lazy");
+		expect(entry.directTools).toBe(true);
+		expect(entry.bearerTokenEnv).toBe("PENFIELD_JWT");
+	});
+
+	it("publishes the bearer token before the adapter would connect", async () => {
+		delete process.env.PENFIELD_JWT;
+		const { handlers } = loadWithRealMcp();
+		await handlers.session_start({ reason: "startup" }, makeCtx().ctx);
+		// The adapter resolves the bearer once per connection, so the env var has to
+		// be published before it connects. Under lazy that is anything from the
+		// adapter's own session_start onward — all after this point.
+		expect(process.env.PENFIELD_JWT, "JWT must be set by the time the adapter connects").toBeTruthy();
+	});
+
+	it("first-time login writes the config and reloads without orienting first", async () => {
+		// Beginning unauthenticated, the adapter has already initialised with no
+		// Penfield server to register from, so orientation cannot fix it — only
+		// writing the entry and reloading can.
+		const { commands, stub } = loadWithRealMcp({ auth: true });
+		const { ctx, reloads } = makeCtx();
+
+		expect(existsSync(join(profile, "mcp.json"))).toBe(false);
+		await commands.penpi("login", ctx);
+
+		expect(stub.client.login).toHaveBeenCalled();
+		const entry = JSON.parse(readFileSync(join(profile, "mcp.json"), "utf8")).mcpServers.penfield;
+		expect(entry.lifecycle, "the entry written at login must also be lazy").toBe("lazy");
+		expect(reloads.length, "ctx.reload() exactly once").toBe(1);
+		expect(stub.client.awaken, "orientation must not run before the reload").not.toHaveBeenCalled();
+	});
+
+	it("orientation runs once after the reload, with the config already in place", async () => {
+		const { commands, handlers, stub, sent } = loadWithRealMcp({ auth: true });
+		const { ctx } = makeCtx();
+		await commands.penpi("login", ctx);
+		expect(stub.client.awaken).not.toHaveBeenCalled();
+
+		// ctx.reload() re-runs session_start; that is where orientation belongs.
+		await handlers.session_start({ reason: "reload" }, makeCtx().ctx);
+		expect(stub.client.awaken).toHaveBeenCalledTimes(1);
+		expect(sent.some((m: { customType?: string }) => m.customType === "penpi-briefing")).toBe(true);
+		expect(existsSync(join(profile, "mcp.json")), "config remains in place across the reload").toBe(true);
 	});
 });

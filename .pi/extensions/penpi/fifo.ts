@@ -88,6 +88,39 @@ export function deriveCalibration(state: FifoTriggerState): { slope: number; off
 	return { slope, offsetTokens };
 }
 
+/**
+ * Normalize a provider's reported context total to a value we are willing to act
+ * on, or `null` to fall back entirely to our own candidate-list estimate.
+ *
+ * Rejects only what cannot be interpreted at all: non-numeric, non-finite
+ * (`NaN`/`Infinity`) and non-positive. Those are broken providers, and feeding
+ * them onward poisons every arithmetic path downstream — `Math.max(estimate,
+ * NaN)` is `NaN`, which makes the budget `NaN`, which prunes the window down to
+ * its newest message on a candidate that was never over the ceiling.
+ *
+ * Deliberately does NOT reject a total larger than the context window. That is
+ * not garbage — it is the provider saying the request is over the limit, which
+ * is the single strongest reason to prune. Discarding it would idle FIFO exactly
+ * when it is needed. See the trigger contract above and the over-ceiling test.
+ *
+ * Exported so the normalization is testable directly, not only through a plan.
+ */
+export function normalizeReportedTokens(reported: number | null | undefined): number | null {
+	if (reported == null || typeof reported !== "number") return null;
+	if (!Number.isFinite(reported) || reported <= 0) return null;
+	return reported;
+}
+
+/**
+ * Whether a normalized report may additionally be LEARNED FROM as a calibration
+ * anchor. Stricter than the trigger: a total above the context window is a valid
+ * "you are over the limit" signal for this call, but storing it as an anchor
+ * would teach a permanent overhead the window cannot actually hold.
+ */
+function isAnchorableReport(usable: number, contextWindow: number): boolean {
+	return contextWindow <= 0 || usable <= contextWindow;
+}
+
 /** Never let a learned overhead starve the message budget entirely. */
 const MAX_OVERHEAD_FRACTION = 0.5;
 
@@ -175,22 +208,30 @@ export function planFifoFromUsage(
 	// recent well-separated secant, so an atypical first sample (taken before
 	// tool definitions loaded, or on an unusually small turn) skews the slope
 	// only until two representative samples exist, not for the whole session.
-	if (reportedTokens != null && reportedTokens > messageTokens) {
+	//
+	// ONE normalization, then two policies layered on it:
+	//   - uninterpretable values (non-finite, non-positive) are refused outright,
+	//     for both learning and pruning;
+	//   - an over-window value is refused for LEARNING (it would teach an overhead
+	//     the window cannot hold) but retained as a pruning signal, bounded to the
+	//     window. See the trigger block below.
+	const usableReport = normalizeReportedTokens(reportedTokens);
+	if (usableReport != null && usableReport > messageTokens && isAnchorableReport(usableReport, contextWindow)) {
 		if (state.sampleHighTokens < 0) {
 			state.sampleLowTokens = messageTokens;
-			state.sampleLowReported = reportedTokens;
+			state.sampleLowReported = usableReport;
 			state.sampleHighTokens = messageTokens;
-			state.sampleHighReported = reportedTokens;
-		} else if (reportedTokens >= state.sampleHighReported) {
+			state.sampleHighReported = usableReport;
+		} else if (usableReport >= state.sampleHighReported) {
 			if (messageTokens > state.sampleHighTokens) {
 				if (state.sampleHighTokens - state.sampleLowTokens >= MIN_SLOPE_BASELINE) {
 					state.sampleLowTokens = state.sampleHighTokens;
 					state.sampleLowReported = state.sampleHighReported;
 				}
 				state.sampleHighTokens = messageTokens;
-				state.sampleHighReported = reportedTokens;
+				state.sampleHighReported = usableReport;
 			} else if (messageTokens === state.sampleHighTokens) {
-				state.sampleHighReported = reportedTokens;
+				state.sampleHighReported = usableReport;
 			}
 		}
 	}
@@ -205,8 +246,29 @@ export function planFifoFromUsage(
 			: Number.POSITIVE_INFINITY;
 	const cappedOffset = Math.min(offsetTokens, overheadCap);
 	const estimatedTokens = messageTokens * slope + cappedOffset;
-	const triggerTokens = reportedTokens == null ? estimatedTokens : Math.max(estimatedTokens, reportedTokens);
-	return planFifo(messages, contextWindow, triggerTokens, cfg);
+	// Trigger identity and budget authority are separate concerns.
+	//
+	// A report at or below the window is a credible measurement: it may legitimately
+	// exceed our estimate because of fixed overhead (system prompt, tool defs) that
+	// `messages` cannot show us, so we trigger on the greater of the two and let the
+	// gap teach calibration.
+	//
+	// A report ABOVE the window cannot be a measurement — nothing fits in more than
+	// the window. It is still meaningful: the provider is saying this request is over
+	// the limit, and ignoring that would idle FIFO exactly when it is needed. But its
+	// MAGNITUDE is not evidence of anything. Feeding it to planFifo drove the overhead
+	// and ratio arithmetic to an effectively zero budget, collapsing a six-message
+	// conversation to one message on a 1k window — identical damage whether the report
+	// was 1_100 or 999_999_999.
+	//
+	// So: over-window reports force the trigger, and our own estimate remains the
+	// budget authority. An over-limit session with real content still prunes to the
+	// floor; a tiny conversation with an absurd report is left intact, because the
+	// estimate says there is nothing to evict.
+	const overWindow = usableReport != null && contextWindow > 0 && usableReport > contextWindow;
+	const credibleReport = overWindow ? null : usableReport;
+	const triggerTokens = credibleReport == null ? estimatedTokens : Math.max(estimatedTokens, credibleReport);
+	return planFifo(messages, contextWindow, triggerTokens, cfg, { forceTrigger: overWindow });
 }
 
 /** PENpi's own injected messages (any generation). The call-scoped FIFO notice is
@@ -260,9 +322,16 @@ export function planFifo(
 	contextWindow: number,
 	currentTokens: number,
 	cfg: Pick<PenpiConfig, "contextCeiling" | "contextFloor">,
+	/**
+	 * Force the ceiling test to pass while leaving `currentTokens` as the budget
+	 * authority. Used when a provider reports a total above the context window:
+	 * that is a credible "you are over the limit" signal but NOT a credible
+	 * measurement, so it must not be allowed to drive the eviction budget.
+	 */
+	opts?: { forceTrigger?: boolean },
 ): FifoPlan {
 	const ceilingTokens = cfg.contextCeiling * contextWindow;
-	if (!contextWindow || currentTokens <= ceilingTokens) {
+	if (!contextWindow || (currentTokens <= ceilingTokens && !opts?.forceTrigger)) {
 		return { triggered: false, messages, dropped: 0, keptMessageTokens: 0 };
 	}
 

@@ -21,13 +21,25 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { PenfieldConfig } from "./config.ts";
-import { resolveMcpLifecycle, resolvePenfieldConfig, resolvePenpiConfig } from "./config.ts";
+import { BRIEFING_CUSTOM_TYPE, resolveMcpLifecycle, resolvePenfieldConfig, resolvePenpiConfig } from "./config.ts";
 import { deriveCalibration, type FifoTriggerState, newFifoTriggerState, planFifoFromUsage } from "./fifo.ts";
 import { ensurePenfieldMcpEntry, JWT_ENV } from "./mcp-config.ts";
 import { PenfieldClient, type PenfieldClientOptions } from "./penfield-client.ts";
 import { searchTranscripts, sessionDirForCwd } from "./transcript-search.ts";
 
-const BRIEFING_CUSTOM_TYPE = "penpi-briefing";
+/** Consecutive FIFO triggers before warning the operator that history is aging out. */
+const CONTINUOUS_FIRE_THRESHOLD = 3;
+
+/**
+ * Cheap identity for a candidate list, used only to tell "the conversation grew"
+ * apart from "the same request was issued again". Length plus the newest
+ * message's role and timestamp: a retry reproduces all three, ordinary progress
+ * changes at least one.
+ */
+function candidateFingerprint(messages: readonly { role?: string; timestamp?: number }[]): string {
+	const last = messages[messages.length - 1];
+	return `${messages.length}:${last?.role ?? "-"}:${last?.timestamp ?? 0}`;
+}
 const STATE_CUSTOM_TYPE = "penpi-state";
 
 /**
@@ -108,6 +120,21 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps) {
 	const status: PenpiStatus = {};
 	// Learned non-message overhead for the FIFO trigger (see planFifoFromUsage).
 	const fifoState: FifoTriggerState = newFifoTriggerState();
+	// Continuous-fire detection: FIFO firing every call means the session is
+	// permanently over ceiling, so unprotected history at the front is aging out
+	// on every call. Warn ONCE per session — a session legitimately riding the
+	// sawtooth must not be nagged repeatedly.
+	let consecutiveTriggers = 0;
+	let firedContinuousWarning = false;
+	// Fingerprint of the candidate list at the previous trigger. A provider retry
+	// re-issues the SAME conversation: agent-session removes the failed assistant
+	// message from live state before retrying, and the context hook reads live
+	// state, so the retry's candidate list is identical to the failed attempt's.
+	// Counting it as another "consecutive trigger" claims history is aging out
+	// when nothing new arrived — a false positive on a user-facing warning.
+	// Comparing identity is not the same as inferring retry from a count delta:
+	// an unchanged list is direct evidence that no new content was added.
+	let lastTriggerFingerprint: string | undefined;
 
 	// Internal environment selector; production remains the default.
 	pi.registerFlag("penpi-dev", {
@@ -145,8 +172,16 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps) {
 				try {
 					ctx.ui.notify("PENpi: starting Penfield device login…", "info");
 					await client.login();
-					await orient(ctx, cfg, "login", shouldInject());
-					ctx.ui.notify("PENpi: Penfield login complete and oriented.", "info");
+					// On a first, unauthenticated launch the adapter initialised before any
+					// Penfield entry existed, so it has no server to register direct tools
+					// from. Write the entry, then reload: the adapter re-reads its config and
+					// the subsequent session_start performs orientation exactly once.
+					// Deliberately NOT calling orient() here — reload triggers session_start,
+					// so orienting first would duplicate it.
+					await wireConsciousLayer(cfg, client);
+					ctx.ui.notify("PENpi: login complete; reloading conscious tools.", "info");
+					await ctx.reload();
+					return;
 				} catch (err) {
 					ctx.ui.notify(`PENpi: Penfield login failed — ${errMsg(err)}`, "error");
 					await client.disconnect();
@@ -234,7 +269,31 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps) {
 					`[PENpi] context: reported=${usage.tokens ?? "?"} slope=${cal.slope.toFixed(2)} offset=${Math.round(cal.offsetTokens)}/${usage.contextWindow} tok (ceiling ${Math.round(penpiCfg.contextCeiling * usage.contextWindow)}) -> ${plan.triggered ? `FIFO dropped ${plan.dropped}` : "no-op"}`,
 				);
 			}
-			if (!plan.triggered) return;
+			if (!plan.triggered) {
+				consecutiveTriggers = 0;
+				lastTriggerFingerprint = undefined;
+				return;
+			}
+			const fingerprint = candidateFingerprint(_event.messages);
+			if (fingerprint === lastTriggerFingerprint) {
+				// Same conversation as the previous trigger (retry, or a re-issued
+				// request). Not new growth — hold the count where it is.
+				if (debug) console.error("[PENpi] FIFO triggered on an unchanged candidate list (retry?) — not counted");
+			} else {
+				consecutiveTriggers++;
+				lastTriggerFingerprint = fingerprint;
+			}
+			// ctx.ui.notify, NOT console.error: 0.2.0 moved routine FIFO logging
+			// behind PENPI_DEBUG precisely because unconditional console.error
+			// interleaves with the TUI frame.
+			if (consecutiveTriggers >= CONTINUOUS_FIRE_THRESHOLD && !firedContinuousWarning) {
+				firedContinuousWarning = true;
+				ctx.ui.notify(
+					`PENpi: FIFO has triggered on ${consecutiveTriggers} consecutive calls. Standing instructions may have been evicted. ` +
+						"Durable facts and standing instructions belong in Penfield (Tier 2), which arrives in the protected briefing.",
+					"warning",
+				);
+			}
 			// Debug-gated: an unconditional console.error interleaves with the TUI frame
 			// on every prune once the session rides the sawtooth.
 			if (debug) console.error(`[PENpi] FIFO: over ceiling — dropped ${plan.dropped} oldest message(s)`);
@@ -298,6 +357,16 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps) {
 	//     a hard-failed session.
 	//   - "manual": the user explicitly ran /compact — their box, their call.
 	// An absent reason (older pi, tests) cancels, preserving the conservative default.
+	/**
+	 * Publish the Penfield JWT and write the adapter's mcp.json. Shared by
+	 * orientation and the login command so the two cannot drift.
+	 */
+	async function wireConsciousLayer(cfg: PenfieldConfig, client: PenfieldClient): Promise<string> {
+		process.env[JWT_ENV] = await client.getAccessToken();
+		const lifecycle = resolveMcpLifecycle();
+		return ensureMcp(cfg, lifecycle ? { lifecycle } : {});
+	}
+
 	pi.on("session_before_compact", async (event) => {
 		const reason = (event as { reason?: string }).reason;
 		if (reason === "overflow" || reason === "manual") {
@@ -347,11 +416,13 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps) {
 		status.orientedAt = undefined;
 
 		// Share auth with the conscious layer (pi-mcp-adapter) — one token, one auth.
-		// Set the env var + generate mcp.json BEFORE the adapter lazily connects.
+		// Publishing the JWT here is what makes the adapter's `lazy` entry work: it
+		// connects on first tool use (warm profile) or during its own session_start
+		// discovery (clean profile), both of which are after this point. An eager
+		// entry would instead be read at extension load, before any of this runs —
+		// see the race documented in mcp-config.ts.
 		try {
-			process.env[JWT_ENV] = await c.getAccessToken();
-			const lifecycle = resolveMcpLifecycle();
-			const mcpPath = ensureMcp(cfg, lifecycle ? { lifecycle } : {});
+			const mcpPath = await wireConsciousLayer(cfg, c);
 			if (debug) console.error(`[PENpi] conscious layer wired: ${mcpPath} (bearer via ${JWT_ENV})`);
 		} catch (e) {
 			ctx.ui.notify(`PENpi: could not wire conscious layer — ${errMsg(e)}`, "warning");

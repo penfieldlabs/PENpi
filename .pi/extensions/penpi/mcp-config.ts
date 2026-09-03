@@ -4,9 +4,46 @@
  * PENpi owns all Penfield auth, so it also configures pi-mcp-adapter to reach
  * Penfield using the SAME token — no second auth. We hand the JWT to the adapter
  * through an env var and write a single `penfield` server entry into the
- * adapter's mcp.json (`auth: "bearer"`, `bearerTokenEnv`). The adapter is lazy
- * (connects on first tool use), which is after our session_start, so the env
- * var and config are in place by the time it connects.
+ * adapter's mcp.json (`auth: "bearer"`, `bearerTokenEnv`).
+ *
+ * That entry is written with `lifecycle: "lazy"`. Eager looks like the right
+ * choice — connect at startup, be ready before the first model turn — and it is
+ * wrong, because it loses a race PENpi cannot win:
+ *
+ *   The JWT is published by wireConsciousLayer() during PENpi's `session_start`.
+ *   On a WARM profile the mcp.json from the previous session is already on disk,
+ *   so an eager entry makes the adapter connect during extension LOADING, before
+ *   any session_start handler runs and therefore before `PENFIELD_JWT` exists.
+ *   The connection gets 401, and the adapter does not retry — it throws
+ *   UnauthorizedError. The direct tools are then absent for the whole session.
+ *   Ordering inside wireConsciousLayer() cannot fix this: the adapter is already
+ *   past that point before PENpi's code runs at all.
+ *
+ * Lazy is correct on both paths, and needs no retry behaviour from the adapter:
+ *
+ *   - Warm profile: nothing is contacted at load. The adapter's own session_start
+ *     runs after PENpi's, so the JWT and the config are both in place by the time
+ *     it does anything, and the direct tools come back. Connections happen on
+ *     first use.
+ *   - Clean profile: there is no metadata cache, so adapter 2.12.1 bootstraps
+ *     every server during its session_start discovery — again after PENpi's — and
+ *     hot-registers what it finds (2.12.0+).
+ *
+ * Worth knowing, because it is counter-intuitive and rules out the obvious
+ * "just serve the warm start from cache" idea: the adapter's cached metadata is
+ * ALSO unusable before the JWT is published. computeServerHash() hashes the
+ * RESOLVED bearer token, so at load time — with `bearerTokenEnv` pointing at an
+ * unset variable — the hash cannot match what was stored and isServerCacheValid()
+ * rejects the entry. Nothing about the warm path can be made to work earlier than
+ * session_start; the fix is to stop trying to act before it.
+ *
+ * Explicit overrides remain supported (`penpi.mcpLifecycle`, PENPI_MCP_LIFECYCLE);
+ * choosing `eager` re-enters the race above. Both paths are proven end to end in
+ * mcp-integration.test.ts against the real adapter and a real MCP server.
+ *
+ * Note this is about the CONSCIOUS layer — the tools the model calls. PENpi's
+ * automatic orientation does not go through the adapter at all: it uses its own
+ * PenfieldClient, so it works regardless of lifecycle.
  *
  * The mcp.json is generated for the selected environment at runtime and is
  * git-ignored — nothing environment-specific is committed.
@@ -29,10 +66,14 @@ import type { PenfieldConfig } from "./config.ts";
 export const JWT_ENV = "PENFIELD_JWT";
 
 export interface EnsureMcpOptions {
-	/** Adapter connection lifecycle. Omit for the adapter default (lazy). */
+	/**
+	 * Adapter connection lifecycle. PENpi writes `lazy` — the adapter's own
+	 * default — because it is the only value that works on BOTH startup paths.
+	 * See the module header for why `eager` cannot.
+	 */
 	lifecycle?: "lazy" | "eager" | "keep-alive";
 	/**
-	 * Idle seconds before the adapter drops the connection. On reconnect it
+	 * Idle MINUTES before the adapter drops the connection. On reconnect it
 	 * re-reads `bearerTokenEnv`, which is how a refreshed JWT reaches the
 	 * conscious layer (the adapter resolves the bearer once per connection).
 	 */
@@ -42,7 +83,12 @@ export interface EnsureMcpOptions {
 }
 
 /** Default idle window: recycle the connection often enough to pick up token refreshes. */
-const DEFAULT_IDLE_TIMEOUT = 300;
+/**
+ * Minutes, NOT seconds — the adapter documents `idleTimeout` as "Minutes before
+ * idle disconnect". PENpi previously wrote 300 intending five minutes, which the
+ * adapter read as five hours, so an idle session held the connection open all day.
+ */
+const DEFAULT_IDLE_TIMEOUT_MINUTES = 5;
 
 interface McpDoc {
 	mcpServers?: Record<string, unknown>;
@@ -96,8 +142,8 @@ export function ensurePenfieldMcpEntry(cfg: PenfieldConfig, opts: EnsureMcpOptio
 		auth: "bearer",
 		bearerTokenEnv: JWT_ENV,
 		directTools: true,
-		idleTimeout: opts.idleTimeout ?? DEFAULT_IDLE_TIMEOUT,
-		...(opts.lifecycle ? { lifecycle: opts.lifecycle } : {}),
+		idleTimeout: opts.idleTimeout ?? DEFAULT_IDLE_TIMEOUT_MINUTES,
+		lifecycle: opts.lifecycle ?? "lazy",
 	};
 	mkdirSync(dirname(path), { recursive: true });
 	// Write via tmp + rename so a concurrent session never observes a half-written

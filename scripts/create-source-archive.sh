@@ -67,9 +67,17 @@ cd "$repo_root"
 
 commit="$(git rev-parse --verify --end-of-options "${source_ref}^{commit}")"
 
+# NOTE: this helper is inherited from upstream Pi and packages Pi, not PENpi. It
+# validates against packages/coding-agent/package.json (Pi's version, 0.83.x), so
+# a PENpi version such as 0.3.0 can never match. It is NOT part of the PENpi
+# release process; see docs/TEST_PROTOCOL.md.
 package_version="$(git show "${commit}:packages/coding-agent/package.json" | node -p 'JSON.parse(require("fs").readFileSync(0, "utf8")).version')"
 if [[ "$package_version" != "$version" ]]; then
     echo "Version ${version} does not match package version ${package_version} at ${source_ref}" >&2
+    echo "" >&2
+    echo "This script archives upstream Pi (packages/coding-agent), not PENpi." >&2
+    echo "For a PENpi review or release archive use: scripts/make-review-archive.sh" >&2
+    echo "Documented in docs/TEST_PROTOCOL.md under 'Release / review archives'." >&2
     exit 1
 fi
 

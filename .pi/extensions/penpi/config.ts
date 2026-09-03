@@ -29,6 +29,9 @@ export interface PenfieldConfig {
 	scope: string;
 }
 
+/** customType of the orientation briefing, injected at session_start. */
+export const BRIEFING_CUSTOM_TYPE = "penpi-briefing";
+
 /** PENpi behavior knobs (FIFO watermarks, shutdown, adapter lifecycle). */
 export interface PenpiConfig {
 	contextCeiling: number;

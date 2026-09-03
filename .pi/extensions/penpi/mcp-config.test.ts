@@ -29,7 +29,7 @@ describe("ensurePenfieldMcpEntry", () => {
 			auth: "bearer",
 			bearerTokenEnv: JWT_ENV,
 			directTools: true,
-			idleTimeout: 300,
+			idleTimeout: 5,
 		});
 	});
 
@@ -151,4 +151,55 @@ describe("ensurePenfieldMcpEntry — destructive-write guards", () => {
 			expect(readFileSync(path, "utf8")).toBe(original);
 		});
 	}
+});
+
+describe("adapter defaults for first-message tool availability", () => {
+	const entryFor = (opts: Parameters<typeof ensurePenfieldMcpEntry>[1] = {}) => {
+		const path = join(mkdtempSync(join(tmpdir(), "penpi-mcp-")), "mcp.json");
+		ensurePenfieldMcpEntry(cfg, { ...opts, path });
+		return JSON.parse(readFileSync(path, "utf8")).mcpServers.penfield;
+	};
+
+	it("defaults lifecycle to lazy", () => {
+		// NOT eager. Eager makes the adapter connect while extensions are still
+		// LOADING, which on a warm profile is before PENpi's session_start has
+		// published PENFIELD_JWT — the connection takes a 401 and the adapter does
+		// not retry, so the direct tools are unavailable for the whole session.
+		// Lazy defers everything past session_start, where the token exists.
+		// (Orientation is unaffected either way — it uses PenfieldClient, not
+		// adapter tools.) The end-to-end consequence is pinned in
+		// mcp-integration.test.ts; this pins the value itself.
+		expect(entryFor().lifecycle).toBe("lazy");
+	});
+
+	it("honours an explicit lifecycle override", () => {
+		for (const lifecycle of ["lazy", "eager", "keep-alive"] as const) {
+			expect(entryFor({ lifecycle }).lifecycle, lifecycle).toBe(lifecycle);
+		}
+	});
+
+	it("documents the same lifecycle default the code writes", () => {
+		// The eager -> lazy change shipped with the README still recommending eager,
+		// i.e. still recommending the startup race the change exists to remove. Code
+		// comments and the changelog were updated; the operator-facing table was not,
+		// and nothing caught it. This pins the two together: the documented default
+		// is now wrong only if this fails.
+		const readme = readFileSync(join(import.meta.dirname, "README.md"), "utf8");
+		const row = readme.split("\n").find((line) => line.includes("`mcpLifecycle`"));
+		expect(row, "README must document mcpLifecycle").toBeDefined();
+		// Third column of the settings table is the default, written as `value`.
+		const documented = row?.split("|")[3]?.trim().replace(/`/g, "");
+		expect(documented, `README documents "${documented}"`).toBe(entryFor().lifecycle);
+		expect(row).not.toMatch(/defaults to `?eager/i);
+	});
+
+	it("defaults idleTimeout to 5 MINUTES", () => {
+		// The adapter documents idleTimeout in minutes. PENpi wrote 300 intending
+		// five minutes; the adapter read five hours.
+		expect(entryFor().idleTimeout).toBe(5);
+	});
+
+	it("honours an explicit idleTimeout override", () => {
+		expect(entryFor({ idleTimeout: 30 }).idleTimeout).toBe(30);
+	});
 });

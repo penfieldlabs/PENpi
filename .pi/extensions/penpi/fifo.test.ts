@@ -5,6 +5,7 @@ import {
 	FIFO_NOTICE_CUSTOM_TYPE,
 	isProtected,
 	newFifoTriggerState,
+	normalizeReportedTokens,
 	planFifo,
 	planFifoFromUsage,
 } from "./fifo.ts";
@@ -245,7 +246,14 @@ describe("planFifoFromUsage (trigger metric)", () => {
 	});
 
 	it("prunes when provider usage exceeds the ceiling even if capped overhead leaves the estimate below it", () => {
-		const messages = [user("oldest"), asst("older"), user("current")];
+		// Uses a conversation with content worth evicting. The original three-message
+		// version asserted that an over-window report shreds a ~3-token conversation:
+		// futile (dropping 3 tokens cannot fix a 1000-token overflow, which is
+		// overhead FIFO cannot evict) and destructive. An over-window report is a
+		// credible "over the limit" signal but not a credible measurement, so the
+		// estimate is now the budget authority — real content still prunes, a tiny
+		// conversation is left for ADR 0023 overflow recovery to handle.
+		const messages = Array.from({ length: 12 }, (_, i) => user(`M${i} ${"x".repeat(400)}`));
 		const plan = planFifoFromUsage(messages, 1000, 1100, cfg, newFifoTriggerState());
 		expect(plan.triggered).toBe(true);
 		expect(plan.dropped).toBeGreaterThan(0);
@@ -317,6 +325,187 @@ describe("planFifoFromUsage (trigger metric)", () => {
 			const sentTokens = lastSent.reduce((a, m) => a + estimateTokens(m), 0) + OVERHEAD;
 			expect(sentTokens, `turn ${turn}: sent context exceeded the window`).toBeLessThanOrEqual(WINDOW);
 			session.push(asst(`R${turn} ${"A".repeat(400)}`));
+		}
+	});
+});
+
+describe("provider report normalization", () => {
+	it("rejects values that cannot be interpreted at all", () => {
+		for (const bad of [null, undefined, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, 0, -1]) {
+			expect(normalizeReportedTokens(bad as number | null), `input ${String(bad)}`).toBeNull();
+		}
+	});
+
+	it("accepts plausible totals", () => {
+		expect(normalizeReportedTokens(1)).toBe(1);
+		expect(normalizeReportedTokens(750)).toBe(750);
+	});
+
+	it("KEEPS an over-window total: that is the provider reporting an over-limit request", () => {
+		// Deliberately not rejected. fifo.ts documents that the uncapped report
+		// triggers the current call when the provider says it is over the ceiling;
+		// discarding it would idle FIFO exactly when pruning is required.
+		expect(normalizeReportedTokens(999_999_999)).toBe(999_999_999);
+	});
+});
+
+describe("invalid reports never drive pruning (R-01)", () => {
+	const W = 1000;
+	// Six small messages: comfortably under the 750-token ceiling.
+	const under = () => Array.from({ length: 6 }, (_, i) => user(`M${i} short`));
+	// Uninterpretable values only. An over-window total is valid (see below).
+	const INVALID = [Number.NaN, Number.POSITIVE_INFINITY, 0, -1] as const;
+
+	it("an under-ceiling candidate is untouched by any invalid report", () => {
+		const msgs = under();
+		const baseline = planFifoFromUsage(msgs, W, null, cfg, newFifoTriggerState());
+		expect(baseline.triggered).toBe(false);
+		for (const bad of INVALID) {
+			const plan = planFifoFromUsage(msgs, W, bad, cfg, newFifoTriggerState());
+			expect(plan.triggered, `report=${String(bad)}`).toBe(false);
+			expect(plan.dropped, `report=${String(bad)}`).toBe(0);
+			expect(plan.messages.length, `report=${String(bad)}`).toBe(msgs.length);
+		}
+	});
+
+	it("an over-ceiling candidate prunes identically with or without an invalid report", () => {
+		const msgs = convo();
+		const baseline = planFifoFromUsage(msgs, 900, null, cfg, newFifoTriggerState());
+		expect(baseline.triggered).toBe(true);
+		for (const bad of INVALID) {
+			const plan = planFifoFromUsage(msgs, 900, bad, cfg, newFifoTriggerState());
+			expect(plan.triggered, `report=${String(bad)}`).toBe(true);
+			// Same budget, same cut — the invalid report changed nothing.
+			expect(plan.dropped, `report=${String(bad)}`).toBe(baseline.dropped);
+			expect(plan.keptMessageTokens, `report=${String(bad)}`).toBe(baseline.keptMessageTokens);
+		}
+	});
+
+	it("a VALID over-ceiling report still drives pruning (the guard is not a mute button)", () => {
+		const msgs = under();
+		const plan = planFifoFromUsage(msgs, W, 900, cfg, newFifoTriggerState());
+		expect(plan.triggered).toBe(true);
+	});
+
+	it("an over-window report prunes real content but is NOT stored as an anchor", () => {
+		const state = newFifoTriggerState();
+		const bulky = Array.from({ length: 12 }, (_, i) => user(`M${i} ${"x".repeat(400)}`));
+		const plan = planFifoFromUsage(bulky, W, W * 10, cfg, state);
+		expect(plan.triggered).toBe(true); // over the limit, and there is content to evict
+		expect(state.sampleHighTokens).toBe(-1); // never learn a window-sized overhead
+	});
+
+	it("an over-window report does NOT shred an under-ceiling conversation (C2-01)", () => {
+		// The reviewer's exact reproduction: six short messages, 1k window, absurd
+		// report. Previously dropped 5 of 6. The report cannot be a measurement, so
+		// it forces the trigger but our estimate decides the budget — and the estimate
+		// says there is nothing worth evicting.
+		const msgs = under();
+		for (const absurd of [999_999_999, Number.MAX_SAFE_INTEGER, W + 1, 1e12]) {
+			const plan = planFifoFromUsage(msgs, W, absurd, cfg, newFifoTriggerState());
+			expect(plan.dropped, `report=${absurd}`).toBe(0);
+			expect(plan.messages.length, `report=${absurd}`).toBe(msgs.length);
+		}
+	});
+
+	it("an over-window report still prunes when there IS content to evict", () => {
+		const bulky = Array.from({ length: 40 }, (_, i) => user(`M${i} ${"x".repeat(400)}`));
+		const baseline = planFifoFromUsage(bulky, W, null, cfg, newFifoTriggerState());
+		for (const absurd of [W + 100, 999_999_999]) {
+			const plan = planFifoFromUsage(bulky, W, absurd, cfg, newFifoTriggerState());
+			expect(plan.triggered, `report=${absurd}`).toBe(true);
+			// Identical to the estimate-only baseline: the magnitude buys no extra damage.
+			expect(plan.dropped, `report=${absurd}`).toBe(baseline.dropped);
+		}
+	});
+
+	it("no uninterpretable report is ever stored as a calibration anchor", () => {
+		for (const bad of INVALID) {
+			const state = newFifoTriggerState();
+			planFifoFromUsage(under(), W, bad, cfg, state);
+			expect(state.sampleHighTokens, `report=${String(bad)}`).toBe(-1);
+			expect(deriveCalibration(state).offsetTokens, `report=${String(bad)}`).toBe(0);
+		}
+	});
+
+	it("always returns a well-formed FifoPlan whatever the report", () => {
+		for (const bad of [null, undefined, 0, -1, Number.NaN, Number.POSITIVE_INFINITY, 999_999_999]) {
+			const plan = planFifoFromUsage(under(), W, bad as number | null, cfg, newFifoTriggerState());
+			expect(plan, `report=${String(bad)}`).toBeDefined();
+			expect(typeof plan.triggered).toBe("boolean");
+			expect(Array.isArray(plan.messages)).toBe(true);
+		}
+	});
+});
+
+describe("hostile provider reports (R-01 adversarial)", () => {
+	const hostile = [
+		Number.NaN,
+		Number.POSITIVE_INFINITY,
+		Number.NEGATIVE_INFINITY,
+		0,
+		-1,
+		-99999,
+		Number.MAX_SAFE_INTEGER,
+		Number.MIN_SAFE_INTEGER,
+		1e308,
+		-1e308,
+		0.5,
+		-0.0,
+	];
+
+	it("no hostile report ever produces a non-finite budget or a NaN token count", () => {
+		const msgs = Array.from({ length: 8 }, (_, i) => user(`M${i} ${"x".repeat(200)}`));
+		for (const r of hostile) {
+			for (const W of [0, 1, 1000, 1_048_576]) {
+				const plan = planFifoFromUsage(msgs, W, r, cfg, newFifoTriggerState());
+				expect(Number.isFinite(plan.keptMessageTokens), `r=${r} W=${W}`).toBe(true);
+				expect(Number.isFinite(plan.dropped), `r=${r} W=${W}`).toBe(true);
+				expect(plan.dropped, `r=${r} W=${W}`).toBeGreaterThanOrEqual(0);
+				expect(plan.messages.length, `r=${r} W=${W}`).toBeGreaterThan(0);
+			}
+		}
+	});
+
+	it("hostile reports never differ from the null baseline", () => {
+		const msgs = Array.from({ length: 8 }, (_, i) => user(`M${i} ${"x".repeat(200)}`));
+		for (const W of [1000, 100_000]) {
+			const base = planFifoFromUsage(msgs, W, null, cfg, newFifoTriggerState());
+			for (const r of hostile.filter((x) => !Number.isFinite(x) || x <= 0)) {
+				const plan = planFifoFromUsage(msgs, W, r, cfg, newFifoTriggerState());
+				expect(plan.triggered, `r=${r} W=${W}`).toBe(base.triggered);
+				expect(plan.dropped, `r=${r} W=${W}`).toBe(base.dropped);
+			}
+		}
+	});
+
+	it("state is never corrupted by a hostile report", () => {
+		for (const r of hostile) {
+			const st = newFifoTriggerState();
+			planFifoFromUsage([user("a")], 1000, r, cfg, st);
+			for (const [k, v] of Object.entries(st)) {
+				if (typeof v === "number") expect(Number.isFinite(v), `${k} after r=${r}`).toBe(true);
+			}
+		}
+	});
+
+	it("normalization is pure and total", () => {
+		for (const r of [...hostile, null, undefined, "500" as unknown as number, {} as unknown as number]) {
+			const out = normalizeReportedTokens(r as number | null);
+			expect(out === null || (typeof out === "number" && Number.isFinite(out) && out > 0), `r=${String(r)}`).toBe(
+				true,
+			);
+		}
+	});
+
+	it("a genuine over-limit report prunes when there is content to evict", () => {
+		// Enough content that eviction is meaningful at both window sizes. With a
+		// near-empty candidate there is nothing FIFO can usefully drop, and forcing
+		// it to would destroy history without relieving the overflow.
+		const msgs = Array.from({ length: 60 }, (_, i) => user(`M${i} ${"x".repeat(400)}`));
+		for (const W of [1000, 10_000]) {
+			const plan = planFifoFromUsage(msgs, W, W * 2, cfg, newFifoTriggerState());
+			expect(plan.triggered, `W=${W}`).toBe(true);
 		}
 	});
 });

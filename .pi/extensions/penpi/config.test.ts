@@ -1,5 +1,5 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { resolveMcpLifecycle, resolvePenfieldConfig, resolvePenpiConfig } from "./config.ts";
@@ -149,5 +149,17 @@ describe("displayBriefing", () => {
 		expect(resolvePenpiConfig({}).displayBriefing).toBe(true);
 		process.env.PENPI_DISPLAY_BRIEFING = "false";
 		expect(resolvePenpiConfig({ displayBriefing: true }).displayBriefing).toBe(false);
+	});
+});
+
+describe("tilde expansion on config paths", () => {
+	it("expands a leading ~ in penfield.tokenStore (node fs does not)", () => {
+		const cfg = resolvePenfieldConfig({ penfield: { tokenStore: "~/tokens.json" } });
+		expect(cfg.tokenStorePath).toBe(`${homedir()}/tokens.json`);
+	});
+
+	it("leaves an absolute tokenStore path alone", () => {
+		const cfg = resolvePenfieldConfig({ penfield: { tokenStore: "/var/lib/penpi/t.json" } });
+		expect(cfg.tokenStorePath).toBe("/var/lib/penpi/t.json");
 	});
 });

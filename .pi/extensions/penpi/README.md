@@ -11,7 +11,7 @@ the project overview and the [architecture description](../../../docs/ARCHITECTU
 | `index.ts` | Entry point — wires the four hooks, the `/penpi` command, and the conscious-layer setup |
 | `penfield-client.ts` | Thin MCP client over `@modelcontextprotocol/sdk` + device-code `TokenManager` |
 | `fifo.ts` | Pure `planFifo()` watermark pruner |
-| `config.ts` | Layered config (defaults ← `settings.json` `penpi` ← env) |
+| `config.ts` | Layered config (defaults ← `settings.json` `penpi` ← env); exports `BRIEFING_CUSTOM_TYPE` |
 | `mcp-config.ts` | Generates the `pi-mcp-adapter` server entry so the conscious layer shares our JWT |
 | `*.test.ts` | Vitest suite (run with `npm test -w penpi`) |
 
@@ -23,8 +23,10 @@ the project overview and the [architecture description](../../../docs/ARCHITECTU
   for the model). Also sets `PENFIELD_JWT` and writes the adapter's `mcp.json`.
 - **`context`** — `planFifo()` before every LLM call: when usage exceeds the ceiling,
   drop the oldest non-protected messages down to the floor. PENpi injections are
-  protected; the newest message is always kept; order is preserved. Wrapped in
-  try/catch so a fault can never block the call.
+  protected; the newest message is always kept; order is preserved. After three
+  consecutive triggers PENpi warns once per session that history is aging out of the
+  window and durable facts belong in Penfield. Wrapped in try/catch so a fault can never
+  block the call.
 - **`session_before_compact`** — reason-aware. Cancels routine `threshold` compaction
   (FIFO owns context) and cancels when no reason is given; allows `overflow` (a single
   atomic unit too large for the window, which FIFO cannot shrink) and `manual` (an
@@ -69,7 +71,7 @@ adapter picks up refreshes on reconnect.
 | `saveContextOnShutdown` | `PENPI_SAVE_CONTEXT_ON_SHUTDOWN` | `false` | `save_context()` on shutdown (opt-in; env `=true`/`1` to enable) |
 | `injectBriefing` | `PENPI_INJECT_BRIEFING` | `true` | advanced diagnostic control for automatic orientation; normally leave enabled (`--penpi-raw` disables it for one session) |
 | `displayBriefing` | `PENPI_DISPLAY_BRIEFING` | `false` | also **show** normal automatic orientation in the UI. It does not change model context; set `true` to audit exactly what memory is injected each session |
-| `mcpLifecycle` | `PENPI_MCP_LIFECYCLE` | adapter default (lazy) | adapter connection lifecycle |
+| `mcpLifecycle` | `PENPI_MCP_LIFECYCLE` | `lazy` | adapter connection lifecycle. `lazy` prevents warm-profile connections before PENpi publishes `PENFIELD_JWT`; explicit overrides are advanced and `eager` can reintroduce the startup race |
 
 Other env: `PENPI_DEBUG=1` (verbose hook logging); `PENFIELD_JWT` (set by PENpi for the
 adapter — do not set manually).
