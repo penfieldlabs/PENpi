@@ -15,6 +15,12 @@ permissions:
 jobs:
   audit:
     runs-on: ubuntu-latest
+    # Backstop for the whole job, matching ci.yml. Without it the default is
+    # GitHub's 360-minute ceiling. This job runs on a schedule, so a hung run
+    # burns six runner-hours with nobody watching — the least visible place to
+    # have no cap. An install plus two audits is a couple of minutes; 15 absorbs
+    # a cold cache or a slow registry while still failing usefully.
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
