@@ -189,6 +189,7 @@ npm test
 npm test -w penpi
 npm audit --omit=dev   # production advisories
 npm audit              # including dev advisories
+npm audit signatures --omit=dev   # registry signatures/attestations
 ```
 
 > Install with `npm ci`, not `npm install`. Regenerating the lockfile from scratch

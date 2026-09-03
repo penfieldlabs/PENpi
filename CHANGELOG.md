@@ -4,6 +4,182 @@ All notable changes to **PENpi**. Format: [Keep a Changelog](https://keepachange
 PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
 `packages/coding-agent/CHANGELOG.md`.)
 
+## [0.3.0] — 2026-09-03
+
+Hardening against providers whose usage reporting cannot be trusted, plus release
+process fixes found while gating this release.
+
+### Fixed
+- **A provider's reported total can no longer destroy the context window.** The report
+  feeds two different decisions and they are now separated. *Uninterpretable* values —
+  non-finite (`NaN`, `Infinity`) and non-positive — are refused outright: they are neither
+  learned from nor pruned on, because `Math.max(estimate, NaN)` is `NaN`, which makes the
+  eviction budget `NaN` and drops everything evictable from a conversation that was never
+  over the ceiling. A value *above the context window* is treated as a credible "this
+  request is over the limit" signal but not as a credible measurement: it forces the
+  trigger while our own candidate-list estimate remains the budget authority. So an
+  over-limit session with real content still prunes to the floor, while six short messages
+  paired with an absurd `999999999` are left intact — previously five of the six were
+  dropped, and a report of `1100` did the same damage as one of `999999999`.
+- **Calibration anchors** additionally reject over-window totals, which would otherwise
+  teach a permanent overhead the window cannot hold.
+- **Two production advisories**, caught by the gate at release time: `fast-uri`
+  3.1.5 → 3.1.7 (high — host confusion and SSRF via URI normalization) and `qs`
+  6.15.3 → 6.16.0 (moderate — array-limit bypass, DoS). Both arrive transitively
+  through `@modelcontextprotocol/sdk`; both are in-range and lockfile-only, with no
+  manifest change.
+- **The documented `mcpLifecycle` default contradicted the code.** The lifecycle change
+  below updated the source comments, the changelog and every assertion, but not the
+  extension README's settings table — which went on listing `eager` as the default and
+  recommending it, i.e. recommending the exact warm-profile 401 race the change removes.
+  Operator-facing guidance was the one surface nothing checked. The row is corrected, and
+  a test now reads it and asserts the documented default equals the value
+  `ensurePenfieldMcpEntry` actually writes, so the two cannot drift apart silently again.
+- **The repository's own release instructions described upstream Pi's process.**
+  `AGENTS.pi.md` told a reader to run `npm run release:*` and rely on a tag-triggered
+  workflow with npm trusted publishing. In PENpi that script bumps the version a second
+  time, commits `Release vX.Y.Z` and pushes straight to `main` — no PR, no CI — and there
+  is no `publish-npm` job, because PENpi publishes nothing to npm. The section now leads
+  with PENpi's actual sequence and marks the retained upstream text as Pi's.
+  `scripts/create-source-archive.sh` and `scripts/build-binaries.sh` are likewise upstream
+  helpers that package `packages/coding-agent` and validate against Pi's version, so they
+  can never match a PENpi version; they now say so and point at the right command instead
+  of failing with a bare version mismatch.
+- **The release workflow could not publish correct notes.** It called
+  `release-notes.mjs` with Pi's defaults, so it read `packages/coding-agent/CHANGELOG.md`
+  and emitted a bare `Release <version>` placeholder — silently, with exit 0. Fixed by
+  passing PENpi's changelog, repo and base path, *and* by fixing the heading matcher,
+  which required an ASCII hyphen while PENpi's dates use an em dash. A new `--strict`
+  mode now exits nonzero rather than emitting the placeholder, and the workflow uses it.
+
+### Added
+- **Continuous-fire warning.** Three consecutive FIFO triggers raise one `ctx.ui.notify`
+  per session: the window is permanently full, so unprotected history is aging out and
+  durable facts belong in Penfield (Tier 2). A trigger on an *unchanged* candidate list
+  does not count — a provider retry re-issues the same conversation, and counting it would
+  claim history is being lost when nothing new arrived. Reset on any no-op. Deliberately
+  not `console.error`: 0.2.0 moved routine FIFO logging behind `PENPI_DEBUG=1` because
+  unconditional writes interleave with the TUI frame.
+- **`scripts/make-review-archive.sh`** builds review and release archives from `git archive`
+  — tracked files only. The previous `zip -r . -x <denylist>` approach shipped 423 `.git`
+  entries and two ignored 391 KB session HTML exports, because a denylist only excludes what
+  you remember to name. Refuses a dirty tree, asserts against a forbidden-content list, and
+  embeds an `ARCHIVE_MANIFEST.json` recording the commit, since `git archive` correctly omits
+  `.git` and a recipient would otherwise have no way to identify the source.
+- **Clean-profile component tests** for the MCP ordering: an empty
+  `PI_CODING_AGENT_DIR` with no `mcp.json` and no metadata cache, asserting PENpi writes a
+  lazy Penfield entry and publishes the bearer token during `session_start`, and that
+  first-time login writes the entry and reloads exactly once without orienting first. These
+  drive a fake Pi host, so they assert PENpi's half of the contract cheaply.
+- **Cross-package integration test** for the other half: `mcp-integration.test.ts` loads PENpi
+  and the real `pi-mcp-adapter@2.12.1` — in that order — through Pi's real `loadExtensions()`,
+  drives them with Pi's real `ExtensionRunner`, and points them at a real MCP server built on
+  the SDK's own server transport. The profile is genuinely empty: no `mcp.json`, no metadata
+  cache. Nothing is pre-written. The test asserts the adapter has only its `mcp` proxy before
+  `session_start`; that PENpi's own `session_start` then generates the `penfield` entry
+  (`lifecycle: "lazy"`, `directTools: true`, `idleTimeout: 5`) and publishes its Penfield
+  token; that the adapter re-reads that entry, connects with *that same token*, and
+  hot-registers `penfield_recall` and `penfield_store`; that both are **active** in the bound
+  tool registry, not merely registered; and that all of it holds before the first
+  `before_provider_request` — no restart, no settings edit.
+  A second test covers the **warm** path, which the clean one structurally cannot see: it
+  runs a full session to let PENpi and the adapter produce a real `mcp.json` and metadata
+  cache, then starts a second session with `PENFIELD_JWT` unset, as a fresh process would.
+  It asserts nothing contacts Penfield before `session_start` publishes the token, that the
+  tools then become active, and that invoking `penfield_recall` succeeds carrying the right
+  bearer with no 401 anywhere in either run. Reverting the default to `eager` fails it with
+  ten requests before `session_start` — the race itself, observed.
+  It also pins a non-obvious consequence: `computeServerHash()` hashes the *resolved* bearer,
+  so before the JWT is published the adapter's own metadata cache fails validation too. The
+  warm path cannot be served from cache early; the fix is to not act before `session_start`.
+  Two things are simulated, both at the edges: the Penfield deployment (the fixture, reached
+  by redirecting that origin's socket at undici's dispatcher, so the URL entry PENpi writes is
+  used verbatim) and the credential (a seeded unexpired token store, with no refresh token, so
+  a broken cache path fails the test instead of reaching the real auth server).
+  The fixture *enforces* that bearer — a wrong one gets a 401 and reaches no tool — so the
+  direct tools existing is itself evidence the adapter authenticated with the token PENpi
+  published. Recording the headers would not show that: PENpi's own MCP client uses the same
+  token, so "the right bearer appeared" is satisfiable by PENpi's traffic alone. The
+  enforcement is pinned by its own test, because inside the main flow the 401 path is
+  unreachable — earlier assertions catch any mutation that would produce one.
+  Verified non-vacuous by mutation: reversing the load order, suppressing activation of
+  hot-registered tools, pre-writing `mcp.json`, flipping `directTools` to `false`, and
+  restoring the `eager` default each fail it, at five different assertions.
+  The suite drives Pi's *compiled* loader, so it requires a built monorepo. That prerequisite
+  now fails with a message naming the missing path and the command to fix it, rather than
+  reading as a PENpi regression — running vitest against an unbuilt checkout, or against a
+  deployed copy of the extension alone, is a prerequisite violation.
+  Pi's loader is what makes this possible: it aliases the `@earendil-works/pi-ai` root to the
+  `compat` entrypoint, which is where `complete` lives. A harness that bypasses the loader
+  fails at module load, and that failure says nothing about the adapter.
+- **`scripts/make-review-archive.test.mjs`** covers the helper end to end in a throwaway
+  repository: a relative output path (the form the release workflow uses), an absolute one,
+  cross-ref provenance, dirty-tree refusal, and forbidden-content rejection. Both defects the
+  tests were written for were verified to fail them before the fix. The suite includes an
+  annotated-tag case, because `git rev-parse <annotated-tag>` returns the tag object's sha
+  rather than the commit's — git peels it transparently for `archive` and `show`, so the
+  archive contents were correct while the manifest recorded a sha that was not a commit.
+  That is the ref form the release workflow passes, and no HEAD-based test could reach it.
+- **`check:lockfile-versions`** in the gate: a full version sweep across the root and
+  extension manifests, the lockfile's three version entries, the MCP handshake literal, and
+  the presence of a CHANGELOG section. Editing a version by hand leaves the lockfile behind —
+  npm only rewrites it during an install — so the tree stays clean and the gate passes while
+  the release ships manifests that disagree.
+- **`scripts/check-release-assets.mjs`**: an interlock asserting a built archive contains the
+  extension and identifies as PENpi before anything is published.
+- **Release / review archive documentation** in `docs/TEST_PROTOCOL.md`: one canonical
+  command, what the archive is guaranteed to exclude, and how a recipient verifies one
+  (`ARCHIVE_MANIFEST.json` for provenance, `SHA256SUMS` for integrity). `npm audit
+  signatures --omit=dev` is now part of the documented gate alongside the other checks.
+
+### Changed
+- **Penfield's direct tools are available on the first message of a clean install.**
+  Three things had to change together. The adapter pin moves `2.10.0` → `2.12.1`: 2.12.0
+  added runtime hot-registration of newly discovered direct tools, and before it the
+  adapter registered them only from a pre-existing metadata cache, so a clean install's
+  own bootstrap says tools arrive *after a restart*. PENpi's `mcp.json` entry keeps the
+  adapter's `lifecycle: "lazy"`, which is the only value that works on **both** startup
+  paths. `eager` is the intuitive choice and is wrong: PENpi publishes `PENFIELD_JWT` from
+  `wireConsciousLayer()` during its `session_start`, but on a warm profile the previous
+  session's `mcp.json` is already on disk, so an eager entry makes the adapter connect
+  during extension *loading* — before any `session_start` handler exists. That connection
+  takes a 401, the adapter throws `UnauthorizedError` without retrying, and the direct
+  tools are gone for the whole session. Ordering inside `wireConsciousLayer()` cannot help;
+  the adapter is past that point before PENpi runs. Under `lazy` nothing is contacted at
+  load, and the adapter's `session_start` — which runs after PENpi's — has both the config
+  and the token. (Automatic orientation is unaffected either way — it uses PENpi's own
+  `PenfieldClient`, not adapter tools.) And
+  `/penpi login` now writes the Penfield entry and calls `ctx.reload()` rather than
+  orienting inline: on a first unauthenticated launch the adapter has already initialised
+  with no Penfield server to register from, so orienting there changes nothing. The
+  reload's `session_start` orients exactly once. Explicit `lifecycle` overrides are
+  unaffected. Not upgrading to the current 2.29.0, which peers on `@earendil-works/pi-ai
+  ^0.84.1` while PENpi remains on Pi 0.83.0.
+- **`idleTimeout` was off by 60x.** The adapter documents it in *minutes*; PENpi wrote
+  `300` intending five minutes, so an idle connection was held for five hours. Now
+  `DEFAULT_IDLE_TIMEOUT_MINUTES = 5`, with the option documentation corrected.
+- **Releases ship source, not binaries.** The inherited binary builder packages
+  `packages/coding-agent` and has never copied `.pi/extensions/penpi`, so every attached
+  asset was upstream Pi — the published v0.2.0 archive identifies itself as
+  `@earendil-works/pi-coding-agent` `0.83.0` with no PENpi in it. PENpi is installed from
+  source anyway (`scripts/penpi-global.sh` symlinks a clone), so the release now attaches a
+  verified source archive and `SHA256SUMS`. `scripts/build-binaries.sh` remains as an
+  upstream Pi helper and is documented as such.
+- `BRIEFING_CUSTOM_TYPE` moved from `index.ts` to `config.ts` so the constant has one home.
+- `npm audit signatures --omit=dev` added to the documented release gate.
+
+### Not shipped — and why
+An `instructionsFile` option was built and withdrawn before release, along with the pinned
+message infrastructure that supported it. It reconstructs the pattern PENpi exists to
+replace: a flat file on disk, read at startup and injected into context, is `CLAUDE.md`
+under another name.
+
+The defect that motivated it is real — standing instructions typed as ordinary `user`
+messages are evicted oldest-first once a session crosses the ceiling, and the agent then
+looks disobedient rather than broken. The fix is to configure them in Penfield so they
+arrive through `awaken()` inside the orientation briefing, which `isProtected()` already
+shields. That is a deployment action, not a code change.
+
 ## [0.2.0] — 2026-08-19
 
 External code-review fixes (context-management correctness + injection hardening),

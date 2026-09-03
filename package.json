@@ -16,7 +16,7 @@
 		"clean": "npm run clean --workspaces",
 		"build": "cd packages/tui && npm run build && cd ../ai && npm run build && cd ../agent && npm run build && cd ../storage/sqlite-node && npm run build && cd ../../coding-agent && npm run build && cd ../server && npm run build",
 		"build:offline": "cd packages/tui && npm run build && cd ../ai && npm run build:offline && cd ../agent && npm run build && cd ../storage/sqlite-node && npm run build && cd ../../coding-agent && npm run build && cd ../server && npm run build",
-		"check": "biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:shrinkwrap && npm run check:install-lock:coding-agent && tsgo --noEmit && npm run check:penpi && npm run check:browser-smoke",
+		"check": "biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:lockfile-versions && npm run check:ts-imports && npm run check:shrinkwrap && npm run check:install-lock:coding-agent && tsgo --noEmit && npm run check:penpi && npm run check:browser-smoke",
 		"check:browser-smoke": "node scripts/check-browser-smoke.mjs",
 		"check:penpi": "tsc -p .pi/extensions/penpi/tsconfig.json",
 		"check:pinned-deps": "node scripts/check-pinned-deps.mjs",
@@ -45,7 +45,8 @@
 		"release:minor": "node scripts/release.mjs minor",
 		"release:major": "node scripts/release.mjs major",
 		"release:fix-links": "node scripts/release-notes.mjs fix-github-releases",
-		"prepare": "husky"
+		"prepare": "husky",
+		"check:lockfile-versions": "node scripts/check-lockfile-versions.mjs"
 	},
 	"devDependencies": {
 		"@anthropic-ai/sandbox-runtime": "0.0.26",
@@ -55,6 +56,7 @@
 		"esbuild": "0.28.1",
 		"husky": "9.1.7",
 		"jiti": "2.7.0",
+		"pi-mcp-adapter": "2.12.1",
 		"shx": "0.4.0",
 		"tsx": "4.22.1",
 		"typescript": "5.9.3"
@@ -62,7 +64,7 @@
 	"engines": {
 		"node": ">=22.19.0"
 	},
-	"version": "0.2.0",
+	"version": "0.3.0",
 	"overrides": {
 		"protobufjs": "7.6.5",
 		"rimraf": "6.1.2",

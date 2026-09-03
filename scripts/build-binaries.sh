@@ -1,7 +1,15 @@
 #!/usr/bin/env bash
 #
 # Build pi binaries for all platforms locally.
-# Mirrors .github/workflows/build-binaries.yml
+#
+# PENpi note: this is an UPSTREAM PI helper and is NOT part of the PENpi release
+# process. It packages packages/coding-agent and does not copy
+# .pi/extensions/penpi, so its output is Pi, not PENpi — the published v0.2.0
+# asset identified itself as @earendil-works/pi-coding-agent 0.83.0. PENpi
+# releases ship source; see .github/workflows/release.yml.
+#
+# If PENpi binaries are built here in future, scripts/check-release-assets.mjs is
+# the interlock that must pass before anything is published.
 #
 # Usage:
 #   ./scripts/build-binaries.sh [--skip-install] [--skip-deps] [--skip-build] [--offline-model-data] [--platform <platform>] [--out <dir>]

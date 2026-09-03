@@ -120,6 +120,22 @@ Attribution:
 
 ## Releasing
 
+> **Upstream Pi procedure — NOT PENpi's.** Everything in this section describes how
+> upstream Pi releases: `npm run release:*`, a tag-triggered workflow, and npm trusted
+> publishing. PENpi publishes no npm packages and its release is **source-only and
+> manually dispatched**. PENpi's sequence is:
+>
+> 1. Run the full gate from a clean checkout (`docs/TEST_PROTOCOL.md`).
+> 2. Stamp the CHANGELOG date and squash `dev` onto `origin/main`.
+> 3. Open a PR, let CI pass, squash-merge with `--match-head-commit`.
+> 4. Verify the merged tree equals the gated tree, then tag `vX.Y.Z`.
+> 5. Manually dispatch `.github/workflows/release.yml` with that tag.
+> 6. Verify the published source archive, its `ARCHIVE_MANIFEST.json`, `SHA256SUMS`,
+>    and that the release notes are the real changelog section, not a placeholder.
+>
+> Retained below because the fork still carries Pi's release scripts and they remain
+> accurate for upstream.
+
 **Lockstep versioning**: all packages share one version; every release updates all together. `patch` = fixes + additions, `minor` = breaking changes. No major releases.
 
 1. **Update CHANGELOGs**: ask the user whether they ran the `/cl` prompt on the latest commit on `main`. If not, they must run `/cl` first to audit and update each package's `[Unreleased]` section before releasing.
@@ -154,7 +170,7 @@ Attribution:
 
    The release script bumps all package versions, updates changelogs, regenerates release artifacts, runs `npm run check`, commits `Release vX.Y.Z`, tags `vX.Y.Z`, adds fresh `## [Unreleased]` changelog sections, commits `Add [Unreleased] section for next cycle`, then pushes `main` and the tag. Do not rerun the release script after a tag was pushed.
 
-4. **CI publishes npm packages**: pushing the `vX.Y.Z` tag triggers `.github/workflows/build-binaries.yml`. The `publish-npm` job uses npm trusted publishing through GitHub Actions OIDC with environment `npm-publish`; no local `npm publish`, `npm whoami`, OTP, or WebAuthn flow is required.
+4. **CI publishes npm packages** *(upstream Pi only — PENpi has no `publish-npm` job and publishes nothing to npm)*: in upstream Pi, pushing the `vX.Y.Z` tag triggers its release workflow. The `publish-npm` job uses npm trusted publishing through GitHub Actions OIDC with environment `npm-publish`; no local `npm publish`, `npm whoami`, OTP, or WebAuthn flow is required.
 
 5. **If CI publish fails**: inspect the failed `publish-npm` job. The publish helper is idempotent and skips package versions already present on npm, so rerun the tag workflow after fixing CI or transient npm issues. Do not rerun `npm run release:patch` or `npm run release:minor` for the same version.
 

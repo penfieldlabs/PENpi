@@ -9,6 +9,7 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -85,7 +86,7 @@ test("install atomically merges valid settings and preserves unknown fields", ()
 	assert.deepEqual(settings.apiKeys, { example: "placeholder" });
 	assert.deepEqual(settings.customField, [1, 2]);
 	assert.equal(settings.compaction.enabled, false);
-	assert.ok(settings.packages.includes("npm:pi-mcp-adapter@2.10.0"));
+	assert.ok(settings.packages.includes("npm:pi-mcp-adapter@2.12.1"));
 });
 
 test("install refuses a symbolic-link settings file", () => {
@@ -149,11 +150,34 @@ test("install and uninstall are idempotent", () => {
 	const profile = readFileSync(join(testHome, ".bashrc"), "utf8");
 	assert.equal(profile.match(/#PENPI_GLOBAL_BEGIN/g)?.length, 1);
 	const settings = JSON.parse(readFileSync(settingsPath(testHome), "utf8"));
-	assert.equal(settings.packages.filter((x) => x === "npm:pi-mcp-adapter@2.10.0").length, 1);
+	assert.equal(settings.packages.filter((x) => x === "npm:pi-mcp-adapter@2.12.1").length, 1);
 	assert.equal(run(testHome, "uninstall").status, 0);
 	assert.equal(run(testHome, "uninstall").status, 0);
 });
 
 test("installer remains valid Bash", () => {
 	execFileSync("bash", ["-n", script]);
+});
+
+test("the adapter pin is identical in settings.json and the installer", () => {
+	// Two hand-maintained copies of the same pin. A mismatch means a global install
+	// and a repo-local run get different adapter versions, and the difference is
+	// invisible until direct tools behave differently in one of them.
+	const root = fileURLToPath(new URL("..", import.meta.url));
+	const settings = JSON.parse(readFileSync(join(root, ".pi/settings.json"), "utf8"));
+	const installer = readFileSync(join(root, "scripts/penpi-global.sh"), "utf8");
+
+	const fromSettings = settings.packages.find((p) => p.startsWith("npm:pi-mcp-adapter@"));
+	const fromInstaller = installer.match(/ADAPTER="(npm:pi-mcp-adapter@[^"]+)"/)?.[1];
+
+	assert.ok(fromSettings, "no pi-mcp-adapter pin in .pi/settings.json");
+	assert.ok(fromInstaller, "no ADAPTER pin in scripts/penpi-global.sh");
+	assert.equal(fromInstaller, fromSettings, "adapter pins disagree between settings.json and the installer");
+
+	// 2.12.0 added runtime hot-registration of direct tools, which is what makes
+	// them available on a clean install's first message rather than after a
+	// restart. Anything older reintroduces that defect.
+	const version = fromSettings.split("@").pop();
+	const [major, minor] = version.split(".").map(Number);
+	assert.ok(major > 2 || (major === 2 && minor >= 12), `adapter ${version} predates hot-registration (2.12.0)`);
 });

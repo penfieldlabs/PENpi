@@ -25,6 +25,7 @@ extract options:
   --tag <vX.Y.Z>       Release tag used for repository links (defaults to v<version>)
   --changelog <path>   Changelog path (default: ${DEFAULT_CHANGELOG})
   --out <path>         Output file (default: stdout)
+  --strict             Exit nonzero instead of emitting the "Release <version>" placeholder
   --repo <owner/repo>  GitHub repository for generated links (default: ${DEFAULT_REPO})
   --base-path <path>   Base path for relative changelog links (default: ${DEFAULT_BASE_PATH})
 
@@ -81,6 +82,10 @@ function parseOptions(args) {
 		}
 
 		const optionNames = new Set(["--base-path", "--changelog", "--out", "--repo", "--since-tag", "--tag", "--version"]);
+		if (arg === "--strict") {
+			options.strict = true;
+			continue;
+		}
 		if (!optionNames.has(arg)) {
 			throw new Error(`Unknown option: ${arg}`);
 		}
@@ -132,7 +137,14 @@ function escapeRegExp(value) {
 }
 
 function extractChangelogSection(changelog, version) {
-	const headingRe = new RegExp(`^## \\[${escapeRegExp(version)}\\](?:\\s+-\\s+\\d{4}-\\d{2}-\\d{2})?\\s*$`, "m");
+	// The date separator may be an ASCII hyphen, an en dash or an em dash: Keep a
+	// Changelog examples use "-", and PENpi's own changelog uses "—". Matching only
+	// "-" silently failed to find the section and fell through to the bare
+	// "Release <version>" placeholder — with no error, so it shipped.
+	const headingRe = new RegExp(
+		`^## \\[${escapeRegExp(version)}\\](?:\\s+[-\u2013\u2014]\\s+(?:\\d{4}-\\d{2}-\\d{2}|Unreleased))?\\s*$`,
+		"m",
+	);
 	const heading = headingRe.exec(changelog);
 
 	if (!heading) {
@@ -260,6 +272,16 @@ function extractReleaseNotes(options) {
 	const tag = normalizeTag(options.tag ?? version);
 	const changelog = readFileSync(options.changelog, "utf8");
 	const section = extractChangelogSection(changelog, version);
+	// Release automation must never publish the placeholder. Silently emitting
+	// "Release <version>" and exiting 0 is how two releases shipped with empty
+	// notes: the failure looked exactly like success. --strict makes it loud.
+	if (options.strict && (!section || section.trim() === "")) {
+		throw new Error(
+			`No changelog section found for ${version} in ${options.changelog}.\n` +
+				`Expected a heading like "## [${version}] — <date>" or "## [${version}] - <date>".\n` +
+				"Refusing to emit the \"Release <version>\" placeholder in strict mode.",
+		);
+	}
 	const rawNotes = section ? `${section}\n` : `Release ${version}\n`;
 	const { markdown } = normalizeReleaseNoteLinks(rawNotes, { basePath: options.basePath, repo: options.repo, tag });
 	writeOutput(markdown, options.out);

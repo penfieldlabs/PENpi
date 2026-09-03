@@ -1,8 +1,8 @@
 {
-  "packages": [
-    "npm:pi-mcp-adapter@2.10.0"
-  ],
-  "compaction": {
-    "enabled": false
-  }
+	"packages": [
+		"npm:pi-mcp-adapter@2.12.1"
+	],
+	"compaction": {
+		"enabled": false
+	}
 }

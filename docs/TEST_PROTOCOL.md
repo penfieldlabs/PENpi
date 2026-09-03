@@ -15,6 +15,7 @@ npm test               # all workspace tests
 npm test -w penpi      # just the PENpi extension suite
 npm audit --omit=dev   # production advisories — must be clean
 npm audit              # including dev advisories — must be clean
+npm audit signatures --omit=dev   # registry signatures/attestations — must verify
 ```
 
 **`npm run build` is not optional.** `@earendil-works/pi-coding-agent` resolves through
@@ -44,6 +45,29 @@ divergence to merge against for the planned Pi 0.84.2 integration, in exchange f
 silencing a warning about a workspace that is not part of the runtime. Revisit when that
 upgrade lands — either the example's engine requirement will have moved, or it can be
 dropped as part of a change that is already reconciling upstream.
+
+### Release / review archives
+
+One canonical command. It builds from `git archive`, so the archive contains exactly the
+tracked files at a commit — never `.git`, ignored files, session exports, dependencies or
+build output. It refuses a dirty tree, asserts against a forbidden-content list, and embeds
+`ARCHIVE_MANIFEST.json` recording the commit, version and generation command.
+
+```bash
+scripts/make-review-archive.sh [ref] [output]     # default: HEAD, ~/penpi-review-<sha>.zip
+```
+
+Verify a received archive:
+
+```bash
+unzip -p penpi-<tag>-source.zip ARCHIVE_MANIFEST.json   # which commit produced it
+sha256sum -c SHA256SUMS                                 # integrity, run beside the assets
+```
+
+`scripts/create-source-archive.sh` and `scripts/build-binaries.sh` are **upstream Pi
+helpers** and are not part of the PENpi release process: they package
+`packages/coding-agent` and validate against Pi's version, so a PENpi version can never
+match. PENpi releases ship source only — see `.github/workflows/release.yml`.
 
 ### Developer quick checks
 

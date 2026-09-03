@@ -1,24 +1,25 @@
 {
-  "name": "penpi",
-  "version": "0.2.0",
-  "private": true,
-  "type": "module",
-  "description": "PENpi — Penfield persistent memory + FIFO context management for Pi",
-  "pi": {
-    "extensions": [
-      "./index.ts"
-    ]
-  },
-  "scripts": {
-    "clean": "echo 'nothing to clean'",
-    "build": "echo 'nothing to build'",
-    "check": "echo 'nothing to check'",
-    "test": "vitest run"
-  },
-  "dependencies": {
-    "@modelcontextprotocol/sdk": "1.30.0"
-  },
-  "devDependencies": {
-    "vitest": "4.1.9"
-  }
+	"name": "penpi",
+	"version": "0.3.0",
+	"private": true,
+	"type": "module",
+	"description": "PENpi \u2014 Penfield persistent memory + FIFO context management for Pi",
+	"pi": {
+		"extensions": [
+			"./index.ts"
+		]
+	},
+	"scripts": {
+		"clean": "echo 'nothing to clean'",
+		"build": "echo 'nothing to build'",
+		"check": "echo 'nothing to check'",
+		"test": "vitest run"
+	},
+	"dependencies": {
+		"@modelcontextprotocol/sdk": "1.30.0"
+	},
+	"devDependencies": {
+		"undici": "8.10.0",
+		"vitest": "4.1.9"
+	}
 }
