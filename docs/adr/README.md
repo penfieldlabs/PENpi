@@ -36,3 +36,4 @@ the same PR (see [CONTRIBUTING.md](../../CONTRIBUTING.md)).
 | [0022](0022-raw-diagnostic-boundary.md) | Raw mode is an orientation diagnostic | Accepted |
 | [0023](0023-overflow-compaction-escape-hatch.md) | Overflow compaction is an escape hatch | Accepted |
 | [0024](0024-memory-fence-sanitization.md) | Neutralize forged memory fences by pattern removal | Accepted |
+| [0025](0025-compaction-fallback-without-fifo-window.md) | Emergency compaction when the model has no context window | Accepted |

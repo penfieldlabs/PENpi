@@ -8,6 +8,7 @@
  *   - context        → FIFO watermark pruning before every LLM call.
  *   - session_before_compact → cancel `threshold` and unknown reasons (FIFO owns
  *                      routine context); allow `overflow` and `manual` (ADR 0023).
+ *   - agent_settled  → emergency compaction when the model has no context window (ADR 0025).
  *   - session_shutdown → optional save_context() checkpoint + disconnect.
  *
  * Command: /penpi [login] — status, or run the Penfield device-code login.
@@ -17,8 +18,13 @@
  */
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
+import {
+	DEFAULT_COMPACTION_SETTINGS,
+	findCutPoint,
+	getAgentDir,
+	SettingsManager,
+} from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { PenfieldConfig } from "./config.ts";
 import { BRIEFING_CUSTOM_TYPE, resolveMcpLifecycle, resolvePenfieldConfig, resolvePenpiConfig } from "./config.ts";
@@ -126,6 +132,17 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps) {
 	// sawtooth must not be nagged repeatedly.
 	let consecutiveTriggers = 0;
 	let firedContinuousWarning = false;
+	// Did the last context call get a valid (>0) contextWindow? pi reports no usage
+	// at all when the CURRENT model's metadata has no window, so this tracks the model
+	// and must not latch: after a switch to a window-less model FIFO stops running.
+	let fifoWindowAvailable = false;
+	// Emergency fallback (ADR 0025): consecutive settled runs without a window, and
+	// whether the forced compaction is still running (pi has no guard against
+	// concurrent ctx.compact() calls).
+	let runsWithoutWindow = 0;
+	let emergencyCompactionPending = false;
+	// A synchronous ctx.compact() failure is reported once per session, not every run.
+	let firedEmergencyThrowNotice = false;
 	// Fingerprint of the candidate list at the previous trigger. A provider retry
 	// re-issues the SAME conversation: agent-session removes the failed assistant
 	// message from live state before retrying, and the context hook reads live
@@ -261,7 +278,12 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps) {
 			// `usage.tokens` may be null (unknown) — it is only used to learn the
 			// non-message overhead; the trigger runs off our own estimate of the
 			// candidate list. See planFifoFromUsage for why.
-			if (!usage || !usage.contextWindow) return;
+			if (!usage || !usage.contextWindow) {
+				fifoWindowAvailable = false;
+				return;
+			}
+			fifoWindowAvailable = true;
+			runsWithoutWindow = 0;
 			const plan = planFifoFromUsage(_event.messages, usage.contextWindow, usage.tokens, penpiCfg, fifoState);
 			if (debug) {
 				const cal = deriveCalibration(fifoState);
@@ -375,6 +397,72 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps) {
 		}
 		if (debug) console.error("[PENpi] threshold compaction cancelled (FIFO owns context)");
 		return { cancel: true };
+	});
+
+	// Block 5b: emergency compaction (ADR 0025). FIFO needs a context window; for a
+	// model without one pi reports no usage, FIFO never runs, and with compaction
+	// disabled (the fork default) nothing manages context. After enough settled runs,
+	// force one compaction through ctx.compact() (reason "manual", which Block 5
+	// allows; it ignores compaction.enabled).
+	//
+	// agent_settled, NOT agent_end: agent_end fires inside the agent loop, before pi
+	// handles retry and overflow/threshold compaction, and ctx.compact() disconnects
+	// the session from agent events at once — a pending retry would then run
+	// unpersisted. agent_settled fires once per run after all of that, with the run
+	// already inactive, so compact()'s abort + waitForIdle have nothing in flight.
+	pi.on("agent_settled", async (_event, ctx) => {
+		if (fifoWindowAvailable) return;
+		runsWithoutWindow++;
+		if (emergencyCompactionPending || runsWithoutWindow < penpiCfg.emergencyCompactionRuns) return;
+		try {
+			// ctx.compact() aborts and announces the compaction before pi finds out there
+			// is nothing to summarize; check first with pi's own cut-point rule. Below
+			// it, keep the count and re-check on the next run.
+			if (!hasCompactableHistory(ctx.sessionManager.getBranch(), compactionKeepRecentTokens(ctx.cwd))) {
+				if (debug) console.error("[PENpi] emergency compaction deferred (not enough history to compact)");
+				return;
+			}
+			emergencyCompactionPending = true;
+			const runs = runsWithoutWindow;
+			if (ctx.hasUI) {
+				ctx.ui.notify(
+					`PENpi: no context window reported for this model after ${runs} runs, so FIFO cannot manage context. ` +
+						"Compacting as an emergency fallback.",
+					"warning",
+				);
+			}
+			// Reset the count on BOTH outcomes: left over the threshold, it would force
+			// another compaction on every following run.
+			ctx.compact({
+				onComplete: () => {
+					emergencyCompactionPending = false;
+					runsWithoutWindow = 0;
+				},
+				onError: (err) => {
+					emergencyCompactionPending = false;
+					runsWithoutWindow = 0;
+					const msg = errMsg(err);
+					// Expected outcomes the size gate cannot fully rule out, or the user's own
+					// cancel: PENpi adds no notification of its own. pi itself still reports a
+					// failed manual compaction in the UI ("Compaction failed: ...").
+					if (/Nothing to compact|Already compacted|Compaction cancelled/.test(msg)) {
+						if (debug) console.error(`[PENpi] emergency compaction skipped: ${msg}`);
+						return;
+					}
+					if (ctx.hasUI) ctx.ui.notify(`PENpi: emergency compaction failed: ${msg}`, "error");
+				},
+			});
+		} catch (err) {
+			// E.g. a stale ctx after /reload. Reset like the async outcomes so the next
+			// attempt waits a full count instead of retrying on every run.
+			emergencyCompactionPending = false;
+			runsWithoutWindow = 0;
+			if (debug) console.error(`[PENpi] emergency compaction error: ${errMsg(err)}`);
+			if (!firedEmergencyThrowNotice && ctx.hasUI) {
+				firedEmergencyThrowNotice = true;
+				ctx.ui.notify(`PENpi: emergency compaction could not start: ${errMsg(err)}`, "error");
+			}
+		}
 	});
 
 	// Block 6: on shutdown, optionally checkpoint to Penfield, then disconnect.
@@ -573,6 +661,44 @@ export function sanitizeMemoryText(s: string): string {
 			new RegExp(`((?:${FENCE_LABEL_PATTERN})[ \\t]{0,8})(={3,})`, "g"),
 			(_m, pre: string, run: string) => pre + inertRun(run),
 		);
+}
+
+/**
+ * pi's configured compaction.keepRecentTokens, read through pi's own SettingsManager.
+ * Global settings only: pi applies project settings only to trusted projects, and
+ * PENpi must never read an untrusted project's settings, so the project layer is
+ * skipped even when trusted. Falls back to pi's default if the settings cannot be read.
+ */
+export function compactionKeepRecentTokens(cwd: string): number {
+	try {
+		return SettingsManager.create(cwd, getAgentDir(), { projectTrusted: false }).getCompactionSettings()
+			.keepRecentTokens;
+	} catch {
+		return DEFAULT_COMPACTION_SETTINGS.keepRecentTokens;
+	}
+}
+
+/**
+ * Would pi's compaction find anything to summarize? Mirrors prepareCompaction (not
+ * exported): nothing if the branch ends in a compaction, or if the cut point that
+ * keeps `keepRecentTokens` falls at the previous compaction boundary. Pass pi's
+ * configured keepRecentTokens (compactionKeepRecentTokens) so the gate agrees with pi.
+ */
+export function hasCompactableHistory(
+	entries: SessionEntry[],
+	keepRecentTokens: number = DEFAULT_COMPACTION_SETTINGS.keepRecentTokens,
+): boolean {
+	if (entries.length === 0 || entries[entries.length - 1].type === "compaction") return false;
+	let boundaryStart = 0;
+	for (let i = entries.length - 1; i >= 0; i--) {
+		const entry = entries[i];
+		if (entry.type === "compaction") {
+			const keptIndex = entries.findIndex((e) => e.id === entry.firstKeptEntryId);
+			boundaryStart = keptIndex >= 0 ? keptIndex : i + 1;
+			break;
+		}
+	}
+	return findCutPoint(entries, boundaryStart, entries.length, keepRecentTokens).firstKeptEntryIndex > boundaryStart;
 }
 
 function errMsg(err: unknown): string {

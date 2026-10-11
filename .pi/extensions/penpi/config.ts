@@ -45,6 +45,11 @@ export interface PenpiConfig {
 	 * orientation; this decides whether the user also sees it.
 	 */
 	displayBriefing: boolean;
+	/**
+	 * Emergency fallback: consecutive settled agent runs without a valid context
+	 * window (FIFO inactive) before PENpi forces a compaction. See ADR 0025.
+	 */
+	emergencyCompactionRuns: number;
 }
 
 interface PenpiSettings {
@@ -54,6 +59,7 @@ interface PenpiSettings {
 	saveContextOnShutdown?: boolean;
 	injectBriefing?: boolean;
 	displayBriefing?: boolean;
+	emergencyCompactionRuns?: number;
 	mcpLifecycle?: string;
 }
 
@@ -136,12 +142,18 @@ export function resolvePenpiConfig(settings: PenpiSettings = loadPenpiSettings()
 	const displayEnv = process.env.PENPI_DISPLAY_BRIEFING;
 	const displayBriefing =
 		displayEnv !== undefined ? displayEnv === "true" || displayEnv === "1" : (settings.displayBriefing ?? false);
+	// At least one run of grace; a non-integer rounds down.
+	const emergencyCompactionRuns = Math.max(
+		1,
+		Math.floor(num(process.env.PENPI_EMERGENCY_COMPACTION_RUNS, settings.emergencyCompactionRuns ?? 15)),
+	);
 	return {
 		contextCeiling: ceiling,
 		contextFloor: floor,
 		saveContextOnShutdown: save,
 		injectBriefing,
 		displayBriefing,
+		emergencyCompactionRuns,
 	};
 }
 

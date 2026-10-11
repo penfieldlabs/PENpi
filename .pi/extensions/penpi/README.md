@@ -68,6 +68,7 @@ adapter picks up refreshes on reconnect.
 | `penfield.tokenStore` | `PENPI_PENFIELD_TOKEN_STORE` | `~/.config/penpi/penfield-tokens-prod.json` | device-code token store |
 | `contextCeiling` | `PENPI_CONTEXT_CEILING` | `0.75` | FIFO trigger fraction of the context window |
 | `contextFloor` | `PENPI_CONTEXT_FLOOR` | `0.50` | FIFO drains to this fraction (forced below ceiling) |
+| `emergencyCompactionRuns` | `PENPI_EMERGENCY_COMPACTION_RUNS` | `15` | emergency fallback: consecutive agent runs without a valid context window (FIFO inactive) before PENpi forces one compaction; a minimum, not an exact trigger — the size gate may defer (ADR 0025) |
 | `saveContextOnShutdown` | `PENPI_SAVE_CONTEXT_ON_SHUTDOWN` | `false` | `save_context()` on shutdown (opt-in; env `=true`/`1` to enable) |
 | `injectBriefing` | `PENPI_INJECT_BRIEFING` | `true` | advanced diagnostic control for automatic orientation; normally leave enabled (`--penpi-raw` disables it for one session) |
 | `displayBriefing` | `PENPI_DISPLAY_BRIEFING` | `false` | also **show** normal automatic orientation in the UI. It does not change model context; set `true` to audit exactly what memory is injected each session |

@@ -18,6 +18,8 @@ Tier 3, and important things are stored to Tier 2. The bounded exception is emer
 overflow recovery ([ADR 0023](adr/0023-overflow-compaction-escape-hatch.md)): FIFO prunes
 whole atomic units and always keeps the newest, so a single unit too large for the window
 cannot be shrunk by pruning and may be summarized rather than hard-failing the session.
+The other is a model with no context window, for which FIFO cannot run at all: PENpi then
+forces an emergency compaction every so many runs ([ADR 0025](adr/0025-compaction-fallback-without-fifo-window.md)).
 
 ## Two layers of Penfield access ([ADR 0006](adr/0006-two-layer-penfield-access.md))
 
@@ -35,6 +37,7 @@ hands the JWT to the adapter via `PENFIELD_JWT` + a generated `mcp.json` entry.
 |------|----------|
 | `session_start` | Connect, `awaken()` + `reflect("recent")`, cache state, inject an orientation briefing + behavioral protocol; wire the conscious layer (set `PENFIELD_JWT`, write `mcp.json`) |
 | `context` | FIFO watermark pruning before every LLM call; refresh the shared token; wrapped so a fault never blocks the call |
+| `agent_settled` | Emergency fallback: after `emergencyCompactionRuns` consecutive runs without a valid context window (FIFO inactive), force one compaction ([ADR 0025](adr/0025-compaction-fallback-without-fifo-window.md)) |
 | `session_before_compact` | Reason-aware: `{cancel:true}` for `threshold` and for a missing reason — FIFO owns routine context; `overflow` and `manual` are allowed through ([ADR 0023](adr/0023-overflow-compaction-escape-hatch.md)) |
 | `session_shutdown` | Optional `save_context()` checkpoint (opt-in, [ADR 0010](adr/0010-save-context-on-shutdown-opt-in.md)), then disconnect |
 

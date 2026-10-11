@@ -18,6 +18,7 @@ describe("resolvePenpiConfig", () => {
 			saveContextOnShutdown: false,
 			injectBriefing: true,
 			displayBriefing: false,
+			emergencyCompactionRuns: 15,
 		});
 	});
 
@@ -28,6 +29,7 @@ describe("resolvePenpiConfig", () => {
 			saveContextOnShutdown: false,
 			injectBriefing: true,
 			displayBriefing: false,
+			emergencyCompactionRuns: 15,
 		});
 	});
 
@@ -40,6 +42,15 @@ describe("resolvePenpiConfig", () => {
 	it("lets env override settings", () => {
 		process.env.PENPI_CONTEXT_CEILING = "0.9";
 		expect(resolvePenpiConfig({ contextCeiling: 0.6 }).contextCeiling).toBe(0.9);
+	});
+
+	it("resolves emergencyCompactionRuns from settings and env, never below 1", () => {
+		expect(resolvePenpiConfig({ emergencyCompactionRuns: 30 }).emergencyCompactionRuns).toBe(30);
+		expect(resolvePenpiConfig({ emergencyCompactionRuns: 0 }).emergencyCompactionRuns).toBe(1);
+		process.env.PENPI_EMERGENCY_COMPACTION_RUNS = "7.9";
+		expect(resolvePenpiConfig({ emergencyCompactionRuns: 30 }).emergencyCompactionRuns).toBe(7);
+		process.env.PENPI_EMERGENCY_COMPACTION_RUNS = "abc";
+		expect(resolvePenpiConfig({}).emergencyCompactionRuns).toBe(15);
 	});
 
 	it("forces floor below ceiling", () => {

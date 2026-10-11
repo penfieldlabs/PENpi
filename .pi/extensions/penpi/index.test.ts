@@ -1,8 +1,14 @@
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import penpi, { FENCE_LABELS, penpiCore, sanitizeMemoryText } from "./index.ts";
+import penpi, {
+	compactionKeepRecentTokens,
+	FENCE_LABELS,
+	hasCompactableHistory,
+	penpiCore,
+	sanitizeMemoryText,
+} from "./index.ts";
 
 // --- Fakes -----------------------------------------------------------------
 
@@ -99,10 +105,10 @@ function load(flags: Record<string, boolean> = {}, clientOver: Record<string, an
 }
 
 describe("penpiCore registration", () => {
-	it("registers the four hooks, command, two flags, and transcript tool", () => {
+	it("registers the five hooks, command, two flags, and transcript tool", () => {
 		const { handlers, commands, tools, registeredFlags } = load();
 		expect(Object.keys(handlers).sort()).toEqual(
-			["context", "session_before_compact", "session_shutdown", "session_start"].sort(),
+			["agent_settled", "context", "session_before_compact", "session_shutdown", "session_start"].sort(),
 		);
 		expect(commands.penpi).toBeTypeOf("function");
 		expect(tools.search_transcript).toBeTruthy();
@@ -110,6 +116,12 @@ describe("penpiCore registration", () => {
 		expect(registeredFlags[0]?.options.hidden).toBe(true);
 	});
 });
+
+// An under-ceiling context call with a valid window: FIFO is now active.
+async function primeFifoWindow(handlers: Record<string, Handler>) {
+	const { ctx } = makeCtx({ tokens: 10, contextWindow: 1_000_000 });
+	await handlers.context({ messages: [user("hi")] }, ctx);
+}
 
 describe("session_before_compact (reason-aware)", () => {
 	it("cancels routine threshold compaction (FIFO owns context)", async () => {
@@ -122,6 +134,14 @@ describe("session_before_compact (reason-aware)", () => {
 		await expect(handlers.session_before_compact({}, {})).resolves.toEqual({ cancel: true });
 	});
 
+	it("cancels threshold compaction even when FIFO has never seen a context window (no hook fallback, ADR 0025)", async () => {
+		const { handlers } = load();
+		const { ctx } = makeCtx(undefined);
+		await handlers.context({ messages: [user("hi")] }, ctx);
+		await expect(handlers.session_before_compact({ reason: "threshold" }, {})).resolves.toEqual({ cancel: true });
+		await expect(handlers.session_before_compact({}, {})).resolves.toEqual({ cancel: true });
+	});
+
 	it("allows OVERFLOW recovery — FIFO cannot shrink a single oversized unit (F2)", async () => {
 		const { handlers } = load();
 		await expect(handlers.session_before_compact({ reason: "overflow" }, {})).resolves.toBeUndefined();
@@ -130,6 +150,287 @@ describe("session_before_compact (reason-aware)", () => {
 	it("allows explicit manual /compact (user intent wins)", async () => {
 		const { handlers } = load();
 		await expect(handlers.session_before_compact({ reason: "manual" }, {})).resolves.toBeUndefined();
+	});
+});
+
+// --- Session-entry fixtures for the compaction size gate --------------------
+
+let entrySeq = 0;
+function msgEntry(role: "user" | "assistant", chars: number): any {
+	const text = "x".repeat(chars);
+	const message =
+		role === "user"
+			? user(text)
+			: {
+					role: "assistant",
+					content: [{ type: "text", text }],
+					api: "test",
+					provider: "test",
+					model: "test",
+					usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0 },
+					stopReason: "stop",
+					timestamp: 0,
+				};
+	entrySeq++;
+	return { type: "message", id: `e${entrySeq}`, parentId: null, timestamp: new Date(0).toISOString(), message };
+}
+// `pairs` user/assistant exchanges of `chars` characters each (~chars/4 tokens per message).
+function branch(pairs: number, chars: number): any[] {
+	const out: any[] = [];
+	for (let i = 0; i < pairs; i++) out.push(msgEntry("user", chars), msgEntry("assistant", chars));
+	return out;
+}
+function compactionEntry(firstKeptEntryId: string): any {
+	entrySeq++;
+	return {
+		type: "compaction",
+		id: `e${entrySeq}`,
+		parentId: null,
+		timestamp: new Date(0).toISOString(),
+		summary: "s",
+		firstKeptEntryId,
+		tokensBefore: 0,
+	};
+}
+
+describe("hasCompactableHistory (mirrors pi's prepareCompaction gate)", () => {
+	it("is false for an empty branch and a branch ending in a compaction", () => {
+		expect(hasCompactableHistory([])).toBe(false);
+		const big = branch(6, 20_000);
+		expect(hasCompactableHistory([...big, compactionEntry(big[8].id)])).toBe(false);
+	});
+
+	it("is false when the whole history fits in keepRecentTokens", () => {
+		expect(hasCompactableHistory(branch(5, 2_000))).toBe(false); // ~5k tokens < 20k
+	});
+
+	it("is true once history exceeds keepRecentTokens", () => {
+		expect(hasCompactableHistory(branch(6, 20_000))).toBe(true); // ~60k tokens
+	});
+
+	it("only counts history after the previous compaction boundary", () => {
+		const before = branch(6, 20_000);
+		const after = branch(2, 2_000);
+		expect(hasCompactableHistory([...before, compactionEntry(after[0].id), ...after])).toBe(false);
+		const more = branch(6, 20_000);
+		expect(hasCompactableHistory([...before, compactionEntry(after[0].id), ...after, ...more])).toBe(true);
+	});
+});
+
+// Isolated pi settings: an empty agent dir and project cwd, so tests never read ~/.pi.
+let settingsRoot: string;
+let savedAgentDir: string | undefined;
+function writePiSettings(scope: "global" | "project", settings: Record<string, unknown>) {
+	const dir = scope === "global" ? join(settingsRoot, "agent") : join(settingsRoot, "project", ".pi");
+	mkdirSync(dir, { recursive: true });
+	writeFileSync(join(dir, "settings.json"), JSON.stringify(settings));
+}
+
+describe("compactionKeepRecentTokens (pi's configured value, F2)", () => {
+	beforeEach(() => {
+		settingsRoot = mkdtempSync(join(tmpdir(), "penpi-pi-settings-"));
+		savedAgentDir = process.env.PI_CODING_AGENT_DIR;
+		process.env.PI_CODING_AGENT_DIR = join(settingsRoot, "agent");
+	});
+	afterEach(() => {
+		if (savedAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = savedAgentDir;
+		rmSync(settingsRoot, { recursive: true, force: true });
+	});
+
+	it("falls back to pi's default with no settings", () => {
+		expect(compactionKeepRecentTokens(join(settingsRoot, "project"))).toBe(20_000);
+	});
+
+	it("reads global settings", () => {
+		writePiSettings("global", { compaction: { keepRecentTokens: 50_000 } });
+		expect(compactionKeepRecentTokens(join(settingsRoot, "project"))).toBe(50_000);
+	});
+
+	it("never reads project settings, which may be untrusted (N1)", () => {
+		writePiSettings("project", { compaction: { keepRecentTokens: 80_000 } });
+		expect(compactionKeepRecentTokens(join(settingsRoot, "project"))).toBe(20_000);
+		writePiSettings("global", { compaction: { keepRecentTokens: 50_000 } });
+		expect(compactionKeepRecentTokens(join(settingsRoot, "project"))).toBe(50_000);
+	});
+});
+
+describe("emergency compaction at agent_settled (no valid context window)", () => {
+	function makeSettledCtx(entries: any[] = branch(6, 20_000), hasUI = true) {
+		const notifies: Array<{ msg: string; level?: string }> = [];
+		const ctx = {
+			hasUI,
+			cwd: join(settingsRoot, "project"),
+			ui: { notify: (msg: string, level?: string) => notifies.push({ msg, level }) },
+			sessionManager: { getBranch: () => entries },
+			compact: vi.fn(),
+		};
+		return { ctx, notifies };
+	}
+	async function settle(handlers: Record<string, Handler>, ctx: unknown, runs: number) {
+		for (let i = 0; i < runs; i++) await handlers.agent_settled({ type: "agent_settled" }, ctx);
+	}
+	// A run on a model without a window: the context hook sees no usage.
+	async function runWithoutWindow(handlers: Record<string, Handler>) {
+		const { ctx } = makeCtx(undefined);
+		await handlers.context({ messages: [user("hi")] }, ctx);
+	}
+	beforeEach(() => {
+		process.env.PENPI_EMERGENCY_COMPACTION_RUNS = "3";
+		settingsRoot = mkdtempSync(join(tmpdir(), "penpi-pi-settings-"));
+		savedAgentDir = process.env.PI_CODING_AGENT_DIR;
+		process.env.PI_CODING_AGENT_DIR = join(settingsRoot, "agent");
+	});
+	afterEach(() => {
+		if (savedAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = savedAgentDir;
+		rmSync(settingsRoot, { recursive: true, force: true });
+	});
+
+	it("does not fire below the threshold", async () => {
+		const { handlers } = load();
+		await runWithoutWindow(handlers);
+		const { ctx } = makeSettledCtx();
+		await settle(handlers, ctx, 2);
+		expect(ctx.compact).not.toHaveBeenCalled();
+	});
+
+	it("fires once at the threshold, warns via ui.notify, and does not stack while pending", async () => {
+		const { handlers } = load();
+		await runWithoutWindow(handlers);
+		const { ctx, notifies } = makeSettledCtx();
+		await settle(handlers, ctx, 3);
+		expect(ctx.compact).toHaveBeenCalledTimes(1);
+		expect(notifies).toHaveLength(1);
+		expect(notifies[0]).toMatchObject({ level: "warning" });
+		expect(notifies[0].msg).toMatch(/no context window.*3 runs/);
+		await settle(handlers, ctx, 5);
+		expect(ctx.compact).toHaveBeenCalledTimes(1);
+		// ctx.compact() reports reason "manual", which the veto lets through.
+		await expect(handlers.session_before_compact({ reason: "manual" }, {})).resolves.toBeUndefined();
+	});
+
+	it("re-arms after completion: the count restarts from zero", async () => {
+		const { handlers } = load();
+		const { ctx } = makeSettledCtx();
+		await settle(handlers, ctx, 3);
+		ctx.compact.mock.calls[0][0].onComplete({});
+		await settle(handlers, ctx, 2);
+		expect(ctx.compact).toHaveBeenCalledTimes(1);
+		await settle(handlers, ctx, 1);
+		expect(ctx.compact).toHaveBeenCalledTimes(2);
+	});
+
+	it("adds no PENpi notification for an expected 'Nothing to compact' failure", async () => {
+		const { handlers } = load();
+		const { ctx, notifies } = makeSettledCtx();
+		await settle(handlers, ctx, 3);
+		ctx.compact.mock.calls[0][0].onError(new Error("Nothing to compact (session too small)"));
+		expect(notifies.filter((n) => n.level === "error")).toHaveLength(0);
+	});
+
+	it("after an error, waits a full count again and then fires (F5)", async () => {
+		const { handlers } = load();
+		const { ctx } = makeSettledCtx();
+		await settle(handlers, ctx, 3);
+		ctx.compact.mock.calls[0][0].onError(new Error("Nothing to compact (session too small)"));
+		await settle(handlers, ctx, 2);
+		expect(ctx.compact).toHaveBeenCalledTimes(1);
+		await settle(handlers, ctx, 1);
+		expect(ctx.compact).toHaveBeenCalledTimes(2);
+	});
+
+	it("if ctx.compact throws: resets the count, clears pending, and notifies only once per session (F4)", async () => {
+		const { handlers } = load();
+		const { ctx, notifies } = makeSettledCtx();
+		ctx.compact.mockImplementation(() => {
+			throw new Error("stale extension context");
+		});
+		await settle(handlers, ctx, 3);
+		expect(ctx.compact).toHaveBeenCalledTimes(1);
+		const errors = () => notifies.filter((n) => n.level === "error");
+		expect(errors()).toHaveLength(1);
+		expect(errors()[0].msg).toContain("stale extension context");
+		// Count reset: not retried on the very next run…
+		await settle(handlers, ctx, 2);
+		expect(ctx.compact).toHaveBeenCalledTimes(1);
+		// …but after a full count (pending was cleared), and without a second notification.
+		await settle(handlers, ctx, 1);
+		expect(ctx.compact).toHaveBeenCalledTimes(2);
+		expect(errors()).toHaveLength(1);
+	});
+
+	it("uses pi's configured keepRecentTokens for the size gate (F2)", async () => {
+		writePiSettings("global", { compaction: { keepRecentTokens: 200_000 } });
+		const { handlers } = load();
+		const { ctx } = makeSettledCtx(); // ~60k tokens: compactable at pi's default, not at 200k
+		await settle(handlers, ctx, 5);
+		expect(ctx.compact).not.toHaveBeenCalled();
+	});
+
+	it("reports an unexpected failure via ui.notify", async () => {
+		const { handlers } = load();
+		const { ctx, notifies } = makeSettledCtx();
+		await settle(handlers, ctx, 3);
+		ctx.compact.mock.calls[0][0].onError(new Error("provider exploded"));
+		expect(notifies.at(-1)).toMatchObject({ level: "error" });
+		expect(notifies.at(-1)?.msg).toContain("provider exploded");
+	});
+
+	it("defers on a session too small to compact, then fires once history grows", async () => {
+		const { handlers } = load();
+		const entries = branch(2, 2_000);
+		const { ctx, notifies } = makeSettledCtx(entries);
+		await settle(handlers, ctx, 5);
+		expect(ctx.compact).not.toHaveBeenCalled();
+		expect(notifies).toHaveLength(0);
+		entries.push(...branch(6, 20_000));
+		await settle(handlers, ctx, 1);
+		expect(ctx.compact).toHaveBeenCalledTimes(1);
+	});
+
+	it("compacts without notifying when there is no UI", async () => {
+		const { handlers } = load();
+		const { ctx, notifies } = makeSettledCtx(undefined, false);
+		await settle(handlers, ctx, 3);
+		expect(ctx.compact).toHaveBeenCalledTimes(1);
+		expect(notifies).toHaveLength(0);
+	});
+
+	it("does not count runs while the model has a window (FIFO active)", async () => {
+		const { handlers } = load();
+		const { ctx } = makeSettledCtx();
+		for (let i = 0; i < 10; i++) {
+			await primeFifoWindow(handlers);
+			await settle(handlers, ctx, 1);
+		}
+		expect(ctx.compact).not.toHaveBeenCalled();
+	});
+
+	it("starts counting after a switch to a window-less model, even though FIFO ran before", async () => {
+		const { handlers } = load();
+		const { ctx } = makeSettledCtx();
+		await primeFifoWindow(handlers);
+		await settle(handlers, ctx, 5);
+		expect(ctx.compact).not.toHaveBeenCalled();
+		// Model switch: the window disappears for good. FIFO stops, so the fallback must arm.
+		await runWithoutWindow(handlers);
+		await settle(handlers, ctx, 3);
+		expect(ctx.compact).toHaveBeenCalledTimes(1);
+	});
+
+	it("clears the count when a windowed model returns", async () => {
+		const { handlers } = load();
+		const { ctx } = makeSettledCtx();
+		await runWithoutWindow(handlers);
+		await settle(handlers, ctx, 2);
+		await primeFifoWindow(handlers);
+		await settle(handlers, ctx, 1);
+		await runWithoutWindow(handlers);
+		await settle(handlers, ctx, 2);
+		expect(ctx.compact).not.toHaveBeenCalled();
+		await settle(handlers, ctx, 1);
+		expect(ctx.compact).toHaveBeenCalledTimes(1);
 	});
 });
 

@@ -4,6 +4,35 @@ All notable changes to **PENpi**. Format: [Keep a Changelog](https://keepachange
 PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
 `packages/coding-agent/CHANGELOG.md`.)
 
+## [0.3.1] — 2026-10-10
+
+Context management for models that report no context window, plus dependency advisory
+fixes.
+
+### Added
+- **Emergency compaction fallback ([ADR 0025]).** FIFO needs a context window, and pi
+  reports no context usage for a model whose metadata has none. With compaction off (the
+  fork default), such a session had no context management at all. PENpi now counts
+  consecutive agent runs in which FIFO had no valid context window. After
+  `emergencyCompactionRuns` of them (default `15`, `PENPI_EMERGENCY_COMPACTION_RUNS`), it
+  forces one compaction via `ctx.compact()`. The run count is a minimum, not an exact
+  trigger: a size gate mirroring pi's cut-point rule defers compaction until session
+  history clears `keepRecentTokens`. It fires at `agent_settled`, after pi's retry and
+  overflow handling, because compacting from `agent_end` would disconnect the session
+  under a pending retry. Threshold compaction is still cancelled unconditionally, so
+  sessions with a window keep compaction off and FIFO in charge.
+
+### Security
+- **Dependency advisories.** `vitest` 4.1.9 → **4.1.11**, with its exact peer
+  `@vitest/coverage-v8`, clears GHSA-82fw-gwwq-j7x9 (moderate — path traversal and
+  arbitrary file read via the `@vitest/mocker` redirect mock). `undici` 8.10.0 →
+  **8.10.2** clears eleven 8.x advisories, three of them high: a DoS via an unrequested
+  WebSocket subprotocol, a TLS certificate validation bypass in `BalancedPool`, and
+  cross-origin cache poisoning in interceptors. The rest are moderate or low, including
+  further DoS issues and downstream response splitting via the retry interceptor.
+  `ip-address` 10.4.0 → **10.7.3** (transitive, via `express-rate-limit`) clears four
+  moderate advisories, two of them SSRF and trust-boundary bypasses.
+
 ## [0.3.0] — 2026-09-03
 
 Hardening against providers whose usage reporting cannot be trusted, plus release

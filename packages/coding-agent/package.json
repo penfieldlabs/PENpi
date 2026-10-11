@@ -55,7 +55,7 @@
 		"proper-lockfile": "4.1.2",
 		"semver": "7.8.0",
 		"typebox": "1.3.7",
-		"undici": "8.10.0",
+		"undici": "8.10.2",
 		"yaml": "2.9.0"
 	},
 	"overrides": {
@@ -78,7 +78,7 @@
 		"@types/semver": "7.7.1",
 		"shx": "0.4.0",
 		"typescript": "5.9.3",
-		"vitest": "4.1.9"
+		"vitest": "4.1.11"
 	},
 	"keywords": [
 		"coding-agent",

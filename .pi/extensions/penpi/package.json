@@ -1,9 +1,9 @@
 {
 	"name": "penpi",
-	"version": "0.3.0",
+	"version": "0.3.1",
 	"private": true,
 	"type": "module",
-	"description": "PENpi \u2014 Penfield persistent memory + FIFO context management for Pi",
+	"description": "PENpi — Penfield persistent memory + FIFO context management for Pi",
 	"pi": {
 		"extensions": [
 			"./index.ts"
@@ -19,7 +19,7 @@
 		"@modelcontextprotocol/sdk": "1.30.0"
 	},
 	"devDependencies": {
-		"undici": "8.10.0",
-		"vitest": "4.1.9"
+		"undici": "8.10.2",
+		"vitest": "4.1.11"
 	}
 }
