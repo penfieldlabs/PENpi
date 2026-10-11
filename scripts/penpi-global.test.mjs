@@ -86,7 +86,18 @@ test("install atomically merges valid settings and preserves unknown fields", ()
 	assert.deepEqual(settings.apiKeys, { example: "placeholder" });
 	assert.deepEqual(settings.customField, [1, 2]);
 	assert.equal(settings.compaction.enabled, false);
-	assert.ok(settings.packages.includes("npm:pi-mcp-adapter@2.12.1"));
+	assert.equal(settings.packages, undefined, "install must not add a packages list");
+});
+
+test("install removes a stock pi-mcp-adapter package left by an earlier install", () => {
+	// PENpi embeds the adapter with a global-only config (ADR 0026). A stock copy
+	// still loaded by pi would read project .mcp.json / .pi/mcp.json.
+	const testHome = home();
+	const path = settingsPath(testHome);
+	write(path, JSON.stringify({ packages: ["npm:pi-mcp-adapter@2.12.1", "npm:pi-web-tools@1.0.0", "npm:pi-mcp-adapter"] }));
+	const result = run(testHome, "install");
+	assert.equal(result.status, 0, result.stderr);
+	assert.deepEqual(JSON.parse(readFileSync(path, "utf8")).packages, ["npm:pi-web-tools@1.0.0"]);
 });
 
 test("install refuses a symbolic-link settings file", () => {
@@ -150,7 +161,8 @@ test("install and uninstall are idempotent", () => {
 	const profile = readFileSync(join(testHome, ".bashrc"), "utf8");
 	assert.equal(profile.match(/#PENPI_GLOBAL_BEGIN/g)?.length, 1);
 	const settings = JSON.parse(readFileSync(settingsPath(testHome), "utf8"));
-	assert.equal(settings.packages.filter((x) => x === "npm:pi-mcp-adapter@2.12.1").length, 1);
+	assert.equal(settings.compaction.enabled, false);
+	assert.equal(settings.packages, undefined);
 	assert.equal(run(testHome, "uninstall").status, 0);
 	assert.equal(run(testHome, "uninstall").status, 0);
 });
@@ -159,25 +171,26 @@ test("installer remains valid Bash", () => {
 	execFileSync("bash", ["-n", script]);
 });
 
-test("the adapter pin is identical in settings.json and the installer", () => {
-	// Two hand-maintained copies of the same pin. A mismatch means a global install
-	// and a repo-local run get different adapter versions, and the difference is
-	// invisible until direct tools behave differently in one of them.
+test("the adapter is pinned once, as a PENpi dependency, and never as a stock package", () => {
+	// PENpi embeds the adapter (ADR 0026). Listing the stock package in settings
+	// again would load a second copy that reads project MCP config.
 	const root = fileURLToPath(new URL("..", import.meta.url));
-	const settings = JSON.parse(readFileSync(join(root, ".pi/settings.json"), "utf8"));
-	const installer = readFileSync(join(root, "scripts/penpi-global.sh"), "utf8");
+	const read = (p) => JSON.parse(readFileSync(join(root, p), "utf8"));
+	const fromPenpi = read(".pi/extensions/penpi/package.json").dependencies?.["pi-mcp-adapter"];
+	const fromRoot = read("package.json").devDependencies?.["pi-mcp-adapter"];
+	assert.ok(fromPenpi, "pi-mcp-adapter must be a dependency of the penpi extension");
+	assert.equal(fromRoot, fromPenpi, "the root devDependency and the PENpi dependency pin different adapter versions");
 
-	const fromSettings = settings.packages.find((p) => p.startsWith("npm:pi-mcp-adapter@"));
-	const fromInstaller = installer.match(/ADAPTER="(npm:pi-mcp-adapter@[^"]+)"/)?.[1];
-
-	assert.ok(fromSettings, "no pi-mcp-adapter pin in .pi/settings.json");
-	assert.ok(fromInstaller, "no ADAPTER pin in scripts/penpi-global.sh");
-	assert.equal(fromInstaller, fromSettings, "adapter pins disagree between settings.json and the installer");
+	assert.equal(
+		(read(".pi/settings.json").packages ?? []).some((p) => p.includes("pi-mcp-adapter")),
+		false,
+		".pi/settings.json must not list the stock pi-mcp-adapter package",
+	);
+	assert.doesNotMatch(readFileSync(join(root, "scripts/penpi-global.sh"), "utf8"), /npm:pi-mcp-adapter@/);
 
 	// 2.12.0 added runtime hot-registration of direct tools, which is what makes
 	// them available on a clean install's first message rather than after a
 	// restart. Anything older reintroduces that defect.
-	const version = fromSettings.split("@").pop();
-	const [major, minor] = version.split(".").map(Number);
-	assert.ok(major > 2 || (major === 2 && minor >= 12), `adapter ${version} predates hot-registration (2.12.0)`);
+	const [major, minor] = fromPenpi.split(".").map(Number);
+	assert.ok(major > 2 || (major === 2 && minor >= 12), `adapter ${fromPenpi} predates hot-registration (2.12.0)`);
 });

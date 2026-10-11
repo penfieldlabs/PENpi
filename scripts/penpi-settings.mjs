@@ -13,12 +13,17 @@ import {
 } from "node:fs";
 import { dirname } from "node:path";
 
-const [action, settingsPath, adapter] = process.argv.slice(2);
+const [action, settingsPath] = process.argv.slice(2);
 
-if (!settingsPath || !adapter || !["install", "uninstall"].includes(action)) {
-	console.error("usage: penpi-settings.mjs <install|uninstall> <settings-path> <adapter>");
+if (!settingsPath || !["install", "uninstall"].includes(action)) {
+	console.error("usage: penpi-settings.mjs <install|uninstall> <settings-path>");
 	process.exit(2);
 }
+
+// PENpi embeds pi-mcp-adapter with a global-only config (ADR 0026). A separately
+// installed stock adapter package reads project MCP config, so both install and
+// uninstall remove it; earlier PENpi versions added it here.
+const STOCK_ADAPTER = /(^|[:/])pi-mcp-adapter(@|$)/;
 
 function isRecord(value) {
 	return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -64,11 +69,11 @@ function writeSettings(value, existed) {
 try {
 	const { exists, value: settings } = readSettings();
 	if (action === "install") {
-		settings.packages = Array.from(new Set([...(settings.packages ?? []), adapter]));
+		if (settings.packages !== undefined) settings.packages = settings.packages.filter((x) => !STOCK_ADAPTER.test(x));
 		settings.compaction = { ...(settings.compaction ?? {}), enabled: false };
 		writeSettings(settings, exists);
 	} else if (exists) {
-		settings.packages = (settings.packages ?? []).filter((x) => x !== adapter);
+		if (settings.packages !== undefined) settings.packages = settings.packages.filter((x) => !STOCK_ADAPTER.test(x));
 		if (settings.compaction?.enabled === false) {
 			delete settings.compaction.enabled;
 			if (Object.keys(settings.compaction).length === 0) delete settings.compaction;

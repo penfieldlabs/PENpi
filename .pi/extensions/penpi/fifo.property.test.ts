@@ -11,11 +11,13 @@
  *   P3  Original order is preserved; the newest live message is always kept.
  *   P4  The synthetic FIFO notice appears at most once, only as the first
  *       message, only on triggered plans, and never claims briefing protection.
- *   P5  Multi-turn: simulated sent context (messages + overhead) never exceeds
- *       the window across long sessions, including estimator-hostile content
- *       (provider reports ~4x our chars/4 estimate, as with CJK/base64), and
- *       learned overhead never collapses the window to a single unit
- *       (single-turn amnesia) when the floor leaves room.
+ *   P5  Multi-turn: once pruning starts, the estimated messages sent stay within
+ *       floor x window (the budget learns nothing), and the REAL sent context
+ *       (messages at the provider's count + overhead) never exceeds the window
+ *       whenever the policy has room for the undercount: slope x floor x window +
+ *       overhead <= window. Covers estimator-hostile content (provider reports ~4x
+ *       our chars/4 estimate, as with CJK/base64), which the default 0.2 floor
+ *       holds. No single-turn amnesia when the floor leaves room.
  */
 import { estimateTokens } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
@@ -180,17 +182,27 @@ describe("planFifo properties (randomized, seeded)", () => {
 	}, 30_000);
 
 	it("P5: long sessions stay under the window, including estimator-hostile content", () => {
+		// The shipped default (0.2 / 0.8) is the policy built to hold a 4x undercount.
+		const policies = [...cfgs, { contextCeiling: 0.8, contextFloor: 0.2 }];
+		let hostileWithinEnvelope = 0;
 		for (const hostile of [false, true]) {
+			const slope = hostile ? 4 : 1;
 			for (let seed = 1; seed <= 40; seed++) {
 				const rand = rng(seed * 7919);
 				const WINDOW = 2000 + Math.floor(rand() * 6000);
 				const OVERHEAD = 100 + Math.floor(rand() * 400);
-				const cfg = cfgs[seed % cfgs.length];
+				const cfg = policies[seed % policies.length];
+				// The budget holds floor x window ESTIMATED tokens, so the real size of a
+				// pruned context is about slope x floor x window + overhead. Within that
+				// envelope it must fit; outside it (e.g. a 4x undercount on a 0.5 floor) an
+				// overflow is left to pi's overflow recovery (ADR 0023).
+				const withinEnvelope = slope * cfg.contextFloor * WINDOW + OVERHEAD <= WINDOW;
+				if (hostile && withinEnvelope) hostileWithinEnvelope++;
 				const state = newFifoTriggerState();
 				const session: Msg[] = [];
 				let lastSent: Msg[] = [];
 				// Provider counts tokens ~4x our estimate for hostile content (CJK/base64).
-				const providerTokens = (m: Msg[]) => m.reduce((a, x) => a + estimateTokens(x) * (hostile ? 4 : 1), 0);
+				const providerTokens = (m: Msg[]) => m.reduce((a, x) => a + estimateTokens(x) * slope, 0);
 				for (let turn = 0; turn < 80; turn++) {
 					session.push({
 						role: "user",
@@ -201,18 +213,21 @@ describe("planFifo properties (randomized, seeded)", () => {
 					const report = OVERHEAD + providerTokens(lastSent) + providerTokens(session.slice(sinceIdx));
 					const plan = planFifoFromUsage(session, WINDOW, report, cfg, state);
 					lastSent = plan.triggered ? plan.messages : session.slice();
-					const tag = `hostile=${hostile} seed=${seed} turn=${turn} window=${WINDOW}`;
-					// The REAL token count of what we send must respect the window — the
-					// calibration ratio makes eviction converge on the floor even when the
-					// estimator undercounts 4x.
-					const sentReal = providerTokens(lastSent) + OVERHEAD;
-					expect(sentReal, `${tag}: sent over window (real tokens)`).toBeLessThanOrEqual(WINDOW);
-					// No single-turn amnesia on the calibrated path: once the session is
-					// deep, pruning must retain more than the live unit alone. (Not asserted
-					// in hostile mode: with a genuine 4x undercount the provider-confirmed
-					// capacity for messages is honestly tiny, and keeping only the live unit
-					// can be the correct answer for large messages.)
-					if (!hostile && plan.triggered && turn > 20) {
+					const tag = `hostile=${hostile} seed=${seed} turn=${turn} window=${WINDOW} floor=${cfg.contextFloor}`;
+					if (plan.triggered) {
+						// +64: the FIFO notice, when the kept window would start with an assistant.
+						expect(plan.keptMessageTokens, `${tag}: budget exceeded`).toBeLessThanOrEqual(
+							Math.max(cfg.contextFloor * WINDOW, liveUnitTokens(session)) + 64,
+						);
+					}
+					if (withinEnvelope) {
+						const sentReal = providerTokens(lastSent) + OVERHEAD;
+						expect(sentReal, `${tag}: sent over window (real tokens)`).toBeLessThanOrEqual(WINDOW);
+					}
+					// No single-turn amnesia: once the session is deep, pruning must retain
+					// more than the live unit alone. The budget no longer depends on the
+					// estimator, so this now holds for hostile content too.
+					if (plan.triggered && turn > 20) {
 						expect(plan.messages.length, `${tag}: single-turn amnesia`).toBeGreaterThan(1);
 					}
 					session.push({
@@ -223,5 +238,8 @@ describe("planFifo properties (randomized, seeded)", () => {
 				}
 			}
 		}
+		// Guard against a vacuous hostile sweep: enough hostile sessions must fall inside
+		// the envelope for the window assertion to have been exercised.
+		expect(hostileWithinEnvelope).toBeGreaterThanOrEqual(5);
 	}, 30_000);
 });

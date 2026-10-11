@@ -3,6 +3,13 @@
 - Status: Accepted
 - Date: 2026-10-10
 
+> **Amended (0.3.2).** The `agent_settled` handler now awaits the compaction, resolving on
+> `onComplete` or `onError`, instead of starting it and returning. pi resolves `prompt()`
+> and `waitForIdle()` only after `agent_settled` handlers return, so the session stays busy
+> until the compaction is done: print mode cannot exit and the next prompt cannot start
+> while it runs. There is no deadlock, because `compact()` waits for idle and the run is
+> already inactive when `agent_settled` fires. The pending flag stays as a guard.
+
 ## Context
 
 [ADR 0023](0023-overflow-compaction-escape-hatch.md) made `session_before_compact`

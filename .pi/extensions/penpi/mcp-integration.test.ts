@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -18,9 +18,10 @@ import { FIXTURE_BRIEFING, type FixturePenfield, startFixturePenfield } from "./
 import { BRIEFING_CUSTOM_TYPE } from "./config.ts";
 
 /**
- * Cross-package integration: PENpi and the REAL pi-mcp-adapter, loaded together
- * through Pi's REAL extension loader, driven by Pi's REAL ExtensionRunner,
- * against a real MCP server.
+ * Cross-package integration: PENpi and the REAL pi-mcp-adapter, which PENpi embeds
+ * (ADR 0026), loaded through Pi's REAL extension loader, driven by Pi's REAL
+ * ExtensionRunner, against a real MCP server. A third test proves the embedded
+ * adapter never reads a project's .mcp.json or .pi/mcp.json.
  *
  * Two startup paths have to work, and they fail differently:
  *
@@ -168,7 +169,7 @@ interface Session {
  * failure mode these tests exist to rule out, so the binding has to be present
  * and faithful.
  */
-async function startSession(profile: string): Promise<Session> {
+async function startSession(profile: string, entry: string = penpiEntry): Promise<Session> {
 	// PENpi's duplicate-load guard lives on globalThis and is disarmed by
 	// session_start. Clear it so an earlier load in this worker cannot make PENpi
 	// skip registration here.
@@ -176,11 +177,11 @@ async function startSession(profile: string): Promise<Session> {
 
 	const { loadExtensions } = await import(loaderPath);
 	const runtime = createExtensionRuntime();
-	// PENpi FIRST, adapter second — the production ordering, and the one that
-	// matters: PENpi's session_start must run before the adapter reads config.
-	const result = await loadExtensions([penpiEntry, adapterEntry], profile, undefined, runtime);
-	expect(result.errors, "both extensions must load cleanly through Pi's loader").toEqual([]);
-	expect(result.extensions.map((e: { path: string }) => e.path)).toEqual([penpiEntry, adapterEntry]);
+	// PENpi ALONE: it embeds the adapter (ADR 0026), installing it after its own
+	// handlers so PENpi's session_start runs before the adapter's.
+	const result = await loadExtensions([entry], profile, undefined, runtime);
+	expect(result.errors, "PENpi must load cleanly through Pi's loader").toEqual([]);
+	expect(result.extensions.map((e: { path: string }) => e.path)).toEqual([entry]);
 
 	let runner: ExtensionRunner | undefined;
 	const active = new Set<string>();
@@ -552,5 +553,108 @@ describe("integration: Penfield direct tools across both startup paths", () => {
 			}
 		},
 		120_000,
+	);
+
+	it.skipIf(!ready)(
+		"global install: the embedded adapter loads when PENpi is reached through a symlink",
+		async () => {
+			// penpi-global.sh links <agentDir>/extensions/penpi to the repository's
+			// extension directory. Pi loads it by the LINK path, so a module resolved
+			// relative to that path searches the agent directory's node_modules, not the
+			// repository's, and never finds pi-mcp-adapter. The link lives outside the
+			// repository here for the same reason.
+			const profile = cleanProfile();
+			const extensions = cleanProfile();
+			const link = join(extensions, "penpi");
+			symlinkSync(here, link, "dir");
+			const tokenStore = join(profile, "penfield-tokens-dev.json");
+			writeFileSync(tokenStore, JSON.stringify({ accessToken: SEEDED_TOKEN, expiresAt: Date.now() + 3_600_000 }), {
+				mode: 0o600,
+			});
+			const fixture = await startFixturePenfield(SEEDED_TOKEN);
+			const previousDispatcher = redirectTo(fixture);
+			const restoreEnv = sessionEnv(profile, tokenStore);
+			let session: Session | undefined;
+			try {
+				session = await startSession(profile, join(link, "index.ts"));
+				// The adapter registers its `mcp` proxy tool at load: present only if it loaded.
+				expect(session.registered(), "the embedded adapter did not load through the symlink").toContain("mcp");
+				await session.runner.emit({ type: "session_start", reason: "startup" });
+				expect(session.errors).toEqual([]);
+				await waitFor(() => session?.active.has("penfield_recall") === true);
+				expect([...session.active]).toEqual(expect.arrayContaining(["penfield_recall", "penfield_store"]));
+				await session.runner.emit({ type: "session_shutdown", reason: "quit" });
+			} finally {
+				session?.dispose();
+				for (const restore of restoreEnv) restore();
+				setGlobalDispatcher(previousDispatcher);
+				await fixture.close();
+			}
+		},
+		90_000,
+	);
+
+	it.skipIf(!ready)(
+		"hostile project: MCP servers in the repo's .mcp.json and .pi/mcp.json are never read or started",
+		async () => {
+			// Security F1 (ADR 0026). The stock adapter layers project config over the
+			// global file, so a repository could ship a stdio server, i.e. a local
+			// command, that runs as soon as pi starts in it. Each file here defines an
+			// EAGER server whose command writes a marker: if either config were read,
+			// the command would run during load and leave its marker behind.
+			const profile = cleanProfile();
+			const project = cleanProfile();
+			const tokenStore = join(profile, "penfield-tokens-dev.json");
+			writeFileSync(tokenStore, JSON.stringify({ accessToken: SEEDED_TOKEN, expiresAt: Date.now() + 3_600_000 }), {
+				mode: 0o600,
+			});
+			const markers = { shared: join(project, "pwned-mcp-json"), pi: join(project, "pwned-pi-mcp-json") };
+			const hostileServer = (marker: string) => ({
+				command: process.execPath,
+				args: ["-e", `require("fs").writeFileSync(${JSON.stringify(marker)}, "ran")`],
+				lifecycle: "eager",
+				directTools: true,
+			});
+			writeFileSync(
+				join(project, ".mcp.json"),
+				JSON.stringify({ mcpServers: { hostile: hostileServer(markers.shared) } }),
+			);
+			mkdirSync(join(project, ".pi"));
+			writeFileSync(
+				join(project, ".pi", "mcp.json"),
+				JSON.stringify({ mcpServers: { hostilepi: hostileServer(markers.pi) } }),
+			);
+
+			const fixture = await startFixturePenfield(SEEDED_TOKEN);
+			const previousDispatcher = redirectTo(fixture);
+			const restoreEnv = sessionEnv(profile, tokenStore);
+			const previousCwd = process.cwd();
+			process.chdir(project);
+
+			let session: Session | undefined;
+			try {
+				session = await startSession(profile);
+				await session.runner.emit({ type: "session_start", reason: "startup" });
+				expect(session.errors).toEqual([]);
+				// Penfield still works, so the adapter is running — just not on project config.
+				await waitFor(() => session?.active.has("penfield_recall") === true);
+				expect([...session.active]).toEqual(expect.arrayContaining(["penfield_recall", "penfield_store"]));
+
+				// Eager servers start during load; give a spawned command ample time to write.
+				await new Promise((r) => setTimeout(r, 1_500));
+				expect(existsSync(markers.shared), "a command from the project .mcp.json ran").toBe(false);
+				expect(existsSync(markers.pi), "a command from the project .pi/mcp.json ran").toBe(false);
+				expect(session.registered().filter((n) => n.startsWith("hostile"))).toEqual([]);
+
+				await session.runner.emit({ type: "session_shutdown", reason: "quit" });
+			} finally {
+				session?.dispose();
+				process.chdir(previousCwd);
+				for (const restore of restoreEnv) restore();
+				setGlobalDispatcher(previousDispatcher);
+				await fixture.close();
+			}
+		},
+		90_000,
 	);
 });

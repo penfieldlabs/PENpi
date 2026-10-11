@@ -4,6 +4,88 @@ All notable changes to **PENpi**. Format: [Keep a Changelog](https://keepachange
 PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
 `packages/coding-agent/CHANGELOG.md`.)
 
+## [Unreleased]
+
+## [0.3.2] — 2026-10-11
+
+### Added
+- **Length continuation ([ADR 0028]).** A response that stopped at the model's output token
+  limit (`stopReason: "length"`) ended the run as if it were finished, often mid-sentence or
+  mid-file. PENpi's `agent_end` handler now queues a follow-up asking the model to continue
+  exactly where it stopped, as part of the same run, at most 3 times per run; past that it
+  stops and says so. A zero-output length stop is left alone: pi treats that as a context
+  overflow and recovers it itself.
+
+### Fixed
+- **FIFO no longer collapses the window when content is denser than the estimate
+  ([ADR 0027]).** With a learned calibration slope above 1 (code, CJK, base64), the prune
+  budget charged the full history's growth as fixed overhead, so the budget shrank on
+  every call: in a simulated session sessions settled at 14-19% of the window instead of
+  at the floor. Every FIFO test reported at slope 1, which hid it. The budget is now
+  `floor × window` of estimated message tokens, with nothing learned in it; calibration is
+  used only to decide when to prune. New tests run sessions at slopes 1, 1.5, 2 and 3.
+
+- **Configuration values are validated ([ADR 0030]).** An empty environment variable
+  (`export PENPI_CONTEXT_CEILING=`) read as 0 and clamped to 0.01, pruning on every call;
+  it now counts as unset, for the boolean variables too. A non-numeric setting
+  (`"contextCeiling": "abc"`) became `NaN`, and a string where a boolean belongs
+  (`"saveContextOnShutdown": "false"`) was truthy; both now fall back to the default. A
+  ceiling or floor above 1 (`75` meaning 75%) was clamped to 0.99 and is now rejected.
+  Every ignored value is reported by name.
+
+- **The emergency compaction finishes before the run settles ([ADR 0025]).** The
+  `agent_settled` handler started `ctx.compact()` and returned, so `prompt()` resolved with
+  the compaction still running: print mode could exit mid-compaction and the next prompt
+  could start alongside it. The handler now awaits it.
+
+### Changed
+- **FIFO defaults are floor 0.2 / ceiling 0.8 (were 0.5 / 0.75).** Without calibration in
+  the budget, the gap between floor and ceiling is what absorbs a token undercount; 0.2 /
+  0.8 holds a 4x undercount. For ordinary prose a session now settles at about 20% of the
+  window plus overhead instead of about 50%; raise `contextFloor` to keep more history.
+  A floor above 0.25 — including the old 0.5 default copied into settings — gets a
+  warning at startup, since dense content can then overflow the window.
+
+### Security
+- **Memory fence sanitization catches disguised fences and runs in linear time
+  ([ADR 0029]).** Penfield text is now NFKC-normalized (fullwidth `＝＝＝ ＥＮＤ`), stripped of
+  format characters (a fence split by zero-width or bidi characters), matched without
+  regard to case, and capped at 64,000 characters per briefing or reflection. The mid-line
+  pass was not anchored to the start of a run of `=`, so a long run cost quadratic time — a
+  second for 16,000 characters of remote text — and now costs linear time.
+- **A repository can no longer add MCP servers ([ADR 0026]).** pi-mcp-adapter, run as a
+  stock package, layers the project's `.mcp.json` and `.pi/mcp.json` over the global
+  config, so any repository could add MCP servers — including local commands, started at
+  load when `lifecycle` is `eager` — or replace existing ones. PENpi now embeds the adapter
+  through `createMcpAdapter({ config })` with a config built from the global `mcp.json`
+  only, plus its `penfield` entry. The adapter's `/mcp setup`, `/mcp enable` and
+  `/mcp disable` commands are unavailable in this mode; edit the global file and `/reload`.
+  The stock package is gone from `.pi/settings.json`, `penpi-global.sh install` removes it
+  from the global settings, and PENpi warns while pi's settings still list it. An
+  integration test puts eager command-running servers in both project files and asserts
+  neither command ever runs.
+- **PENpi settings are global-only ([ADR 0026]).** The `penpi` block of a project's
+  `.pi/settings.json` was merged over the global settings with only credentials and paths
+  stripped, so a repository could switch the Penfield environment, turn off orientation,
+  force the `eager` adapter lifecycle, or set a context ceiling that prunes every turn. It
+  is now ignored, with a warning naming the file.
+
+### Dependencies
+- **Dependency advisories.** `fast-uri` 3.1.7 → **3.1.8** clears GHSA-hrr3-gc8f-f4qj
+  (high — ReDoS in fast-uri’s IPv6 parser). Six transitive bumps clear nine advisories:
+  `shell-quote` 1.10.0 → **1.12.0** (GHSA-pqg4-j6r4-53mv, critical — arbitrary code
+  execution), `proxy-addr` 2.0.7 → **2.0.8** (GHSA-jqcg-44mw-7w3h, critical —
+  trust-boundary bypass), `@modelcontextprotocol/sdk` → **1.32.1**
+  (GHSA-6qxp-vccf-f47h, high), `source-map-js` 1.2.1 → **1.2.2**
+  (GHSA-68fv-2mgg-jv7q, high), `brace-expansion` 5.0.9 → **5.0.12**
+  (GHSA-qhr7-859c-m2p7 high, GHSA-6j4f-fj2g-mc7p high, GHSA-q2hr-2g5m-vwhr moderate),
+  and `smol-toml` 1.8.0 → **1.9.0** (GHSA-r4xh-jqrq-34v2, moderate).
+  Override bumps: `hono` 4.12.34 → **4.13.13** clears GHSA-gqvv-2mrq-wpjv,
+  GHSA-g6gw-c38x-mqfc, GHSA-crvj-82cr-hjcx and GHSA-hxh3-vqpv-xpqv (moderate —
+  XSS, path traversal and DoS); `undici` 6.28.0 → **6.29.0** (gondolin override)
+  clears GHSA-3wwx-pv8p-q78v, GHSA-r53p-7pc4-xj5r and GHSA-rfgv-xxqx-mfg5 (high —
+  DoS and response splitting).
+
 ## [0.3.1] — 2026-10-10
 
 Context management for models that report no context window, plus dependency advisory

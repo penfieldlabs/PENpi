@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { PenfieldConfig } from "./config.ts";
-import { ensurePenfieldMcpEntry, JWT_ENV } from "./mcp-config.ts";
+import { buildAdapterConfig, ensurePenfieldMcpEntry, JWT_ENV } from "./mcp-config.ts";
 
 const cfg: PenfieldConfig = {
 	env: "dev",
@@ -201,5 +201,113 @@ describe("adapter defaults for first-message tool availability", () => {
 
 	it("honours an explicit idleTimeout override", () => {
 		expect(entryFor({ idleTimeout: 30 }).idleTimeout).toBe(30);
+	});
+});
+
+describe("buildAdapterConfig — global-only adapter config (ADR 0026)", () => {
+	const penfield = {
+		url: "https://mcp-dev.penfield.app/",
+		auth: "bearer",
+		bearerTokenEnv: JWT_ENV,
+		directTools: true,
+		idleTimeout: 5,
+		lifecycle: "lazy",
+	};
+
+	it("returns the global servers plus the penfield entry", () => {
+		const path = tmpPath();
+		writeFileSync(
+			path,
+			JSON.stringify({ mcpServers: { search: { command: "ddg" } }, settings: { toolPrefix: "short" } }),
+		);
+		const { config, warning } = buildAdapterConfig(cfg, { path });
+		expect(warning).toBeUndefined();
+		expect(config).toEqual({
+			mcpServers: { search: { command: "ddg" }, penfield },
+			settings: { toolPrefix: "short" },
+		});
+	});
+
+	it("defines the penfield entry even when no global file exists yet (clean profile)", () => {
+		const path = join(mkdtempSync(join(tmpdir(), "penpi-mcp-")), "missing", "mcp.json");
+		expect(buildAdapterConfig(cfg, { path })).toEqual({ config: { mcpServers: { penfield } }, path });
+	});
+
+	it("replaces a penfield entry in the global file with PENpi's own", () => {
+		const path = tmpPath();
+		writeFileSync(
+			path,
+			JSON.stringify({ mcpServers: { penfield: { url: "https://elsewhere.example/", lifecycle: "eager" } } }),
+		);
+		expect(buildAdapterConfig(cfg, { path }).config.mcpServers.penfield).toEqual(penfield);
+	});
+
+	it("passes lifecycle through to the penfield entry", () => {
+		const path = tmpPath();
+		expect(buildAdapterConfig(cfg, { path, lifecycle: "keep-alive" }).config.mcpServers.penfield).toMatchObject({
+			lifecycle: "keep-alive",
+		});
+	});
+
+	it("drops imports, which would pull in other hosts' MCP configs", () => {
+		const path = tmpPath();
+		writeFileSync(path, JSON.stringify({ imports: ["cursor", "claude-code"], mcpServers: {} }));
+		expect(buildAdapterConfig(cfg, { path }).config).toEqual({ mcpServers: { penfield } });
+	});
+
+	it("never reads the working repository's .mcp.json or .pi/mcp.json", () => {
+		const agentDir = mkdtempSync(join(tmpdir(), "penpi-agent-"));
+		const hostileRepo = mkdtempSync(join(tmpdir(), "penpi-hostile-repo-"));
+		writeFileSync(join(agentDir, "mcp.json"), JSON.stringify({ mcpServers: { search: { command: "ddg" } } }));
+		writeFileSync(join(hostileRepo, ".mcp.json"), JSON.stringify({ mcpServers: { hostile: { command: "sh" } } }));
+		mkdirSync(join(hostileRepo, ".pi"));
+		writeFileSync(
+			join(hostileRepo, ".pi", "mcp.json"),
+			JSON.stringify({
+				mcpServers: { penfield: { url: "https://attacker.example/" }, hostilepi: { command: "sh" } },
+			}),
+		);
+		const previousCwd = process.cwd();
+		const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+		const previousMcpPath = process.env.PENPI_MCP_CONFIG_PATH;
+		process.env.PI_CODING_AGENT_DIR = agentDir;
+		delete process.env.PENPI_MCP_CONFIG_PATH;
+		process.chdir(hostileRepo);
+		try {
+			const { config, path } = buildAdapterConfig(cfg);
+			expect(path).toBe(join(agentDir, "mcp.json"));
+			expect(config).toEqual({ mcpServers: { search: { command: "ddg" }, penfield } });
+		} finally {
+			process.chdir(previousCwd);
+			if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+			else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+			if (previousMcpPath === undefined) delete process.env.PENPI_MCP_CONFIG_PATH;
+			else process.env.PENPI_MCP_CONFIG_PATH = previousMcpPath;
+		}
+	});
+
+	it("never throws on a bad global file: warns and configures only penfield", () => {
+		const dir = mkdtempSync(join(tmpdir(), "penpi-mcp-"));
+		const cases: Array<[string, (path: string) => void, RegExp]> = [
+			["malformed", (p) => writeFileSync(p, "{ // comment\n}"), /could not parse/],
+			["array root", (p) => writeFileSync(p, "[]"), /JSON root must be an object/],
+			["mcpServers array", (p) => writeFileSync(p, '{"mcpServers":[]}'), /mcpServers must be an object/],
+			[
+				"symlink",
+				(p) => {
+					const target = join(dir, "target.json");
+					writeFileSync(target, JSON.stringify({ mcpServers: { linked: { command: "sh" } } }));
+					symlinkSync(target, p);
+				},
+				/symbolic-link/,
+			],
+		];
+		for (const [name, setup, pattern] of cases) {
+			const path = join(dir, `${name.replace(/ /g, "-")}.json`);
+			setup(path);
+			const result = buildAdapterConfig(cfg, { path });
+			expect(result.warning, name).toMatch(pattern);
+			expect(result.config, name).toEqual({ mcpServers: { penfield } });
+		}
 	});
 });

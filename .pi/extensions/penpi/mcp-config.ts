@@ -3,8 +3,14 @@
  *
  * PENpi owns all Penfield auth, so it also configures pi-mcp-adapter to reach
  * Penfield using the SAME token — no second auth. We hand the JWT to the adapter
- * through an env var and write a single `penfield` server entry into the
- * adapter's mcp.json (`auth: "bearer"`, `bearerTokenEnv`).
+ * through an env var and define a single `penfield` server entry
+ * (`auth: "bearer"`, `bearerTokenEnv`).
+ *
+ * PENpi runs the adapter itself, embedded, with a config built from the GLOBAL
+ * mcp.json only (buildAdapterConfig, ADR 0026). The stock adapter package also
+ * reads the project's `.mcp.json` and `.pi/mcp.json`, which lets any repository
+ * add or replace MCP servers. The `penfield` entry is still persisted to the
+ * global mcp.json (ensurePenfieldMcpEntry) so the file shows what is configured.
  *
  * That entry is written with `lifecycle: "lazy"`. Eager looks like the right
  * choice — connect at startup, be ready before the first model turn — and it is
@@ -96,15 +102,94 @@ interface McpDoc {
 }
 
 /**
+ * The global mcp.json path. Always the global agent dir by default: a working
+ * repository must never choose where PENpi reads or writes auth-adjacent
+ * configuration merely by being cwd. `||` not `??`: an empty PENPI_MCP_CONFIG_PATH
+ * (e.g. `export PENPI_MCP_CONFIG_PATH=`) must fall through to the default, not yield "".
+ */
+export function globalMcpConfigPath(path?: string): string {
+	return path || process.env.PENPI_MCP_CONFIG_PATH || join(getAgentDir(), "mcp.json");
+}
+
+/** The `penfield` server entry, shared by the persisted file and the embedded adapter. */
+export function penfieldServerEntry(cfg: PenfieldConfig, opts: EnsureMcpOptions = {}): Record<string, unknown> {
+	return {
+		url: cfg.mcpUrl,
+		auth: "bearer",
+		bearerTokenEnv: JWT_ENV,
+		directTools: true,
+		idleTimeout: opts.idleTimeout ?? DEFAULT_IDLE_TIMEOUT_MINUTES,
+		lifecycle: opts.lifecycle ?? "lazy",
+	};
+}
+
+/** The adapter's in-memory config: what `createMcpAdapter({ config })` receives. */
+export interface AdapterConfig {
+	mcpServers: Record<string, unknown>;
+	settings?: unknown;
+}
+
+/**
+ * Build the embedded adapter's config from the GLOBAL mcp.json only (Security F1).
+ *
+ * Run as a stock Pi package, pi-mcp-adapter layers the project's `.mcp.json` and
+ * `.pi/mcp.json` over the global file, with the project winning. Any repository
+ * could then add MCP servers (including stdio servers, i.e. local commands) or
+ * replace existing ones just by being the working directory. PENpi instead runs the
+ * adapter itself through `createMcpAdapter({ config })`, which reads no files of
+ * its own, and hands it this config.
+ *
+ * The `penfield` entry is added here in memory rather than read back from disk:
+ * the adapter takes this config once, at extension load, which on a clean profile
+ * is before session_start has ever written the entry.
+ *
+ * Never throws: a bad global file must not stop PENpi loading. Problems come back
+ * as `warning` and the config falls back to the `penfield` entry alone. `imports`
+ * is dropped — it pulls in other hosts' configs, and nothing expands it in this mode.
+ */
+export function buildAdapterConfig(
+	cfg: PenfieldConfig,
+	opts: EnsureMcpOptions = {},
+): { config: AdapterConfig; path: string; warning?: string } {
+	const path = globalMcpConfigPath(opts.path);
+	const penfieldOnly = (warning: string) => ({
+		config: { mcpServers: { penfield: penfieldServerEntry(cfg, opts) } },
+		path,
+		warning,
+	});
+	let raw: string;
+	try {
+		if (lstatSync(path).isSymbolicLink()) return penfieldOnly(`refusing to read symbolic-link MCP config ${path}`);
+		raw = readFileSync(path, "utf8");
+	} catch (err) {
+		if ((err as NodeJS.ErrnoException)?.code === "ENOENT") {
+			return { config: { mcpServers: { penfield: penfieldServerEntry(cfg, opts) } }, path };
+		}
+		return penfieldOnly(`could not read ${path} (${errText(err)})`);
+	}
+	let doc: unknown;
+	try {
+		doc = JSON.parse(raw);
+	} catch (err) {
+		return penfieldOnly(`could not parse ${path} (${errText(err)})`);
+	}
+	if (!isRecord(doc)) return penfieldOnly(`${path}: JSON root must be an object`);
+	if (doc.mcpServers !== undefined && !isRecord(doc.mcpServers)) {
+		return penfieldOnly(`${path}: mcpServers must be an object`);
+	}
+	const config: AdapterConfig = {
+		mcpServers: { ...(doc.mcpServers ?? {}), penfield: penfieldServerEntry(cfg, opts) },
+	};
+	if (doc.settings !== undefined) config.settings = doc.settings;
+	return { config, path };
+}
+
+/**
  * Merge a `penfield` server entry into the adapter's mcp.json (idempotent —
  * only the `penfield` key is touched). Returns the path written.
  */
 export function ensurePenfieldMcpEntry(cfg: PenfieldConfig, opts: EnsureMcpOptions = {}): string {
-	// Always default to the global agent-dir mcp.json. A working repository must never
-	// choose where PENpi reads/writes auth-adjacent configuration merely by being cwd.
-	// `||` not `??`: an empty PENPI_MCP_CONFIG_PATH (e.g. `export PENPI_MCP_CONFIG_PATH=`)
-	// must fall through to the default, not yield "".
-	const path = opts.path || process.env.PENPI_MCP_CONFIG_PATH || join(getAgentDir(), "mcp.json");
+	const path = globalMcpConfigPath(opts.path);
 	let doc: McpDoc = {};
 	let existed = false;
 	let existingMode = 0o600;
@@ -137,14 +222,7 @@ export function ensurePenfieldMcpEntry(cfg: PenfieldConfig, opts: EnsureMcpOptio
 		throw new Error(`PENpi: refusing to rewrite ${path} — mcpServers must be an object.`);
 	}
 	doc.mcpServers ??= {};
-	doc.mcpServers.penfield = {
-		url: cfg.mcpUrl,
-		auth: "bearer",
-		bearerTokenEnv: JWT_ENV,
-		directTools: true,
-		idleTimeout: opts.idleTimeout ?? DEFAULT_IDLE_TIMEOUT_MINUTES,
-		lifecycle: opts.lifecycle ?? "lazy",
-	};
+	doc.mcpServers.penfield = penfieldServerEntry(cfg, opts);
 	mkdirSync(dirname(path), { recursive: true });
 	// Write via tmp + rename so a concurrent session never observes a half-written
 	// file (truncate-then-write would hand it a parse error mid-update).

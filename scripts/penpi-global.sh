@@ -20,7 +20,6 @@ PI_LINK="$BIN_DIR/pi"
 EXT_LINK="$AGENT_DIR/extensions/penpi"
 SETTINGS="$AGENT_DIR/settings.json"
 MCP="$AGENT_DIR/mcp.json"          # adapter's canonical config (getAgentPath("mcp.json"))
-ADAPTER="npm:pi-mcp-adapter@2.12.1"
 SETTINGS_EDITOR="$REPO/scripts/penpi-settings.mjs"
 BEGIN="#PENPI_GLOBAL_BEGIN"
 END="#PENPI_GLOBAL_END"
@@ -103,8 +102,9 @@ install)
   check_relink_target "$PI_LINK"
   check_relink_target "$EXT_LINK"
 
-  # Global settings: pin the adapter package + compaction off (merge, never clobber).
-  node "$SETTINGS_EDITOR" install "$SETTINGS" "$ADAPTER"
+  # Global settings: compaction off, and remove any stock pi-mcp-adapter package left
+  # by an earlier PENpi install (PENpi embeds the adapter; ADR 0026). Merge, never clobber.
+  node "$SETTINGS_EDITOR" install "$SETTINGS"
 
   mkdir -p "$BIN_DIR" "$AGENT_DIR/extensions"
   relink "$CLI" "$PI_LINK"            # `pi` on PATH -> the fork's built CLI
@@ -128,7 +128,7 @@ uninstall)
   validate_block "$PROFILE"
   # Validate + update settings before removing links. Malformed/wrong-type/symlink
   # settings fail with the installation untouched instead of reporting false success.
-  node "$SETTINGS_EDITOR" uninstall "$SETTINGS" "$ADAPTER"
+  node "$SETTINGS_EDITOR" uninstall "$SETTINGS"
   # Only remove links that point into THIS repo — never someone else's `pi`.
   [ -L "$PI_LINK" ] && case "$(readlink "$PI_LINK")" in "$REPO"/*) rm -f "$PI_LINK";; esac
   [ -L "$EXT_LINK" ] && case "$(readlink "$EXT_LINK")" in "$REPO"/*) rm -rf "$EXT_LINK";; esac
@@ -140,7 +140,7 @@ status)
   echo "shell rc:  $PROFILE"
   echo "pi:        $([ -L "$PI_LINK" ] && readlink "$PI_LINK" || echo 'MISSING')"
   echo "extension: $([ -L "$EXT_LINK" ] && readlink "$EXT_LINK" || echo 'MISSING')"
-  grep -q pi-mcp-adapter "$SETTINGS" 2>/dev/null && echo "settings:  adapter pinned ✓" || echo "settings:  adapter MISSING"
+  grep -q pi-mcp-adapter "$SETTINGS" 2>/dev/null && echo "settings:  stock pi-mcp-adapter package present — run install to remove it" || echo "settings:  no stock adapter package ✓ (PENpi embeds it)"
   search_state="$(node - "$MCP" <<'NODE'
 const fs=require("fs");const[p]=process.argv.slice(2);
 try{const d=JSON.parse(fs.readFileSync(p,"utf8"));const names=Object.keys(d.mcpServers||{}).filter(x=>x!=="penfield");

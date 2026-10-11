@@ -37,3 +37,8 @@ the same PR (see [CONTRIBUTING.md](../../CONTRIBUTING.md)).
 | [0023](0023-overflow-compaction-escape-hatch.md) | Overflow compaction is an escape hatch | Accepted |
 | [0024](0024-memory-fence-sanitization.md) | Neutralize forged memory fences by pattern removal | Accepted |
 | [0025](0025-compaction-fallback-without-fifo-window.md) | Emergency compaction when the model has no context window | Accepted |
+| [0026](0026-global-only-configuration.md) | PENpi and its MCP adapter take configuration from global files only | Accepted |
+| [0027](0027-slope-free-fifo-budget.md) | The FIFO prune budget is floor × window, with no learned calibration | Accepted |
+| [0028](0028-length-continuation.md) | Continue responses cut off at the output token limit | Accepted |
+| [0029](0029-sanitizer-normalization-and-bounds.md) | Normalize and bound memory text before fence sanitization | Accepted |
+| [0030](0030-strict-config-values.md) | Validate configuration values instead of coercing them | Accepted |

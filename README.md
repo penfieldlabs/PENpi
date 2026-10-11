@@ -47,6 +47,7 @@ PENpi is a Pi **extension** (`.pi/extensions/penpi/`) plus two fork-level defaul
 |------|-----------------|
 | `session_start` | Penfield `awaken()` + `reflect("recent")`, injected as an orientation briefing so the agent starts oriented |
 | `context` | FIFO watermark pruning before every LLM call |
+| `agent_end` | a response cut off at the output token limit gets up to 3 follow-ups asking the model to continue ([ADR 0028](docs/adr/0028-length-continuation.md)) |
 | `session_before_compact` | reason-aware: cancels routine `threshold` compaction (FIFO owns context); allows `overflow` and `manual` ([ADR 0023](docs/adr/0023-overflow-compaction-escape-hatch.md)) |
 | `session_shutdown` | optional `save_context()` checkpoint, then disconnect |
 
@@ -54,6 +55,12 @@ PENpi is a Pi **extension** (`.pi/extensions/penpi/`) plus two fork-level defaul
 [`pi-mcp-adapter`](https://github.com/nicobailon/pi-mcp-adapter), Pi's community MCP
 integration. PENpi owns Penfield auth and shares a single JWT with the adapter, so
 there is **one sign-in** for both layers and no tool-registration code of our own.
+PENpi runs the adapter itself, with the global `~/.pi/agent/mcp.json` as its only config:
+a project's `.mcp.json` or `.pi/mcp.json` is never read, so a repository you open cannot
+add or replace MCP servers ([ADR 0026](docs/adr/0026-global-only-configuration.md)). As a
+result the adapter's `/mcp` setup and enable/disable commands are unavailable; edit the
+global file and `/reload` instead. Do not also install the `pi-mcp-adapter` package — PENpi
+warns if it finds one, and `scripts/penpi-global.sh install` removes it.
 The same adapter can wire an optional web-search backend. Search is deliberately not a
 PENpi core dependency or automatic install: choose a tested keyless, self-hosted, paid,
 or provider-native option in [Optional web search](docs/WEB_SEARCH.md).
@@ -127,18 +134,26 @@ transcripts remain in their existing user directories. Review the release notes 
 the [live test protocol](docs/TEST_PROTOCOL.md) when an upgrade changes Pi core, auth,
 hooks, or tool integration.
 
-Configure PENpi under a `penpi` key — globally in `~/.pi/agent/settings.json`, or
-per-project in `.pi/settings.json`:
+Configure PENpi under a `penpi` key in the global `~/.pi/agent/settings.json`. PENpi
+settings are global-only: a `penpi` block in a project's `.pi/settings.json` is ignored,
+with a warning, so a repository you open cannot reconfigure PENpi.
 
 ```json
 {
   "penpi": {
-    "contextCeiling": 0.75,
-    "contextFloor": 0.50,
+    "contextCeiling": 0.8,
+    "contextFloor": 0.2,
     "saveContextOnShutdown": false
   }
 }
 ```
+
+FIFO prunes when the conversation would cross `contextCeiling` of the window and keeps
+the newest messages up to `contextFloor` of the window, counted with Pi's chars/4 token
+estimate. Dense content (code, CJK, base64) can cost several real tokens per estimated
+token, so the gap between the two is what absorbs it: the 0.2 / 0.8 defaults hold a 4x
+undercount. Raise the floor to keep more history if your sessions are mostly prose;
+PENpi warns at startup when the floor is above 0.25, where a 4x undercount no longer fits.
 
 ## Run
 

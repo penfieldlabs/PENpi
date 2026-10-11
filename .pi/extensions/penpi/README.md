@@ -11,11 +11,11 @@ the project overview and the [architecture description](../../../docs/ARCHITECTU
 | `index.ts` | Entry point — wires the four hooks, the `/penpi` command, and the conscious-layer setup |
 | `penfield-client.ts` | Thin MCP client over `@modelcontextprotocol/sdk` + device-code `TokenManager` |
 | `fifo.ts` | Pure `planFifo()` watermark pruner |
-| `config.ts` | Layered config (defaults ← `settings.json` `penpi` ← env); exports `BRIEFING_CUSTOM_TYPE` |
-| `mcp-config.ts` | Generates the `pi-mcp-adapter` server entry so the conscious layer shares our JWT |
+| `config.ts` | Layered config (defaults ← global `settings.json` `penpi` ← env); exports `BRIEFING_CUSTOM_TYPE` |
+| `mcp-config.ts` | Builds the embedded `pi-mcp-adapter` config (global `mcp.json` only) and its `penfield` entry, so the conscious layer shares our JWT |
 | `*.test.ts` | Vitest suite (run with `npm test -w penpi`) |
 
-## The four hooks (automatic layer)
+## The hooks (automatic layer)
 
 - **`session_start`** — connect to Penfield, `awaken()` + `reflect("recent")`, cache via
   `pi.appendEntry`, and inject an orientation briefing (+ a behavioral protocol) into the
@@ -32,14 +32,26 @@ the project overview and the [architecture description](../../../docs/ARCHITECTU
   atomic unit too large for the window, which FIFO cannot shrink) and `manual` (an
   explicit `/compact` is user intent). See
   [ADR 0023](../../../docs/adr/0023-overflow-compaction-escape-hatch.md).
+- **`agent_end`** — when the last response stopped at the output token limit
+  (`stopReason: "length"` with output), queue a follow-up asking the model to continue,
+  at most 3 per run. See [ADR 0028](../../../docs/adr/0028-length-continuation.md).
+- **`agent_settled`** — reset the continuation budget, and force one emergency compaction
+  after `emergencyCompactionRuns` runs without a context window. See
+  [ADR 0025](../../../docs/adr/0025-compaction-fallback-without-fifo-window.md).
 - **`session_shutdown`** — optional `save_context()` checkpoint (skipped on hot-reload),
   then disconnect.
 
 ## Conscious layer
 
 Penfield's tools are exposed to the model by [`pi-mcp-adapter`](https://github.com/nicobailon/pi-mcp-adapter),
-not by us. At `session_start` PENpi sets `PENFIELD_JWT` and writes a `penfield` server
-entry (`auth: "bearer"`, `bearerTokenEnv: PENFIELD_JWT`) into `.pi/mcp.json`. Because the
+not by us. PENpi embeds the adapter (a pinned dependency) and installs it through
+`createMcpAdapter({ config })`, with a config built from the global `mcp.json` only plus a
+`penfield` server entry (`auth: "bearer"`, `bearerTokenEnv: PENFIELD_JWT`). The adapter
+reads no config files of its own in that mode, so a project's `.mcp.json` and
+`.pi/mcp.json` are ignored ([ADR 0026](../../../docs/adr/0026-global-only-configuration.md)).
+At `session_start` PENpi sets `PENFIELD_JWT` and also persists the `penfield` entry to the
+global `mcp.json`. A stock `pi-mcp-adapter` package still listed in pi's settings would
+load a second copy that does read project config; PENpi warns about it. Because the
 adapter resolves the bearer once per connection, PENpi keeps the env token fresh (in the
 `context` hook) and sets `idleTimeout` so the connection recycles and re-reads it. One
 token, one sign-in, zero tool-registration code on our side.
@@ -60,14 +72,18 @@ adapter picks up refreshes on reconnect.
 
 ## Configuration
 
-`settings.json` under a `penpi` key (env vars override):
+The global `~/.pi/agent/settings.json` (or `$PI_CODING_AGENT_DIR/settings.json`) under a
+`penpi` key; env vars override. A project `.pi/settings.json` is never read for these.
+An empty env var counts as unset. Numbers must be finite (a setting must be a JSON number,
+not a string), and `contextCeiling` / `contextFloor` above 1 are rejected rather than
+clamped; a rejected value is reported and the next source is used ([ADR 0030](../../../docs/adr/0030-strict-config-values.md)).
 
 | settings.json | env var | default | meaning |
 |---------------|---------|---------|---------|
 | `penfield.clientId` | `PENPI_PENFIELD_CLIENT_ID` | — | OAuth client id (else dynamically registered) |
 | `penfield.tokenStore` | `PENPI_PENFIELD_TOKEN_STORE` | `~/.config/penpi/penfield-tokens-prod.json` | device-code token store |
-| `contextCeiling` | `PENPI_CONTEXT_CEILING` | `0.75` | FIFO trigger fraction of the context window |
-| `contextFloor` | `PENPI_CONTEXT_FLOOR` | `0.50` | FIFO drains to this fraction (forced below ceiling) |
+| `contextCeiling` | `PENPI_CONTEXT_CEILING` | `0.8` | FIFO trigger fraction of the context window |
+| `contextFloor` | `PENPI_CONTEXT_FLOOR` | `0.2` | FIFO keeps this fraction of the window in estimated message tokens (forced below ceiling); the budget ignores learned calibration (ADR 0027) |
 | `emergencyCompactionRuns` | `PENPI_EMERGENCY_COMPACTION_RUNS` | `15` | emergency fallback: consecutive agent runs without a valid context window (FIFO inactive) before PENpi forces one compaction; a minimum, not an exact trigger — the size gate may defer (ADR 0025) |
 | `saveContextOnShutdown` | `PENPI_SAVE_CONTEXT_ON_SHUTDOWN` | `false` | `save_context()` on shutdown (opt-in; env `=true`/`1` to enable) |
 | `injectBriefing` | `PENPI_INJECT_BRIEFING` | `true` | advanced diagnostic control for automatic orientation; normally leave enabled (`--penpi-raw` disables it for one session) |

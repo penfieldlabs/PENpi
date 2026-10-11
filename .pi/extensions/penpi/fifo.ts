@@ -121,21 +121,12 @@ function isAnchorableReport(usable: number, contextWindow: number): boolean {
 	return contextWindow <= 0 || usable <= contextWindow;
 }
 
-/** Never let a learned overhead starve the message budget entirely. */
-const MAX_OVERHEAD_FRACTION = 0.5;
-
 /**
- * Fraction of the floor that learned overhead may consume at most. Guarantees
- * the message budget keeps at least (1 - MAX_OVERHEAD_FLOOR_FRACTION) of the
- * floor when the ESTIMATE path triggers. Without this, a learned overhead
- * capped at MAX_OVERHEAD_FRACTION (0.5) collides with the default floor (0.5):
- * budget = 0.5W - 0.5W = 0 and every prune keeps only the newest unit —
- * single-turn amnesia that never recovers, reachable when the chars/4 token
- * heuristic badly underestimates (CJK text, base64, minified code). A genuine
- * provider-REPORTED overflow is unaffected: planFifo derives real overhead
- * from currentTokens when the report wins the trigger race.
+ * Cap on the learned offset when ESTIMATING the candidate list's size for the
+ * trigger, so one bad sample cannot make every call look over the ceiling. The
+ * offset never reaches the prune budget (see planFifo).
  */
-const MAX_OVERHEAD_FLOOR_FRACTION = 0.8;
+const MAX_OVERHEAD_FRACTION = 0.5;
 
 /** customType of the synthetic notice injected when role repair is needed (see planFifo). */
 export const FIFO_NOTICE_CUSTOM_TYPE = "penpi-fifo-notice";
@@ -236,14 +227,13 @@ export function planFifoFromUsage(
 		}
 	}
 
+	// Calibration is ESTIMATION only: it answers "how big is this candidate list
+	// really?" so the trigger fires when the provider's count would cross the
+	// ceiling. It never sets how much is kept — planFifo's budget is floor × window.
 	const { slope, offsetTokens } = deriveCalibration(state);
 	// Clamp the OFFSET at use time only (state keeps raw anchors — see
-	// FifoTriggerState). The cap is floor-aware so a learned offset can never
-	// zero the message budget in planFifo.
-	const overheadCap =
-		contextWindow > 0
-			? Math.min(MAX_OVERHEAD_FRACTION, cfg.contextFloor * MAX_OVERHEAD_FLOOR_FRACTION) * contextWindow
-			: Number.POSITIVE_INFINITY;
+	// FifoTriggerState).
+	const overheadCap = contextWindow > 0 ? MAX_OVERHEAD_FRACTION * contextWindow : Number.POSITIVE_INFINITY;
 	const cappedOffset = Math.min(offsetTokens, overheadCap);
 	const estimatedTokens = messageTokens * slope + cappedOffset;
 	// Trigger identity and budget authority are separate concerns.
@@ -315,6 +305,8 @@ function protectedIndices(messages: AgentMessage[]): boolean[] {
  * @param messages       Full conversation message array (no system prompt).
  * @param contextWindow  Model context window in tokens.
  * @param currentTokens  Current total context usage (incl. system prompt + tool defs).
+ *                       Decides only whether the ceiling is crossed; the budget is
+ *                       floor × contextWindow of estimated message tokens.
  * @param cfg            ceiling/floor fractions.
  */
 export function planFifo(
@@ -336,24 +328,16 @@ export function planFifo(
 	}
 
 	const perMessage = messages.map(estimateTokens);
-	const totalMessageTokens = perMessage.reduce((a, b) => a + b, 0);
-	// Split (currentTokens - message estimate) into two different things:
-	//   fixedOverhead — non-message overhead (system prompt, tool defs) we cannot
-	//     evict, bounded by the floor-aware cap so it can never zero the budget;
-	//   excess — anything beyond that cap. A gap that large is not plausible fixed
-	//     overhead; it is the chars/4 estimator undercounting the MESSAGES (CJK,
-	//     base64, minified code). That part scales WITH the messages, so treating
-	//     it as unevictable would prune everything (single-turn amnesia). Model it
-	//     as a calibration ratio instead: each estimated token is really worth
-	//     ~ratio tokens, so the estimated-token budget shrinks by /ratio and
-	//     eviction converges on the floor instead of on zero.
-	const overheadRaw = Math.max(0, currentTokens - totalMessageTokens);
-	const overheadCap = Math.min(MAX_OVERHEAD_FRACTION, cfg.contextFloor * MAX_OVERHEAD_FLOOR_FRACTION) * contextWindow;
-	const fixedOverhead = Math.min(overheadRaw, overheadCap);
-	const excess = overheadRaw - fixedOverhead;
-	const ratio = totalMessageTokens > 0 ? (totalMessageTokens + excess) / totalMessageTokens : 1;
-	const floorTokens = cfg.contextFloor * contextWindow;
-	const messageBudget = Math.max(0, (floorTokens - fixedOverhead) / ratio);
+	// The budget is policy, and nothing learned enters it: floor × window of
+	// ESTIMATED message tokens. It used to be derived from currentTokens, splitting
+	// (currentTokens - message estimate) into fixed overhead and a calibration ratio.
+	// With the estimator undercounting (slope > 1) that gap is mostly the FULL
+	// history's growth — the history keeps growing while the window is pruned — so it
+	// was charged as overhead and the budget shrank call after call: sessions settled
+	// at 14-19% of the window instead of at the floor. Undercount is absorbed by the
+	// gap between floor and ceiling instead (0.2 / 0.8 by default holds a 4x
+	// undercount). currentTokens decides WHETHER to prune, never how much.
+	const messageBudget = cfg.contextFloor * contextWindow;
 
 	// Find the newest briefing, but do not let it force an otherwise avoidable
 	// overflow on a small-context model. The newest live turn takes priority.

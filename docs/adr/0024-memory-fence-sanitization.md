@@ -3,6 +3,12 @@
 - Status: Accepted
 - Date: 2026-08-09
 
+> **Amended by [ADR 0029](0029-sanitizer-normalization-and-bounds.md) (0.3.2).** The text is
+> now NFKC-normalized, stripped of format characters and capped at 64,000 characters before
+> these passes run, the label passes are case-insensitive, and the mid-line pass is anchored
+> to the start of a run. Replacement is still character-for-character, but normalization can
+> change the length of text that contains compatibility forms or format characters.
+
 ## Context
 
 `session_start` orientation ([ADR 0004](0004-three-tier-memory.md)) injects Penfield

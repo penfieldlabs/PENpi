@@ -128,6 +128,22 @@ describe("PENpi emergency compaction in AgentSession", () => {
 		expect(compactionEntries(h)).toHaveLength(1);
 	});
 
+	it("finishes the compaction before the run settles", async () => {
+		// Awaited inside agent_settled, so prompt() and waitForIdle() resolve only once the
+		// compaction is done: print mode cannot exit, and the next prompt cannot start, while
+		// it is still running.
+		h = await createPenpiHarness({
+			model: { ...fauxModel, contextWindow: 0 },
+			responses: [`a1 ${big}`, `a2 ${big}`, "SUMMARY"],
+		});
+		await h.session.prompt(`q1 ${big}`);
+		await h.session.prompt(`q2 ${big}`);
+		// No polling loop here: the compaction must already be complete.
+		expect(compactionEntries(h)).toHaveLength(1);
+		expect(h.session.isCompacting).toBe(false);
+		expect(h.eventsOfType("compaction_end")).toEqual([expect.objectContaining({ reason: "manual", aborted: false })]);
+	});
+
 	it("never compacts on a windowed model, however many runs", async () => {
 		h = await createPenpiHarness({
 			model: { ...fauxModel, contextWindow: 1_000_000 },

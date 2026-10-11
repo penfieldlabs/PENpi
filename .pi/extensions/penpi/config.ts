@@ -1,14 +1,16 @@
 /**
  * PENpi configuration.
  *
- * Precedence (low → high): built-in defaults → pi settings.json `penpi` key
- * (global agent dir, then project .pi/) → environment variables.
+ * Precedence (low → high): built-in defaults → the `penpi` key of the GLOBAL pi
+ * settings.json (agent dir) → environment variables. A project .pi/settings.json
+ * is never read: PENpi reads settings itself, outside pi's project-trust gate, so
+ * any project layer would let an untrusted repository reconfigure it.
  *
  * Production is the default; an internal selector supports development.
  */
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 export type PenfieldEnv = "dev" | "prod";
 export type AuthMode = "apiKey" | "deviceCode";
@@ -63,28 +65,6 @@ interface PenpiSettings {
 	mcpLifecycle?: string;
 }
 
-/** Security-sensitive Penfield settings are global-only. */
-const PROJECT_FORBIDDEN_PENFIELD_KEYS = ["apiKey", "apiKeyFile", "clientId", "tokenStore"] as const;
-
-function stripProjectSecrets(project: PenpiSettings): PenpiSettings {
-	if (!project.penfield) return project;
-	const penfield = { ...project.penfield };
-	let stripped = false;
-	for (const k of PROJECT_FORBIDDEN_PENFIELD_KEYS) {
-		if (penfield[k] !== undefined) {
-			delete penfield[k];
-			stripped = true;
-		}
-	}
-	if (stripped) {
-		console.error(
-			`[PENpi] ignoring credential/path settings from the project .pi/settings.json ` +
-				`(${PROJECT_FORBIDDEN_PENFIELD_KEYS.join(", ")} are global-only) — a repo cannot redirect PENpi auth.`,
-		);
-	}
-	return { ...project, penfield };
-}
-
 function hostFor(env: PenfieldEnv, sub: string): string {
 	return env === "dev" ? `https://${sub}-dev.penfield.app` : `https://${sub}.penfield.app`;
 }
@@ -106,20 +86,72 @@ function piAgentDir(): string {
 }
 
 /**
- * Merge `penpi` from global agent settings then project .pi/settings.json (project wins),
- * with credentials/paths stripped from the project layer — see PROJECT_FORBIDDEN_PENFIELD_KEYS.
+ * Read `penpi` from the global agent settings only. A `penpi` block in the project
+ * .pi/settings.json is ignored, with a warning so a user who put settings there
+ * learns why they have no effect.
  */
 function loadPenpiSettings(): PenpiSettings {
-	const global = (readJson(join(piAgentDir(), "settings.json"))?.penpi as PenpiSettings | undefined) ?? {};
-	const project = readJson(join(process.cwd(), ".pi", "settings.json"))?.penpi as PenpiSettings | undefined;
-	if (!project) return global;
-	const safe = stripProjectSecrets(project);
-	return { ...global, ...safe, penfield: { ...global.penfield, ...safe.penfield } };
+	const globalPath = resolve(piAgentDir(), "settings.json");
+	const projectPath = resolve(process.cwd(), ".pi", "settings.json");
+	if (projectPath !== globalPath && readJson(projectPath)?.penpi !== undefined) {
+		console.error(
+			`[PENpi] ignoring the "penpi" block in ${projectPath} — PENpi settings are global-only ` +
+				`(${globalPath}), so a repository cannot reconfigure PENpi.`,
+		);
+	}
+	return (readJson(globalPath)?.penpi as PenpiSettings | undefined) ?? {};
 }
 
-function num(env: string | undefined, fallback: number): number {
-	const n = env === undefined ? Number.NaN : Number(env);
-	return Number.isFinite(n) ? n : fallback;
+/** An environment variable's value, or undefined when unset or blank: `export X=` means unset. */
+function envValue(name: string): string | undefined {
+	const v = process.env[name]?.trim();
+	return v ? v : undefined;
+}
+
+/**
+ * A number from the first source that holds a usable one: the environment variable
+ * (parsed), then the setting (which must already be a number — a JSON string is not
+ * accepted), then the default. Non-finite values are skipped, and so are values
+ * above `max` (for a fraction, 75 meant 75%: clamping it to 0.99 would let the
+ * window fill). A skipped value that was actually set is reported by name.
+ */
+function numberSetting(
+	envName: string,
+	settingName: string,
+	setting: unknown,
+	fallback: number,
+	max = Number.POSITIVE_INFINITY,
+): number {
+	const candidates: Array<[string, unknown]> = [
+		[envName, envValue(envName)],
+		[`penpi.${settingName}`, setting],
+	];
+	for (const [source, raw] of candidates) {
+		if (raw === undefined || raw === null) continue;
+		const n =
+			typeof raw === "number" ? raw : typeof raw === "string" && source === envName ? Number(raw) : Number.NaN;
+		if (Number.isFinite(n) && n <= max) return n;
+		console.error(
+			`[PENpi] ignoring ${source}=${JSON.stringify(raw)}: ${Number.isFinite(n) ? `must be at most ${max}` : "not a finite number"}.`,
+		);
+	}
+	return fallback;
+}
+
+/** A boolean from the environment variable (`parse`), then the setting (booleans only), then the default. */
+function booleanSetting(
+	envName: string,
+	settingName: string,
+	parse: (v: string) => boolean,
+	setting: unknown,
+	fallback: boolean,
+): boolean {
+	const env = envValue(envName);
+	if (env !== undefined) return parse(env);
+	if (setting !== undefined && setting !== null && typeof setting !== "boolean") {
+		console.error(`[PENpi] ignoring penpi.${settingName}=${JSON.stringify(setting)}: not a boolean.`);
+	}
+	return typeof setting === "boolean" ? setting : fallback;
 }
 
 function clamp01(n: number): number {
@@ -127,25 +159,45 @@ function clamp01(n: number): number {
 }
 
 export function resolvePenpiConfig(settings: PenpiSettings = loadPenpiSettings()): PenpiConfig {
-	const ceiling = clamp01(num(process.env.PENPI_CONTEXT_CEILING, settings.contextCeiling ?? 0.75));
-	let floor = clamp01(num(process.env.PENPI_CONTEXT_FLOOR, settings.contextFloor ?? 0.5));
+	const ceiling = clamp01(numberSetting("PENPI_CONTEXT_CEILING", "contextCeiling", settings.contextCeiling, 0.8, 1));
+	let floor = clamp01(numberSetting("PENPI_CONTEXT_FLOOR", "contextFloor", settings.contextFloor, 0.2, 1));
 	if (floor >= ceiling) floor = Math.max(ceiling / 2, ceiling - 0.1); // floor must sit below ceiling
-	const saveEnv = process.env.PENPI_SAVE_CONTEXT_ON_SHUTDOWN;
+	const truthy = (v: string) => v === "true" || v === "1";
 	// Default OFF (opt-in): only save a checkpoint on shutdown when explicitly enabled.
-	const save =
-		saveEnv !== undefined ? saveEnv === "true" || saveEnv === "1" : (settings.saveContextOnShutdown ?? false);
+	const save = booleanSetting(
+		"PENPI_SAVE_CONTEXT_ON_SHUTDOWN",
+		"saveContextOnShutdown",
+		truthy,
+		settings.saveContextOnShutdown,
+		false,
+	);
 	// Default ON. Disabling is an advanced diagnostic control, also exposed as --penpi-raw.
-	const injectEnv = process.env.PENPI_INJECT_BRIEFING;
-	const injectBriefing =
-		injectEnv !== undefined ? injectEnv !== "false" && injectEnv !== "0" : (settings.injectBriefing ?? true);
+	const injectBriefing = booleanSetting(
+		"PENPI_INJECT_BRIEFING",
+		"injectBriefing",
+		(v) => v !== "false" && v !== "0",
+		settings.injectBriefing,
+		true,
+	);
 	// Default OFF (opt-in): show the injected briefing in the UI as well.
-	const displayEnv = process.env.PENPI_DISPLAY_BRIEFING;
-	const displayBriefing =
-		displayEnv !== undefined ? displayEnv === "true" || displayEnv === "1" : (settings.displayBriefing ?? false);
+	const displayBriefing = booleanSetting(
+		"PENPI_DISPLAY_BRIEFING",
+		"displayBriefing",
+		truthy,
+		settings.displayBriefing,
+		false,
+	);
 	// At least one run of grace; a non-integer rounds down.
 	const emergencyCompactionRuns = Math.max(
 		1,
-		Math.floor(num(process.env.PENPI_EMERGENCY_COMPACTION_RUNS, settings.emergencyCompactionRuns ?? 15)),
+		Math.floor(
+			numberSetting(
+				"PENPI_EMERGENCY_COMPACTION_RUNS",
+				"emergencyCompactionRuns",
+				settings.emergencyCompactionRuns,
+				15,
+			),
+		),
 	);
 	return {
 		contextCeiling: ceiling,

@@ -282,10 +282,10 @@ describe("planFifoFromUsage (trigger metric)", () => {
 		expect(second.messages.length).toBeLessThan(grown.length);
 	});
 
-	it("a huge learned overhead cannot zero the message budget (floor-collision, F3)", () => {
+	it("a huge learned overhead cannot shrink the message budget (floor-collision, F3)", () => {
 		const msgs: Msg[] = [];
 		for (let i = 0; i < 30; i++)
-			msgs.push(i % 2 === 0 ? user(`U${i} ${"A".repeat(60)}`) : asst(`R${i} ${"A".repeat(60)}`));
+			msgs.push(i % 2 === 0 ? user(`U${i} ${"A".repeat(200)}`) : asst(`R${i} ${"A".repeat(200)}`));
 		const state = newFifoTriggerState();
 		// Estimator error taught a garbage-high OFFSET (anchors too close for a slope).
 		state.sampleLowTokens = 300;
@@ -294,10 +294,14 @@ describe("planFifoFromUsage (trigger metric)", () => {
 		state.sampleHighReported = 10_300;
 		const plan = planFifoFromUsage(msgs, 1000, null, cfg, state);
 		expect(plan.triggered).toBe(true);
-		// Old behavior: overhead capped at 0.5W == floor → budget 0 → only the newest
-		// unit survives forever (single-turn amnesia). The floor-aware cap must leave
-		// room for real history.
-		expect(plan.messages.length).toBeGreaterThan(1);
+		// Once, a learned overhead was subtracted from the floor, and a large one left
+		// a budget of zero: only the newest unit survived, forever (single-turn
+		// amnesia). The budget is now floor x window whatever was learned.
+		const unit = estimateTokens(msgs[msgs.length - 1]);
+		// +64: keptMessageTokens includes the FIFO notice when the kept window would
+		// otherwise start with an assistant message (same allowance as property P6).
+		expect(plan.keptMessageTokens).toBeLessThanOrEqual(cfg.contextFloor * 1000 + 64);
+		expect(plan.keptMessageTokens).toBeGreaterThan(cfg.contextFloor * 1000 - 2 * unit);
 	});
 
 	it("the use-time cap never clobbers raw anchors within the same window (F3)", () => {
@@ -382,9 +386,16 @@ describe("invalid reports never drive pruning (R-01)", () => {
 	});
 
 	it("a VALID over-ceiling report still drives pruning (the guard is not a mute button)", () => {
-		const msgs = under();
+		// Over the floor but under the ceiling by our estimate: only the report can
+		// trigger this prune. (Six tiny messages would not do: the floor holds them
+		// all, so there is nothing to evict and the plan is a no-op.)
+		const msgs = Array.from({ length: 12 }, (_, i) => user(`M${i} ${"x".repeat(200)}`));
+		expect(total(msgs)).toBeGreaterThan(cfg.contextFloor * W);
+		expect(total(msgs)).toBeLessThan(cfg.contextCeiling * W);
+		expect(planFifoFromUsage(msgs, W, null, cfg, newFifoTriggerState()).triggered).toBe(false);
 		const plan = planFifoFromUsage(msgs, W, 900, cfg, newFifoTriggerState());
 		expect(plan.triggered).toBe(true);
+		expect(plan.keptMessageTokens).toBeLessThanOrEqual(cfg.contextFloor * W);
 	});
 
 	it("an over-window report prunes real content but is NOT stored as an anchor", () => {
@@ -507,5 +518,97 @@ describe("hostile provider reports (R-01 adversarial)", () => {
 			const plan = planFifoFromUsage(msgs, W, W * 2, cfg, newFifoTriggerState());
 			expect(plan.triggered, `W=${W}`).toBe(true);
 		}
+	});
+});
+
+describe("the prune budget is slope-free: floor × window of estimated message tokens", () => {
+	// Every test above feeds the planner reports at slope 1 (provider tokens equal our
+	// chars/4 estimate). Real content is often denser: code, CJK, base64. With any
+	// slope above 1 the old budget charged the history's growth as fixed overhead, so
+	// a session settled at 14-19% of the window instead of at the floor.
+	const WINDOW = 100_000;
+	const OVERHEAD = 5_000;
+	const policy = { contextCeiling: 0.8, contextFloor: 0.2 };
+	const floorTokens = policy.contextFloor * WINDOW;
+	const turnChars = 4_000; // ~1,000 estimated tokens per message
+
+	/**
+	 * Run a session the way pi does: each call hands the planner the FULL history and
+	 * the provider's report for what was SENT last call, at `slope` real tokens per
+	 * estimated token plus a fixed overhead. Returns, per call, the estimated message
+	 * tokens sent and the provider's count for them.
+	 */
+	function session(slope: number, turns: number) {
+		const state = newFifoTriggerState();
+		const history: Msg[] = [];
+		let reported: number | null = null;
+		const calls: Array<{ triggered: boolean; sentEstimate: number; sentReal: number; historyEstimate: number }> = [];
+		for (let turn = 0; turn < turns; turn++) {
+			history.push(user(`U${turn} ${"u".repeat(turnChars)}`));
+			const plan = planFifoFromUsage(history, WINDOW, reported, policy, state);
+			const sentEstimate = total(plan.messages);
+			const sentReal = Math.round(slope * sentEstimate + OVERHEAD);
+			calls.push({ triggered: plan.triggered, sentEstimate, sentReal, historyEstimate: total(history) });
+			reported = sentReal;
+			history.push(asst(`R${turn} ${"r".repeat(turnChars)}`));
+		}
+		return calls;
+	}
+
+	const unit = total([user(`U0 ${"u".repeat(turnChars)}`)]);
+
+	for (const slope of [1, 1.5, 2, 3]) {
+		it(`settles at the floor, not below it, at slope ${slope}`, () => {
+			const calls = session(slope, 120);
+			const pruned = calls.filter((c) => c.triggered);
+			expect(pruned.length, "the session must have crossed the ceiling").toBeGreaterThan(20);
+			for (const c of pruned) {
+				// Whole units only, so the kept history lands within one message of the floor.
+				expect(c.sentEstimate).toBeLessThanOrEqual(floorTokens);
+				expect(c.sentEstimate).toBeGreaterThan(floorTokens - 2 * unit);
+			}
+		});
+	}
+
+	it("keeps the same messages whatever the learned slope", () => {
+		const history: Msg[] = [];
+		for (let i = 0; i < 200; i++)
+			history.push(i % 2 === 0 ? user(`U${i} ${"u".repeat(turnChars)}`) : asst(`R${i} ${"r".repeat(turnChars)}`));
+		const keptAt = (slope: number) => {
+			const state = newFifoTriggerState();
+			// Two full-coverage reports teach the planner this slope.
+			const early = history.slice(0, 10);
+			const later = history.slice(0, 30);
+			planFifoFromUsage(early, WINDOW, slope * total(early) + OVERHEAD, policy, state);
+			planFifoFromUsage(later, WINDOW, slope * total(later) + OVERHEAD, policy, state);
+			expect(deriveCalibration(state).slope).toBeCloseTo(slope, 1);
+			return planFifoFromUsage(history, WINDOW, null, policy, state).messages;
+		};
+		const atOne = keptAt(1);
+		expect(keptAt(2)).toEqual(atOne);
+		expect(keptAt(3)).toEqual(atOne);
+	});
+
+	it("does not shrink as the full history keeps growing", () => {
+		const calls = session(2, 200).filter((c) => c.triggered);
+		const late = calls[calls.length - 1];
+		expect(late.historyEstimate, "history far beyond the window").toBeGreaterThan(3 * WINDOW);
+		// Message sizes differ by a digit or two, so the kept set may differ by one message.
+		for (const c of calls) expect(Math.abs(c.sentEstimate - calls[0].sentEstimate)).toBeLessThan(unit);
+	});
+
+	it("still uses the learned slope to decide WHEN to prune", () => {
+		// Estimation, not budget policy: at slope 2 a history estimated at 45% of the
+		// window is really over 90% of it, and must be pruned.
+		const state = newFifoTriggerState();
+		const history: Msg[] = [];
+		for (let i = 0; i < 10; i++) history.push(user(`U${i} ${"u".repeat(turnChars)}`));
+		planFifoFromUsage(history.slice(0, 2), WINDOW, 2 * total(history.slice(0, 2)) + OVERHEAD, policy, state);
+		planFifoFromUsage(history, WINDOW, 2 * total(history) + OVERHEAD, policy, state);
+		while (total(history) < 0.45 * WINDOW) history.push(user(`U${history.length} ${"u".repeat(turnChars)}`));
+		expect(total(history)).toBeLessThan(policy.contextCeiling * WINDOW);
+		const plan = planFifoFromUsage(history, WINDOW, null, policy, state);
+		expect(plan.triggered).toBe(true);
+		expect(total(plan.messages)).toBeLessThanOrEqual(floorTokens);
 	});
 });

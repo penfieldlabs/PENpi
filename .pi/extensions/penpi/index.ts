@@ -8,16 +8,21 @@
  *   - context        → FIFO watermark pruning before every LLM call.
  *   - session_before_compact → cancel `threshold` and unknown reasons (FIFO owns
  *                      routine context); allow `overflow` and `manual` (ADR 0023).
+ *   - agent_end      → continue a response cut off at the output token limit (ADR 0028).
  *   - agent_settled  → emergency compaction when the model has no context window (ADR 0025).
  *   - session_shutdown → optional save_context() checkpoint + disconnect.
  *
  * Command: /penpi [login] — status, or run the Penfield device-code login.
  *
  * Conscious layer: Penfield's LLM-facing tools come from pi-mcp-adapter, which
- * shares PENpi's JWT (one auth). See mcp-config.ts.
+ * shares PENpi's JWT (one auth). PENpi embeds the adapter with a config built from
+ * the global mcp.json only, so a repository cannot add MCP servers (ADR 0026).
+ * See mcp-config.ts.
  */
-import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { readFileSync, realpathSync } from "node:fs";
+import { createRequire } from "node:module";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
 import {
 	DEFAULT_COMPACTION_SETTINGS,
@@ -29,12 +34,29 @@ import { Type } from "typebox";
 import type { PenfieldConfig } from "./config.ts";
 import { BRIEFING_CUSTOM_TYPE, resolveMcpLifecycle, resolvePenfieldConfig, resolvePenpiConfig } from "./config.ts";
 import { deriveCalibration, type FifoTriggerState, newFifoTriggerState, planFifoFromUsage } from "./fifo.ts";
-import { ensurePenfieldMcpEntry, JWT_ENV } from "./mcp-config.ts";
+import { type AdapterConfig, buildAdapterConfig, ensurePenfieldMcpEntry, JWT_ENV } from "./mcp-config.ts";
 import { PenfieldClient, type PenfieldClientOptions } from "./penfield-client.ts";
 import { searchTranscripts, sessionDirForCwd } from "./transcript-search.ts";
 
 /** Consecutive FIFO triggers before warning the operator that history is aging out. */
 const CONTINUOUS_FIRE_THRESHOLD = 3;
+
+/**
+ * Highest contextFloor PENpi accepts without a warning. The prune budget is
+ * floor × window in ESTIMATED tokens (ADR 0027), and dense content (code, CJK,
+ * base64) can cost ~4× that in real tokens. A floor above this threshold risks
+ * exceeding the window at high undercount ratios: 4 × 0.25 already fills the
+ * full window, leaving nothing for overhead.
+ */
+export const FLOOR_WARNING_THRESHOLD = 0.25;
+
+/** Continuations PENpi requests per run for responses cut off at the output token limit (ADR 0028). */
+export const MAX_LENGTH_CONTINUATIONS = 3;
+
+/** The follow-up sent when a response stops at the output token limit. */
+export const LENGTH_CONTINUATION_PROMPT =
+	"[PENpi] Your previous response was cut off at the output token limit. Continue exactly where it " +
+	"stopped, without repeating anything already written.";
 
 /**
  * Cheap identity for a candidate list, used only to tell "the conversation grew"
@@ -93,9 +115,14 @@ export interface PenpiDeps {
 	makeClient: (cfg: PenfieldConfig, opts?: PenfieldClientOptions) => PenfieldClient;
 	/** Conscious-layer mcp.json writer; injectable so unit tests don't touch disk. */
 	ensureMcpEntry?: typeof ensurePenfieldMcpEntry;
+	/**
+	 * Installs the embedded pi-mcp-adapter with PENpi's global-only config. Omitted
+	 * in unit tests, which then run without an adapter at all.
+	 */
+	installAdapter?: (pi: ExtensionAPI, config: AdapterConfig) => void | Promise<void>;
 }
 
-export default function penpi(pi: ExtensionAPI) {
+export default async function penpi(pi: ExtensionAPI) {
 	// Dedupe guard: when PENpi is installed globally AND present project-locally (e.g.
 	// running inside the repo), pi discovers both copies in the same load pass.
 	//
@@ -111,11 +138,67 @@ export default function penpi(pi: ExtensionAPI) {
 		return;
 	}
 	g.__PENPI_LOADED__ = true;
-	penpiCore(pi, { makeClient: (cfg, opts) => new PenfieldClient(cfg, opts) });
+	await penpiCore(pi, {
+		makeClient: (cfg, opts) => new PenfieldClient(cfg, opts),
+		installAdapter: installEmbeddedAdapter,
+	});
+}
+
+/**
+ * Load the real adapter and install it on PENpi's own ExtensionAPI.
+ * `createMcpAdapter({ config })` makes the adapter skip every config file it would
+ * otherwise read, project files included. Imported lazily so that unit tests, which
+ * load index.ts without Pi's loader, never evaluate the adapter.
+ */
+async function installEmbeddedAdapter(pi: ExtensionAPI, config: AdapterConfig): Promise<void> {
+	// Resolved from this file's REAL path. penpi-global.sh installs PENpi as a symlink
+	// in the agent directory, and pi loads it by the link path: a bare specifier would
+	// then search the agent directory's node_modules and never reach the repository's.
+	// Importing a resolved path also keeps tsc from type-checking the adapter's whole
+	// TS source tree as part of PENpi (it exhausts memory). The one function used is
+	// typed here.
+	const entry = createRequire(realpathSync(fileURLToPath(import.meta.url))).resolve("pi-mcp-adapter");
+	const adapter = (await import(entry)) as {
+		createMcpAdapter: (options: { config: AdapterConfig }) => (pi: ExtensionAPI) => void | Promise<void>;
+	};
+	await adapter.createMcpAdapter({ config })(pi);
+}
+
+/**
+ * Whether `--penpi-dev` is on the command line. pi applies extension flag values
+ * only after every extension has loaded, so pi.getFlag() still returns the default
+ * while the adapter config is built. The adapter does the same for its own
+ * `--mcp-config`.
+ */
+function penpiDevFromArgv(argv: readonly string[] = process.argv): boolean {
+	return argv.some((a) => a === "--penpi-dev" || (a.startsWith("--penpi-dev=") && a !== "--penpi-dev=false"));
+}
+
+/**
+ * Whether the stock pi-mcp-adapter package is still listed in pi's settings. If it
+ * is, pi loads it alongside the embedded copy, and the stock copy reads project MCP
+ * config. Read only to warn; nothing here applies those settings.
+ */
+export function stockAdapterSettingsPaths(cwd: string = process.cwd(), agentDir: string = getAgentDir()): string[] {
+	const paths = [...new Set([resolve(agentDir, "settings.json"), resolve(cwd, ".pi", "settings.json")])];
+	return paths.filter((p) => {
+		try {
+			const packages = (JSON.parse(readFileSync(p, "utf8")) as { packages?: unknown }).packages;
+			return (
+				Array.isArray(packages) &&
+				packages.some((entry) => {
+					const source = typeof entry === "string" ? entry : (entry as { source?: unknown } | null)?.source;
+					return typeof source === "string" && /(^|[:/])pi-mcp-adapter(@|$)/.test(source);
+				})
+			);
+		} catch {
+			return false;
+		}
+	});
 }
 
 /** The extension, with dependencies injected. Default export wires the real PenfieldClient. */
-export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps) {
+export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps): void | Promise<void> {
 	const penpiCfg = resolvePenpiConfig();
 	const debug = process.env.PENPI_DEBUG === "1";
 	const ensureMcp = deps.ensureMcpEntry ?? ensurePenfieldMcpEntry;
@@ -143,6 +226,12 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps) {
 	let emergencyCompactionPending = false;
 	// A synchronous ctx.compact() failure is reported once per session, not every run.
 	let firedEmergencyThrowNotice = false;
+	// Length continuations requested in the current run (ADR 0028), reset when the run settles,
+	// and whether the cap has already been reported for it.
+	let lengthContinuations = 0;
+	let reportedContinuationCap = false;
+	// A floor above FLOOR_WARNING_THRESHOLD is reported once per load, not on every session_start.
+	let firedFloorWarning = false;
 	// Fingerprint of the candidate list at the previous trigger. A provider retry
 	// re-issues the SAME conversation: agent-session removes the failed assistant
 	// message from live state before retrying, and the context hook reads live
@@ -152,6 +241,11 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps) {
 	// Comparing identity is not the same as inferring retry from a count delta:
 	// an unchanged list is direct evidence that no new content was added.
 	let lastTriggerFingerprint: string | undefined;
+	// Embedded adapter: problems found while building or installing it at load time,
+	// reported at session_start (there is no UI at load), and the Penfield URL it was
+	// given, which must match the session's.
+	const adapterProblems: string[] = [];
+	let adapterPenfieldUrl: string | undefined;
 
 	// Internal environment selector; production remains the default.
 	pi.registerFlag("penpi-dev", {
@@ -332,9 +426,42 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps) {
 		const reason = (event as { reason?: string }).reason ?? "start";
 		if (debug) console.error(`[PENpi] loaded (session_start: ${reason})`);
 
+		// Before the auth check: it concerns FIFO, which runs whether or not Penfield is reachable.
+		if (penpiCfg.contextFloor > FLOOR_WARNING_THRESHOLD && !firedFloorWarning) {
+			firedFloorWarning = true;
+			ctx.ui.notify(
+				`PENpi: contextFloor is ${penpiCfg.contextFloor}. FIFO keeps that fraction of the window in ESTIMATED ` +
+					"tokens, and dense content (code, CJK, base64) can cost up to 4x more, so a floor above " +
+					`${FLOOR_WARNING_THRESHOLD} can overflow the window. The default is 0.2 (ADR 0027).`,
+				"warning",
+			);
+		}
+
 		const cfg = resolvePenfield();
 		status.penfieldEnv = cfg.env;
 		status.authMode = cfg.authMode;
+
+		if (deps.installAdapter) {
+			for (const problem of adapterProblems) {
+				ctx.ui.notify(`PENpi: ${problem}. Memory orientation + FIFO still work.`, "warning");
+			}
+			if (adapterPenfieldUrl !== undefined && adapterPenfieldUrl !== cfg.mcpUrl) {
+				ctx.ui.notify(
+					`PENpi: the MCP adapter was configured for ${adapterPenfieldUrl} but this session uses ${cfg.mcpUrl}. ` +
+						"Penfield tools may reach the wrong environment; restart pi.",
+					"warning",
+				);
+			}
+			const stock = stockAdapterSettingsPaths(ctx.cwd);
+			if (stock.length > 0) {
+				ctx.ui.notify(
+					`PENpi: pi-mcp-adapter is still listed as a package in ${stock.join(" and ")}. PENpi now runs the adapter ` +
+						"itself, and the separate copy reads project MCP config (.mcp.json, .pi/mcp.json), which any repository " +
+						"can supply. Remove that entry (scripts/penpi-global.sh install does it for the global settings).",
+					"warning",
+				);
+			}
+		}
 
 		// Fresh connection per session_start (handles reload/resume/fork).
 		await client?.disconnect();
@@ -354,13 +481,6 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps) {
 				"warning",
 			);
 			return;
-		}
-
-		if (!adapterInstalled()) {
-			ctx.ui.notify(
-				"PENpi: pi-mcp-adapter not found — Penfield/web tools will be unavailable. Install it (see README) for the conscious layer. Memory orientation + FIFO still work.",
-				"warning",
-			);
 		}
 
 		try {
@@ -399,6 +519,39 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps) {
 		return { cancel: true };
 	});
 
+	// Block 5a: length continuation (ADR 0028). A response that stops at the model's output
+	// limit ends the run as if it were complete. Queue a follow-up asking the model to
+	// continue. agent_end is the right place: the run is still active, so the follow-up is
+	// queued rather than started, and pi turns a message queued by an agent_end handler into
+	// another turn of the SAME run, after its retry and compaction checks.
+	//
+	// Only with output > 0. pi's overflow recovery treats "length" with zero output and an
+	// input filling the window as a context overflow (a server that truncated the INPUT) and
+	// compacts and continues on its own; a second continuation from here would pile on top.
+	pi.on("agent_end", async (event, ctx) => {
+		const last = [...event.messages].reverse().find((m) => m.role === "assistant") as
+			| { stopReason?: string; usage?: { output?: number } }
+			| undefined;
+		if (last?.stopReason !== "length" || !((last.usage?.output ?? 0) > 0)) return;
+		if (lengthContinuations >= MAX_LENGTH_CONTINUATIONS) {
+			if (!reportedContinuationCap && ctx.hasUI) {
+				ctx.ui.notify(
+					`PENpi: the response hit the output token limit again after ${MAX_LENGTH_CONTINUATIONS} continuations; ` +
+						"stopping. Ask the model to continue if you need more.",
+					"warning",
+				);
+			}
+			reportedContinuationCap = true;
+			return;
+		}
+		lengthContinuations++;
+		if (debug)
+			console.error(
+				`[PENpi] output limit reached — continuing (${lengthContinuations}/${MAX_LENGTH_CONTINUATIONS})`,
+			);
+		pi.sendUserMessage(LENGTH_CONTINUATION_PROMPT, { deliverAs: "followUp" });
+	});
+
 	// Block 5b: emergency compaction (ADR 0025). FIFO needs a context window; for a
 	// model without one pi reports no usage, FIFO never runs, and with compaction
 	// disabled (the fork default) nothing manages context. After enough settled runs,
@@ -411,6 +564,9 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps) {
 	// unpersisted. agent_settled fires once per run after all of that, with the run
 	// already inactive, so compact()'s abort + waitForIdle have nothing in flight.
 	pi.on("agent_settled", async (_event, ctx) => {
+		// The run is over: the next one gets a fresh continuation budget (Block 5a).
+		lengthContinuations = 0;
+		reportedContinuationCap = false;
 		if (fifoWindowAvailable) return;
 		runsWithoutWindow++;
 		if (emergencyCompactionPending || runsWithoutWindow < penpiCfg.emergencyCompactionRuns) return;
@@ -433,24 +589,34 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps) {
 			}
 			// Reset the count on BOTH outcomes: left over the threshold, it would force
 			// another compaction on every following run.
-			ctx.compact({
-				onComplete: () => {
-					emergencyCompactionPending = false;
-					runsWithoutWindow = 0;
-				},
-				onError: (err) => {
-					emergencyCompactionPending = false;
-					runsWithoutWindow = 0;
-					const msg = errMsg(err);
-					// Expected outcomes the size gate cannot fully rule out, or the user's own
-					// cancel: PENpi adds no notification of its own. pi itself still reports a
-					// failed manual compaction in the UI ("Compaction failed: ...").
-					if (/Nothing to compact|Already compacted|Compaction cancelled/.test(msg)) {
-						if (debug) console.error(`[PENpi] emergency compaction skipped: ${msg}`);
-						return;
-					}
-					if (ctx.hasUI) ctx.ui.notify(`PENpi: emergency compaction failed: ${msg}`, "error");
-				},
+			//
+			// Awaited: pi resolves prompt() and waitForIdle() only after the agent_settled
+			// handlers return, so waiting here keeps the session busy until the compaction is
+			// done. Fire-and-forget let print mode exit, or the next prompt start, while it was
+			// still running. No deadlock: compact() waits for idle, and the run is already
+			// inactive when agent_settled fires.
+			await new Promise<void>((resolveCompaction) => {
+				ctx.compact({
+					onComplete: () => {
+						emergencyCompactionPending = false;
+						runsWithoutWindow = 0;
+						resolveCompaction();
+					},
+					onError: (err) => {
+						emergencyCompactionPending = false;
+						runsWithoutWindow = 0;
+						resolveCompaction();
+						const msg = errMsg(err);
+						// Expected outcomes the size gate cannot fully rule out, or the user's own
+						// cancel: PENpi adds no notification of its own. pi itself still reports a
+						// failed manual compaction in the UI ("Compaction failed: ...").
+						if (/Nothing to compact|Already compacted|Compaction cancelled/.test(msg)) {
+							if (debug) console.error(`[PENpi] emergency compaction skipped: ${msg}`);
+							return;
+						}
+						if (ctx.hasUI) ctx.ui.notify(`PENpi: emergency compaction failed: ${msg}`, "error");
+					},
+				});
 			});
 		} catch (err) {
 			// E.g. a stale ctx after /reload. Reset like the async outcomes so the next
@@ -489,6 +655,38 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps) {
 			client = undefined;
 		}
 	});
+
+	// Conscious layer: install the embedded adapter LAST. pi runs one extension's
+	// handlers in registration order, and the adapter's session_start must run after
+	// PENpi's, which publishes the JWT. A failure is reported, never thrown: PENpi's
+	// own orientation and FIFO do not depend on the adapter.
+	if (deps.installAdapter) {
+		const installAdapter = deps.installAdapter;
+		let built: ReturnType<typeof buildAdapterConfig>;
+		try {
+			const lifecycle = resolveMcpLifecycle();
+			const cfg = resolvePenfieldConfig(undefined, penpiDevFromArgv() ? "dev" : undefined);
+			built = buildAdapterConfig(cfg, lifecycle ? { lifecycle } : {});
+			adapterPenfieldUrl = cfg.mcpUrl;
+		} catch (err) {
+			adapterProblems.push(
+				`could not build the MCP adapter config (${errMsg(err)}); Penfield/web tools unavailable`,
+			);
+			return;
+		}
+		if (built.warning) {
+			adapterProblems.push(
+				`ignoring the global MCP config: ${built.warning}; only the Penfield server is configured`,
+			);
+		}
+		return (async () => {
+			try {
+				await installAdapter(pi, built.config);
+			} catch (err) {
+				adapterProblems.push(`could not load pi-mcp-adapter (${errMsg(err)}); Penfield/web tools unavailable`);
+			}
+		})();
+	}
 
 	// --- orientation + token sharing (closures over client/status/deps) ---
 
@@ -633,12 +831,45 @@ function inertRun(run: string): string {
 const FENCE_LABEL_PATTERN = FENCE_LABELS.map((l) => l.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
 
 /**
+ * Most characters of one memory text (briefing or reflection) PENpi injects,
+ * about 16k tokens. Bounds both the context it takes and the sanitizer's work on
+ * remote input. Longer text is cut, with a note saying how much was omitted.
+ */
+export const MAX_MEMORY_TEXT_CHARS = 64_000;
+
+/** Unicode format characters (zero-width, joiners, bidi controls, BOM). */
+const FORMAT_CHARS = /\p{Cf}/gu;
+
+/** Cut to MAX_MEMORY_TEXT_CHARS without splitting a surrogate pair, and say how much was omitted. */
+function capMemoryText(s: string): string {
+	if (s.length <= MAX_MEMORY_TEXT_CHARS) return s;
+	let end = MAX_MEMORY_TEXT_CHARS;
+	const last = s.charCodeAt(end - 1);
+	if (last >= 0xd800 && last <= 0xdbff) end--; // high surrogate: keep the pair together
+	return `${s.slice(0, end)}\n[PENpi: memory text truncated: ${s.length - end} characters omitted]`;
+}
+
+/**
  * Neutralize delimiter forgery in remote memory content, so remote text can
  * never fabricate the `=== END PENFIELD PERSISTENT MEMORY ===` fence and escape
  * the trust wrapper assembled in orient(). Runs of `=` become `≡` (visually
  * equivalent, semantically inert). Exported for tests.
  *
- * Three passes, because a fence reaches us in more than one shape:
+ * Before matching, the text is normalized so a fence cannot be disguised:
+ *
+ *  - NFKC folds compatibility forms (fullwidth `＝＝＝ ＥＮＤ`, and the like) to the
+ *    characters a model reads them as;
+ *  - format characters (zero-width spaces and joiners, bidi controls, BOM) are
+ *    removed: invisible to a reader, they would split `=\u200B==` or `E\u200DND`
+ *    so no pattern matches;
+ *  - the text is capped at MAX_MEMORY_TEXT_CHARS.
+ *
+ * Normalization rewrites the injected text, not only the fences (a ligature
+ * becomes two letters; a zero-width joiner inside an emoji sequence is dropped).
+ * The session state entry keeps the raw text; see orient(). Label matching is
+ * case-insensitive.
+ *
+ * Then three passes, because a fence reaches us in more than one shape:
  *
  *  1. Line-leading, on real newlines — the plain case (awaken's briefing prose).
  *  2. After a JSON-escaped newline. reflect() returns a JSON blob, so a stored
@@ -647,18 +878,27 @@ const FENCE_LABEL_PATTERN = FENCE_LABELS.map((l) => l.replace(/[.*+?^${}()|[\]\\
  *     the fence would sail through verbatim.
  *  3. Anywhere a run of `=` abuts one of the wrapper's own marker words, which
  *     covers mid-line forgeries. Deliberately scoped to those markers: a blanket
- *     rule would mangle every `===` in stored JavaScript.
+ *     rule would mangle every `===` in stored JavaScript. The run is matched only
+ *     from its first `=` (`(?<!=)`): unanchored, a long run was retried from every
+ *     position inside it, which is quadratic.
  */
+/**
+ * Characters that look like `=` but are not folded to it by NFKC. Replaced
+ * before matching so a fence spelled with box-drawing or modifier-letter forms
+ * is still neutralised.
+ */
+const EQUALS_LOOKALIKES = /[═꞊゠⹀＝]/g;
+
 export function sanitizeMemoryText(s: string): string {
-	return s
+	return capMemoryText(s.normalize("NFKC").replace(FORMAT_CHARS, "").replace(EQUALS_LOOKALIKES, "="))
 		.replace(/^([ \t]*)(={3,})/gm, (_m, ws: string, run: string) => ws + inertRun(run))
 		.replace(/(\\n[ \t]*)(={3,})/g, (_m, pre: string, run: string) => pre + inertRun(run))
 		.replace(
-			new RegExp(`(={3,})([ \\t]*(?:${FENCE_LABEL_PATTERN}))`, "g"),
+			new RegExp(`(?<!=)(={3,})([ \\t]*(?:${FENCE_LABEL_PATTERN}))`, "gi"),
 			(_m, run: string, post: string) => inertRun(run) + post,
 		)
 		.replace(
-			new RegExp(`((?:${FENCE_LABEL_PATTERN})[ \\t]{0,8})(={3,})`, "g"),
+			new RegExp(`((?:${FENCE_LABEL_PATTERN})[ \\t]{0,8})(={3,})`, "gi"),
 			(_m, pre: string, run: string) => pre + inertRun(run),
 		);
 }
@@ -703,17 +943,4 @@ export function hasCompactableHistory(
 
 function errMsg(err: unknown): string {
 	return err instanceof Error ? err.message : String(err);
-}
-
-/**
- * Whether the conscious layer (pi-mcp-adapter) is installed. pi installs `npm:` packages
- * into its OWN managed npm dirs (project `.pi/npm` + the global agent dir), not on node's
- * normal resolution path — so `require.resolve` always fails. Check those dirs directly.
- */
-function adapterInstalled(): boolean {
-	const candidates = [
-		join(process.cwd(), ".pi", "npm", "node_modules", "pi-mcp-adapter"),
-		join(getAgentDir(), "npm", "node_modules", "pi-mcp-adapter"),
-	];
-	return candidates.some((p) => existsSync(p));
 }

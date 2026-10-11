@@ -64,17 +64,17 @@
 	"engines": {
 		"node": ">=22.19.0"
 	},
-	"version": "0.3.1",
+	"version": "0.3.2",
 	"overrides": {
 		"protobufjs": "7.6.5",
 		"rimraf": "6.1.2",
 		"gaxios": {
 			"rimraf": "6.1.2"
 		},
-		"hono": "4.12.34",
+		"hono": "4.13.13",
 		"nanoid": "3.3.18",
 		"@earendil-works/gondolin": {
-			"undici": "6.28.0"
+			"undici": "6.29.0"
 		}
 	}
 }

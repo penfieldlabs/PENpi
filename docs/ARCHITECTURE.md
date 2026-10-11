@@ -26,7 +26,9 @@ forces an emergency compaction every so many runs ([ADR 0025](adr/0025-compactio
 - **Automatic (hooks → thin client):** `penfield-client.ts`, a small client on
   `@modelcontextprotocol/sdk`. Used by the hooks for `awaken` / `reflect` / `save_context`.
 - **Conscious (LLM tools → `pi-mcp-adapter`):** Penfield's tools are exposed to the model
-  by the adapter; PENpi writes zero tool-registration code for it.
+  by the adapter; PENpi writes zero tool-registration code for it. PENpi embeds the
+  adapter and gives it a config built from the global `mcp.json` only, never the
+  project's `.mcp.json` or `.pi/mcp.json` ([ADR 0026](adr/0026-global-only-configuration.md)).
 
 Both share **one token** ([ADR 0009](adr/0009-single-shared-jwt.md)): PENpi owns auth and
 hands the JWT to the adapter via `PENFIELD_JWT` + a generated `mcp.json` entry.
@@ -37,7 +39,8 @@ hands the JWT to the adapter via `PENFIELD_JWT` + a generated `mcp.json` entry.
 |------|----------|
 | `session_start` | Connect, `awaken()` + `reflect("recent")`, cache state, inject an orientation briefing + behavioral protocol; wire the conscious layer (set `PENFIELD_JWT`, write `mcp.json`) |
 | `context` | FIFO watermark pruning before every LLM call; refresh the shared token; wrapped so a fault never blocks the call |
-| `agent_settled` | Emergency fallback: after `emergencyCompactionRuns` consecutive runs without a valid context window (FIFO inactive), force one compaction ([ADR 0025](adr/0025-compaction-fallback-without-fifo-window.md)) |
+| `agent_end` | Length continuation: when the last response stopped at the output token limit (`stopReason: "length"` with output), queue a follow-up asking the model to continue, at most 3 per run ([ADR 0028](adr/0028-length-continuation.md)) |
+| `agent_settled` | Resets the continuation budget. Emergency fallback: after `emergencyCompactionRuns` consecutive runs without a valid context window (FIFO inactive), force one compaction ([ADR 0025](adr/0025-compaction-fallback-without-fifo-window.md)) |
 | `session_before_compact` | Reason-aware: `{cancel:true}` for `threshold` and for a missing reason — FIFO owns routine context; `overflow` and `manual` are allowed through ([ADR 0023](adr/0023-overflow-compaction-escape-hatch.md)) |
 | `session_shutdown` | Optional `save_context()` checkpoint (opt-in, [ADR 0010](adr/0010-save-context-on-shutdown-opt-in.md)), then disconnect |
 
