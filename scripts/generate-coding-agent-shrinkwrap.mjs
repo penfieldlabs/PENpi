@@ -9,10 +9,11 @@ const repoRoot = resolve(scriptDir, "..");
 const codingAgentDir = join(repoRoot, "packages/coding-agent");
 const rootLockfilePath = join(repoRoot, "package-lock.json");
 const shrinkwrapPath = join(codingAgentDir, "npm-shrinkwrap.json");
-const internalPackagePrefix = "@earendil-works/pi-";
+const internalPackagePrefix = "@earendil-works/";
 const allowedInstallScriptPackages = new Map([
-	["@google/genai@1.52.0", "preinstall is a no-op in the published package"],
-	["protobufjs@7.6.5", "postinstall only warns about protobufjs version scheme mismatches"],
+	["@google/genai@2.21.0", "preinstall is a no-op in the published package"],
+	["esbuild@0.28.2", "postinstall verifies the platform binary, downloading it from the npm registry if missing"],
+	["protobufjs@7.6.6", "postinstall only warns about protobufjs version scheme mismatches"],
 ]);
 
 const args = new Set(process.argv.slice(2));
@@ -341,13 +342,13 @@ try {
 	if (checkOnly) {
 		if (!existsSync(shrinkwrapPath)) {
 			console.error("packages/coding-agent/npm-shrinkwrap.json is missing.");
-			console.error("Run: npm run shrinkwrap:coding-agent");
+			console.error("Run: node scripts/generate-coding-agent-shrinkwrap.mjs");
 			process.exit(1);
 		}
 		const current = readFileSync(shrinkwrapPath, "utf8");
 		if (current !== content) {
 			console.error("packages/coding-agent/npm-shrinkwrap.json is out of date.");
-			console.error("Run: npm run shrinkwrap:coding-agent");
+			console.error("Run: node scripts/generate-coding-agent-shrinkwrap.mjs");
 			process.exit(1);
 		}
 		console.log("packages/coding-agent/npm-shrinkwrap.json is up to date.");

@@ -207,7 +207,6 @@ console.log();
 console.log("Regenerating release artifacts...");
 run("npm run generate:models");
 run("npm run check:model-data");
-run("npm run shrinkwrap:coding-agent");
 run("npm run install-lock:coding-agent");
 console.log();
 

@@ -6,6 +6,30 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-10-12
+
+### Changed
+- **Rebased onto upstream Pi v1.1.0** (from v0.83.0). Notable upstream changes:
+  - TypeScript 7.0 with an ES2024 target and lib; Node engine stays `>=22.19.0`.
+  - `SessionManager` is canonical for `AgentSession` provider context; assigning
+    `session.agent.state.messages` no longer replaces future request history.
+  - `finishTurn` replaces `shouldStopAfterTurn`.
+  - Extension context reworked.
+  - New packages: `durable`, `chord`, `mcp`, `codemode`, `client`, `protocol`, `env`,
+    `telemetry`. `packages/storage` was removed upstream.
+- Release script no longer regenerates `packages/coding-agent/npm-shrinkwrap.json`; the
+  generator (`scripts/generate-coding-agent-shrinkwrap.mjs`) is kept for manual runs.
+- Upstream compaction tests adapted to PENpi's routine-compaction-off default ([ADR 0003],
+  [ADR 0023]): tests that exercise threshold compaction now enable it explicitly.
+
+### Fixed
+- Removed 113 files upstream deleted between v0.83.0 and v1.1.0 that the merge had brought
+  back (old agent harness, server Radius runtime, `storage/sqlite-node`, and others), plus
+  the tsconfig excludes, `./harness` export, and agent dependencies (`diff`, `ignore`,
+  `yaml`) that only existed to support them.
+- Restored upstream's `packages/coding-agent/vitest.config.ts`; merge-added `source`
+  resolve conditions made PENpi's extension tests fail to load `eventsource-parser`.
+
 ## [0.3.2] — 2026-10-11
 
 ### Added

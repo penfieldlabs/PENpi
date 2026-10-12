@@ -39,11 +39,14 @@ out.jsonl
 pi-*.html
 out.html
 packages/coding-agent/binaries/
+packages/env/bin/
+packages/env/daemon/target/
 todo.md
 plans/
 .pi/hf-sessions/
 .pi/hf-sessions-backup/
 collect.sh
+packages/agent/docs/extensions/pi-server-artifact/index.md
 
 # PENpi: runtime-generated, env-specific MCP adapter config (not committed)
 .pi/mcp.json

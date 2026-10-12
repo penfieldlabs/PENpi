@@ -43,7 +43,10 @@ const persisted = (h: Harness) =>
 	(h.sessionManager.getEntries() as any[]).filter((e) => e.type === "message").map((e) => e.message);
 const text = (m: any) =>
 	typeof m.content === "string" ? m.content : m.content.map((c: any) => (c.type === "text" ? c.text : "")).join("");
-const transcript = (h: Harness) => persisted(h).map((m) => `${m.role}: ${text(m)}`);
+const transcript = (h: Harness) =>
+	persisted(h)
+		.filter((m) => m.role !== "system")
+		.map((m) => `${m.role}: ${text(m)}`);
 const continuation = `user: ${LENGTH_CONTINUATION_PROMPT}`;
 
 describe("PENpi length continuation in AgentSession", () => {

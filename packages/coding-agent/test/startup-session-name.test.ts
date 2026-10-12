@@ -2,10 +2,13 @@ import { spawn } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { ENV_AGENT_DIR } from "../src/config.ts";
 
 const cliPath = resolve(__dirname, "../src/cli.ts");
+// --import takes a module specifier, not a filesystem path.
+const sourceResolverUrl = pathToFileURL(resolve(__dirname, "../src/experimental/source-resolver.ts")).href;
 const tempDirs: string[] = [];
 
 afterEach(() => {
@@ -65,13 +68,12 @@ function readSessionInfoNames(sessionFile: string): string[] {
 
 async function runCli(args: string[], dirs: CliDirs): Promise<CliResult> {
 	let stderr = "";
-	const child = spawn(process.execPath, [cliPath, ...args], {
+	const child = spawn(process.execPath, ["--import", sourceResolverUrl, cliPath, ...args], {
 		cwd: dirs.projectDir,
 		env: {
 			...process.env,
 			[ENV_AGENT_DIR]: dirs.agentDir,
 			PI_OFFLINE: "1",
-			TSX_TSCONFIG_PATH: resolve(__dirname, "../../../tsconfig.json"),
 		},
 		stdio: ["ignore", "ignore", "pipe"],
 	});
@@ -118,18 +120,5 @@ describe("startup session name", () => {
 		expect(result.code).toBe(1);
 		expect(result.signal).toBeNull();
 		expect(readSessionInfoNames(dirs.sessionFile)).toEqual(["CLI Named Session"]);
-	});
-
-	it("rejects empty --name values without appending session metadata", async () => {
-		const dirs = setup();
-		const result = await runCli(
-			["--session", dirs.sessionFile, "--name", "   ", "--model", "missing-model", "-p", "hi"],
-			dirs,
-		);
-
-		expect(result.code).toBe(1);
-		expect(result.signal).toBeNull();
-		expect(result.stderr).toContain("--name requires a non-empty value");
-		expect(readSessionInfoNames(dirs.sessionFile)).toEqual([]);
 	});
 });

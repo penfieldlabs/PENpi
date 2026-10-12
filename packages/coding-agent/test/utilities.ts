@@ -93,7 +93,7 @@ export async function resolveApiKey(provider: string): Promise<string | undefine
 		if (!oauth) return undefined;
 		let credential = entry;
 		if (Date.now() >= credential.expires) {
-			credential = await oauth.refresh(credential);
+			credential = await oauth.refresh(credential, new AbortController().signal);
 			storage[provider] = credential;
 			saveAuthStorage(storage);
 		}
@@ -150,6 +150,20 @@ export function assistantMsg(text: string) {
 		stopReason: "stop" as const,
 		timestamp: Date.now(),
 	};
+}
+
+/**
+ * Read a session JSONL file and return one label per record: the message role for
+ * message entries, otherwise the entry type (e.g. "session", "model_change").
+ */
+export function readSessionFileRoles(file: string): string[] {
+	return readFileSync(file, "utf-8")
+		.trim()
+		.split("\n")
+		.map((line) => {
+			const record = JSON.parse(line);
+			return record.message?.role ?? record.type;
+		});
 }
 
 /**
