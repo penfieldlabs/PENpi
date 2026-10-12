@@ -217,8 +217,13 @@ async function startSession(profile: string, entry: string = penpiEntry): Promis
 				description: definition.description,
 				parameters: definition.parameters,
 				promptGuidelines: definition.promptGuidelines,
+				// Same construction as AgentSession.getAllTools().
+				exposure: definition.exposure ?? "direct",
+				...(definition.namespace ? { namespace: definition.namespace } : {}),
+				...(definition.annotations ? { annotations: { ...definition.annotations } } : {}),
 				sourceInfo,
 			})),
+		getSettings: () => ({}),
 		setActiveTools: (names) => {
 			active.clear();
 			for (const name of names) active.add(name);
@@ -277,7 +282,13 @@ async function startSession(profile: string, entry: string = penpiEntry): Promis
 			const tool = boundRunner.getAllRegisteredTools().find((t) => t.definition.name === name);
 			expect(tool, `tool ${name} is not registered`).toBeDefined();
 			// The same entry point AgentSession's wrapper calls.
-			return tool?.definition.execute(`call-${name}`, params, undefined, undefined, boundRunner.createContext());
+			return tool?.definition.execute(
+				`call-${name}`,
+				params,
+				undefined,
+				undefined,
+				boundRunner.createToolContext(`call-${name}`, undefined),
+			);
 		},
 		dispose: () => boundRunner.shutdown(),
 	};

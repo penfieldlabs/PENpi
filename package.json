@@ -60,6 +60,7 @@
 		"@types/node": "22.19.19",
 		"esbuild": "0.28.2",
 		"husky": "9.1.7",
+		"pi-mcp-adapter": "2.12.1",
 		"pnpm": "11.15.1",
 		"shx": "0.3.4",
 		"typescript": "7.0.2",
