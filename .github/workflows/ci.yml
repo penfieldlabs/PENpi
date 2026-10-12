@@ -47,11 +47,42 @@ jobs:
       - name: Install dependencies
         run: npm ci --ignore-scripts
 
-      - name: Build
-        run: npm run build
+      # Offline build: PENpi commits the generated model-data snapshot, so CI builds
+      # from it instead of regenerating it from live provider APIs.
+      - name: Build (offline)
+        run: npm run build:offline
 
-      - name: Check
-        run: npm run check
+      # The steps below mirror `npm run check`, split so a failure names the check.
+      # Biome runs without --write so formatting drift fails instead of being fixed.
+      - name: Biome
+        run: npx biome check --error-on-warnings .
+
+      - name: Check pinned deps
+        run: npm run check:pinned-deps
+
+      - name: Lockfile version check
+        run: npm run check:lockfile-versions
+
+      - name: Check runtime deps
+        run: npm run check:runtime-deps
+
+      - name: Check TypeScript imports
+        run: npm run check:ts-imports
+
+      - name: Check entry graphs
+        run: npm run check:entry-graphs
+
+      - name: Check install lock
+        run: npm run check:install-lock:coding-agent
+
+      - name: TypeScript compile
+        run: npx tsc --noEmit
+
+      - name: PENpi type check
+        run: npm run check:penpi
+
+      - name: Browser smoke check
+        run: npm run check:browser-smoke
 
       - name: Test
         run: npm test
