@@ -15,7 +15,8 @@
  * request, so refresh/re-exchange is transparent to the transport.
  */
 
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { lstatSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
@@ -53,6 +54,37 @@ export function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promis
  * bounded by withTimeout instead). */
 function tfetch(input: string | URL, init: RequestInit = {}): Promise<Response> {
 	return fetch(input, { ...init, signal: AbortSignal.timeout(requestTimeoutMs()) });
+}
+
+/** OAuth and API-key requests: never follow a redirect, which could carry a device code,
+ * refresh token or API key to a URL nobody vetted. */
+function credentialFetch(input: string | URL, init: RequestInit = {}): Promise<Response> {
+	return tfetch(input, { ...init, redirect: "error" });
+}
+
+/**
+ * Write the token file atomically (temp file in the same directory, then rename) at mode
+ * 0600. Refuses a symbolic link at `path`: a planted link would otherwise direct refresh
+ * tokens into whatever file it points at.
+ */
+export function writeTokenFile(path: string, contents: string): void {
+	// 0o700: the token directory should not be world-readable either.
+	mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+	try {
+		if (lstatSync(path).isSymbolicLink()) {
+			throw new Error(`refusing to write Penfield tokens through a symbolic link: ${path}`);
+		}
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+	}
+	const tmp = `${path}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
+	try {
+		// "wx": never reuse an existing file; mode applies from creation, so the token is never readable by others.
+		writeFileSync(tmp, contents, { encoding: "utf8", mode: 0o600, flag: "wx" });
+		renameSync(tmp, path);
+	} finally {
+		rmSync(tmp, { force: true });
+	}
 }
 
 export interface DeviceCodePrompt {
@@ -134,7 +166,7 @@ export class TokenManager {
 	// --- internal API-key mode ---
 	private async exchangeApiKey(): Promise<string> {
 		if (!this.cfg.apiKey) throw new Error("PENpi: apiKey auth mode selected but no API key configured");
-		const res = await tfetch(`${this.cfg.apiBase}/api/v2/auth/token`, {
+		const res = await credentialFetch(`${this.cfg.apiBase}/api/v2/auth/token`, {
 			method: "POST",
 			headers: { Authorization: `Bearer ${this.cfg.apiKey}`, "Content-Type": "application/json" },
 		});
@@ -185,11 +217,11 @@ export class TokenManager {
 		const asMetadataUrl =
 			(await this.discoverAuthServerMetadataUrl()) ?? `${this.cfg.authBase}/.well-known/oauth-authorization-server`;
 		// Discovery is only as trustworthy as the endpoints it yields: we post device
-		// codes and REFRESH TOKENS to them. Require https and a host inside the
-		// configured Penfield domain, so a compromised/misconfigured resource document
-		// cannot redirect credentials to an attacker (RFC 9728 §3.3 / RFC 8414 §3.3).
+		// codes and REFRESH TOKENS to them. Require https on one of PENpi's configured
+		// Penfield origins, so a compromised/misconfigured resource document cannot
+		// redirect credentials to an attacker (RFC 9728 §3.3 / RFC 8414 §3.3).
 		this.assertTrustedEndpoint(asMetadataUrl, "authorization-server metadata");
-		const res = await tfetch(asMetadataUrl, { headers: { Accept: "application/json" } });
+		const res = await credentialFetch(asMetadataUrl, { headers: { Accept: "application/json" } });
 		if (!res.ok) throw new Error(`Penfield OAuth discovery failed: ${res.status} ${asMetadataUrl}`);
 		const m = (await res.json()) as {
 			registration_endpoint?: string;
@@ -211,14 +243,14 @@ export class TokenManager {
 	}
 
 	private assertTrustedEndpoint(url: string, label: string): void {
-		assertTrustedEndpoint(url, label, this.cfg.authBase);
+		assertTrustedEndpoint(url, label, penfieldOrigins(this.cfg));
 	}
 
 	/** RFC 9728 — ask the MCP resource which authorization server to use. */
 	private async discoverAuthServerMetadataUrl(): Promise<string | undefined> {
 		try {
 			const origin = new URL(this.cfg.mcpUrl).origin;
-			const res = await tfetch(`${origin}/.well-known/oauth-protected-resource`, {
+			const res = await credentialFetch(`${origin}/.well-known/oauth-protected-resource`, {
 				headers: { Accept: "application/json" },
 			});
 			if (!res.ok) return undefined;
@@ -235,7 +267,7 @@ export class TokenManager {
 		if (!meta.registrationEndpoint) {
 			throw new Error("Penfield OAuth: server advertises no registration endpoint; set penpi.penfield.clientId");
 		}
-		const res = await tfetch(meta.registrationEndpoint, {
+		const res = await credentialFetch(meta.registrationEndpoint, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({
@@ -254,7 +286,7 @@ export class TokenManager {
 
 	private async requestDeviceCode(clientId: string): Promise<DeviceCodeResponse> {
 		const meta = await this.discoverOAuth();
-		const res = await tfetch(meta.deviceAuthorizationEndpoint, {
+		const res = await credentialFetch(meta.deviceAuthorizationEndpoint, {
 			method: "POST",
 			headers: { "Content-Type": "application/x-www-form-urlencoded" },
 			body: new URLSearchParams({ client_id: clientId, scope: this.cfg.scope }),
@@ -269,7 +301,7 @@ export class TokenManager {
 		const deadline = Date.now() + (dev.expires_in ?? 900) * 1000;
 		while (Date.now() < deadline) {
 			await sleep(intervalMs);
-			const res = await tfetch(meta.tokenEndpoint, {
+			const res = await credentialFetch(meta.tokenEndpoint, {
 				method: "POST",
 				headers: { "Content-Type": "application/x-www-form-urlencoded" },
 				body: new URLSearchParams({
@@ -298,7 +330,7 @@ export class TokenManager {
 
 	private async refresh(refreshToken: string, clientId?: string): Promise<string> {
 		const meta = await this.discoverOAuth();
-		const res = await tfetch(meta.tokenEndpoint, {
+		const res = await credentialFetch(meta.tokenEndpoint, {
 			method: "POST",
 			headers: { "Content-Type": "application/x-www-form-urlencoded" },
 			body: new URLSearchParams({
@@ -322,12 +354,7 @@ export class TokenManager {
 			refreshToken: t.refresh_token ?? prev?.refreshToken ?? null,
 		};
 		try {
-			// 0o700: the token directory should not be world-readable either.
-			mkdirSync(dirname(this.cfg.tokenStorePath), { recursive: true, mode: 0o700 });
-			// mode 0o600 on create closes the window where a new token file would briefly
-			// sit at default perms; chmod covers the case where the file already existed.
-			writeFileSync(this.cfg.tokenStorePath, JSON.stringify(this.mem), { encoding: "utf8", mode: 0o600 });
-			chmodSync(this.cfg.tokenStorePath, 0o600);
+			writeTokenFile(this.cfg.tokenStorePath, JSON.stringify(this.mem));
 		} catch {
 			// Non-fatal: tokens stay in memory for this session.
 		}
@@ -352,7 +379,7 @@ export interface PenfieldClientOptions {
  * extension's package.json — pinned by a test, because a hardcoded literal here
  * silently misreports the client version to the server as the release moves on.
  */
-export const PENPI_VERSION = "0.4.0";
+export const PENPI_VERSION = "0.4.1";
 
 export class PenfieldClient {
 	private readonly cfg: PenfieldConfig;
@@ -472,16 +499,18 @@ interface DeviceCodeResponse {
 	interval?: number;
 }
 
+/** The exact origins Penfield OAuth may use: PENpi's configured auth, API and MCP hosts. */
+export function penfieldOrigins(cfg: Pick<PenfieldConfig, "authBase" | "apiBase" | "mcpUrl">): ReadonlySet<string> {
+	return new Set([cfg.authBase, cfg.apiBase, cfg.mcpUrl].map((url) => new URL(url).origin));
+}
+
 /**
- * Reject any discovered URL that isn't https on the configured Penfield domain
- * (or a subdomain of it). Credentials — device codes, refresh tokens — only ever
- * leave this process toward hosts that pass this check, so a compromised or
- * misconfigured discovery document cannot redirect them off-domain.
- *
- * Exported for testing: the happy path is covered by the discovery/refresh tests,
- * this is the guard that must fail closed.
+ * Discovered endpoints receive device codes and refresh tokens, so each must be https
+ * on one of the exact allowed origins (scheme, host and port). Any other host, including
+ * other Penfield subdomains, is refused (RFC 9728 §3.3 / RFC 8414 §3.3). Exported for
+ * testing: this is the guard that must fail closed.
  */
-export function assertTrustedEndpoint(url: string, label: string, authBase: string): void {
+export function assertTrustedEndpoint(url: string, label: string, allowedOrigins: ReadonlySet<string>): void {
 	let u: URL;
 	try {
 		u = new URL(url);
@@ -491,21 +520,11 @@ export function assertTrustedEndpoint(url: string, label: string, authBase: stri
 	if (u.protocol !== "https:") {
 		throw new Error(`Penfield OAuth: refusing non-https ${label} (${u.protocol}//${u.host})`);
 	}
-	const expected = new URL(authBase).hostname;
-	const base = registrableSuffix(expected);
-	if (u.hostname !== expected && !u.hostname.endsWith(`.${base}`) && u.hostname !== base) {
-		throw new Error(`Penfield OAuth: refusing ${label} on untrusted host ${u.hostname} (expected ${base})`);
+	if (!allowedOrigins.has(u.origin)) {
+		throw new Error(
+			`Penfield OAuth: refusing ${label} on untrusted origin ${u.origin} (allowed: ${[...allowedOrigins].join(", ")})`,
+		);
 	}
-}
-
-/**
- * Registrable suffix of a hostname, e.g. `auth.penfield.app` → `penfield.app`.
- * Deliberately simple: the configured host is ours, so the last two labels are the
- * right trust anchor (this is a same-domain check, not a public-suffix parser).
- */
-function registrableSuffix(hostname: string): string {
-	const parts = hostname.split(".");
-	return parts.length <= 2 ? hostname : parts.slice(-2).join(".");
 }
 
 async function safeText(res: Response): Promise<string> {

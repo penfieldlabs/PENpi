@@ -15,9 +15,11 @@ the message array before each model call — no other agent we evaluated exposes
 
 Fork Pi (MIT). Add only the Penfield memory layer — primarily as a Pi **extension**
 (`.pi/extensions/penpi/`) plus a few fork-level defaults (e.g. compaction off). Preserve
-Pi's identity and license in full: `LICENSE` (© Mario Zechner) is untouched, Pi's
-original README is kept verbatim as `README.pi.md`, and PENpi's README credits Pi
-prominently.
+Pi's identity and license in full: `LICENSE` keeps Mario Zechner's copyright and the MIT
+terms unchanged, adding only a `Copyright (c) 2026 Penfield (PENpi modifications)` line
+for PENpi's own changes. Pi's README and agent rules are kept as `README.pi.md` and
+`AGENTS.pi.md`, tracking upstream with only small marked PENpi edits (upstream-only
+contribution and release process), and PENpi's README credits Pi prominently.
 
 ## Consequences
 

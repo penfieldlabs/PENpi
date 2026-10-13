@@ -123,7 +123,8 @@ describe("AgentSession virtual models", () => {
 
 	it("routes the compact-and-retry after a truncated response as a retry", async () => {
 		const { harness, requests, reasons } = await createRoutedHarness(defaultRoute, {
-			settings: { compaction: { keepRecentTokens: 1, reserveTokens: 0 } },
+			// PENpi fork: routine compaction defaults to OFF (ADR 0023); enable it explicitly.
+			settings: { compaction: { enabled: true, keepRecentTokens: 1, reserveTokens: 0 } },
 			extensionFactories: [
 				(pi) => {
 					pi.on("session_before_compact", async ({ preparation: { firstKeptEntryId, tokensBefore } }) => ({

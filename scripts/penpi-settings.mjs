@@ -25,6 +25,12 @@ if (!settingsPath || !["install", "uninstall"].includes(action)) {
 // uninstall remove it; earlier PENpi versions added it here.
 const STOCK_ADAPTER = /(^|[:/])pi-mcp-adapter(@|$)/;
 
+// Pi's built-in MCP extension reads the same global mcp.json where PENpi writes its
+// penfield entry. It steps aside when the embedded adapter registers /mcp, but would run in
+// its place if the adapter failed to load, so install disables it outright.
+const DISABLE_BUILTIN_MCP = "-builtin:mcp";
+const BUILTIN_MCP_TOGGLE = /^[-+!]?builtin:mcp$/;
+
 function isRecord(value) {
 	return value !== null && typeof value === "object" && !Array.isArray(value);
 }
@@ -46,6 +52,9 @@ function readSettings() {
 	}
 	if (value.packages !== undefined && (!Array.isArray(value.packages) || !value.packages.every((x) => typeof x === "string"))) {
 		throw new Error(`refusing to rewrite settings file ${settingsPath}: packages must be an array of strings`);
+	}
+	if (value.extensions !== undefined && (!Array.isArray(value.extensions) || !value.extensions.every((x) => typeof x === "string"))) {
+		throw new Error(`refusing to rewrite settings file ${settingsPath}: extensions must be an array of strings`);
 	}
 	if (value.compaction !== undefined && !isRecord(value.compaction)) {
 		throw new Error(`refusing to rewrite settings file ${settingsPath}: compaction must be an object`);
@@ -71,9 +80,14 @@ try {
 	if (action === "install") {
 		if (settings.packages !== undefined) settings.packages = settings.packages.filter((x) => !STOCK_ADAPTER.test(x));
 		settings.compaction = { ...(settings.compaction ?? {}), enabled: false };
+		settings.extensions = [...(settings.extensions ?? []).filter((x) => !BUILTIN_MCP_TOGGLE.test(x)), DISABLE_BUILTIN_MCP];
 		writeSettings(settings, exists);
 	} else if (exists) {
 		if (settings.packages !== undefined) settings.packages = settings.packages.filter((x) => !STOCK_ADAPTER.test(x));
+		if (settings.extensions !== undefined) {
+			settings.extensions = settings.extensions.filter((x) => x !== DISABLE_BUILTIN_MCP);
+			if (settings.extensions.length === 0) delete settings.extensions;
+		}
 		if (settings.compaction?.enabled === false) {
 			delete settings.compaction.enabled;
 			if (Object.keys(settings.compaction).length === 0) delete settings.compaction;

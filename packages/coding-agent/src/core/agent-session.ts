@@ -3004,8 +3004,14 @@ export class AgentSession {
 			sameModel &&
 			((explicitOverflow && assistantRetainedForExplicitRecovery) ||
 				(assistantUsageMatchesProjection && isContextOverflow(assistantMessage, contextWindow)));
+		// PENpi fork (ADR 0023): context overflow above recovers whether or not compaction is
+		// enabled. A length stop below maxTokens is not overflow: with compaction disabled it must
+		// not compact and hide a reply the user can still read (length continuation, ADR 0028).
 		const recoverableLength =
-			sameModel && assistantIsProjected && isRecoverableLength(assistantMessage, messageModel.maxTokens);
+			settings.enabled &&
+			sameModel &&
+			assistantIsProjected &&
+			isRecoverableLength(assistantMessage, messageModel.maxTokens);
 		if (contextOverflow || recoverableLength) {
 			const willRetry = assistantMessage.stopReason !== "stop";
 

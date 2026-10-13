@@ -120,7 +120,7 @@ install)
     { echo "$BEGIN"; printf '%s\n' "$ENV_L1"; printf '%s\n' "$ENV_L2"; echo "$END"; } >>"$PROFILE"
   fi
   echo "✅ PENpi installed globally. Activate this shell:  source \"$PROFILE\""
-  echo "   Then from any dir:  pi -a --provider zai --model glm-5.2"
+  echo "   Then from any dir:  pi --provider zai --model glm-5.2"
   echo "   Optional web search: $REPO/docs/WEB_SEARCH.md"
   ;;
 

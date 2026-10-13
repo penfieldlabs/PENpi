@@ -6,6 +6,7 @@
  * - `pi --mode json "prompt"` - JSON event stream
  */
 
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, ImageContent } from "@earendil-works/pi-ai";
 import type { AgentSessionRuntime } from "../core/agent-session-runtime.ts";
 import { flushRawStdout, waitForRawStdoutBackpressure, writeRawStdout } from "../core/output-guard.ts";
@@ -24,6 +25,30 @@ export interface PrintModeOptions {
 	initialMessage?: string;
 	/** Images to attach to the initial message */
 	initialImages?: ImageContent[];
+}
+
+/**
+ * PENpi fork: the parts of the final answer of the run that started at `runStart`.
+ *
+ * The last assistant message, preceded by every earlier part it continues: an assistant
+ * message that stopped at the output limit ("length") followed by the follow-up user
+ * message queued in the same run (PENpi length continuation, ADR 0028). The walk stops at
+ * anything else, so narration from earlier tool steps is not part of the answer.
+ */
+function finalAnswerParts(messages: readonly AgentMessage[], runStart: number): AssistantMessage[] {
+	let last = messages.length - 1;
+	if (messages[last]?.role !== "assistant") return [];
+	let promptIndex = runStart;
+	while (promptIndex < messages.length && messages[promptIndex]?.role !== "user") promptIndex++;
+	const parts = [messages[last] as AssistantMessage];
+	while (last - 2 > promptIndex) {
+		const followUp = messages[last - 1];
+		const previous = messages[last - 2];
+		if (followUp?.role !== "user" || previous?.role !== "assistant" || previous.stopReason !== "length") break;
+		parts.unshift(previous);
+		last -= 2;
+	}
+	return parts;
 }
 
 /**
@@ -128,11 +153,13 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 
 		await rebindSession();
 
+		let runStart = session.state.messages.length;
 		if (initialMessage) {
 			await session.prompt(initialMessage, { images: initialImages });
 		}
 
 		for (const message of messages) {
+			runStart = session.state.messages.length;
 			await session.prompt(message);
 		}
 
@@ -146,10 +173,23 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 					console.error(assistantMsg.errorMessage || `Request ${assistantMsg.stopReason}`);
 					exitCode = 1;
 				} else {
-					for (const content of assistantMsg.content) {
-						if (content.type === "text") {
-							writeRawStdout(`${content.text}\n`);
-						}
+					// PENpi fork: print the whole final answer, continuation parts included.
+					const parts = finalAnswerParts(state.messages, runStart);
+					const text = parts
+						.map((part) =>
+							part.content
+								.filter((content) => content.type === "text")
+								.map((content) => content.text)
+								.join("\n"),
+						)
+						.join("");
+					if (text.length > 0) {
+						writeRawStdout(`${text}\n`);
+					}
+					// Still cut off after the run: the continuation budget ran out (or nothing continued it).
+					if (assistantMsg.stopReason === "length") {
+						console.error("Response incomplete: the model stopped at its output token limit.");
+						exitCode = 1;
 					}
 				}
 			}

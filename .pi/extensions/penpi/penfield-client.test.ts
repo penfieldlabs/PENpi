@@ -217,21 +217,23 @@ describe("PenfieldClient connect + callTool (SDK mocked)", () => {
 });
 
 describe("assertTrustedEndpoint", () => {
-	const AUTH = "https://auth.penfield.app";
+	const ALLOWED = new Set(["https://auth.penfield.app"]);
 
 	it("rejects an endpoint on another host", () => {
 		// A compromised discovery document must not be able to redirect refresh tokens.
-		expect(() => assertTrustedEndpoint("https://evil.com/token", "token_endpoint", AUTH)).toThrow(/untrusted host/);
+		expect(() => assertTrustedEndpoint("https://evil.com/token", "token_endpoint", ALLOWED)).toThrow(
+			/untrusted origin/,
+		);
 	});
 
-	it("rejects non-https and lookalike hosts, accepts the real domain", () => {
-		expect(() => assertTrustedEndpoint("http://auth.penfield.app/token", "token_endpoint", AUTH)).toThrow(
+	it("rejects non-https and lookalike hosts, accepts the configured origin", () => {
+		expect(() => assertTrustedEndpoint("http://auth.penfield.app/token", "token_endpoint", ALLOWED)).toThrow(
 			/non-https/,
 		);
-		expect(() => assertTrustedEndpoint("https://penfield.app.evil.com/token", "token_endpoint", AUTH)).toThrow(
-			/untrusted host/,
+		expect(() => assertTrustedEndpoint("https://penfield.app.evil.com/token", "token_endpoint", ALLOWED)).toThrow(
+			/untrusted origin/,
 		);
-		expect(() => assertTrustedEndpoint("https://auth-dev.penfield.app/token", "token_endpoint", AUTH)).not.toThrow();
+		expect(() => assertTrustedEndpoint("https://auth.penfield.app/token", "token_endpoint", ALLOWED)).not.toThrow();
 	});
 });
 

@@ -25,9 +25,10 @@ delete tool through PENpi.
 PENpi assumes the public repository permits forks. Fork pull requests run only the `CI`
 workflow through the `pull_request` event with read-only repository permissions and no
 secrets. The dependency-audit workflow runs only from the base repository with read-only
-permissions. Binary publication is manual, accepts only an existing version tag whose
-commit is on base `main`, and does not accept an arbitrary source ref. Actions are pinned
-to full commit SHAs.
+permissions. Release publication (a source archive) is manual, accepts only an existing
+version tag whose commit is on the first-parent history of base `main` (a PENpi release
+commit, not an upstream ancestor), and does not accept an arbitrary source ref. Actions
+are pinned to full commit SHAs.
 
 For issues in the inherited Pi core (`packages/**`), the code comes from
 [upstream Pi](https://github.com/earendil-works/pi); consider reporting there
@@ -42,7 +43,7 @@ This document should guide you about understanding the security concept behind
 Pi and also where the boundaries are.
 
 In general Pi is a coding agent that runs locally within the security boundary
-of the user that is running it.  It's the responsibiltiy of the user to monitor
+of the user that is running it.  It's the responsibility of the user to monitor
 its operations or to contain it within a container, virtual machine or other
 Sandbox solution.
 
@@ -80,7 +81,7 @@ reports and coordinate disclosure as appropriate.
 ## Scope
 
 Security issues in the distributed packages, command-line tools, APIs, and
-repository code are in scope as well as earendil operated infrastricture
+repository code are in scope as well as earendil operated infrastructure
 on `pi.dev`.
 
 ## Out Of Scope

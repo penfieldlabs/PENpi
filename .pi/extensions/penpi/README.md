@@ -8,7 +8,7 @@ the project overview and the [architecture description](../../../docs/ARCHITECTU
 
 | File | Responsibility |
 |------|----------------|
-| `index.ts` | Entry point — wires the four hooks, the `/penpi` command, and the conscious-layer setup |
+| `index.ts` | Entry point — wires the six hooks, the `/penpi` command, and the conscious-layer setup |
 | `penfield-client.ts` | Thin MCP client over `@modelcontextprotocol/sdk` + device-code `TokenManager` |
 | `fifo.ts` | Pure `planFifo()` watermark pruner |
 | `config.ts` | Layered config (defaults ← global `settings.json` `penpi` ← env); exports `BRIEFING_CUSTOM_TYPE` |

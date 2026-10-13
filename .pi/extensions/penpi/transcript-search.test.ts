@@ -49,6 +49,14 @@ describe("searchTranscripts", () => {
 		expect(r.matches[0].role).toBe("custom:penpi-briefing");
 	});
 
+	it("skips system entries", async () => {
+		const dir = fixtureDir({
+			"a.jsonl": [msg("system", "operator note mentioning NEEDLE"), msg("user", "a user line with needle")],
+		});
+		const r = await searchTranscripts(dir, "needle");
+		expect(r.matches.map((m) => m.role)).toEqual(["user"]);
+	});
+
 	it("respects limit and flags truncation", async () => {
 		const dir = fixtureDir({ "a.jsonl": Array.from({ length: 5 }, (_, i) => msg("user", `hit ${i} match`)) });
 		const r = await searchTranscripts(dir, "match", { limit: 2 });

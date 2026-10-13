@@ -3,6 +3,11 @@
 - Status: Accepted (web-search portion superseded by [0021](0021-optional-user-selected-web-search.md))
 - Date: 2026-06-26
 
+> **Amended (0.4.1).** Earlier text recommended `pi -a`. The global install loads PENpi
+> from the agent dir, so it needs no project trust, and `-a` (`--approve`) trusts every
+> project's `.pi/` directory: a repository's own extensions would run inside PENpi and
+> could read the Penfield token file. PENpi no longer recommends it anywhere.
+
 ## Context
 
 PENpi ships project-local to the repo: the extension lives in `.pi/extensions/penpi/`,
@@ -32,7 +37,7 @@ Two code changes make it flawless rather than merely functional:
 
 ## Consequences
 
-- `cd <any project> && pi -a …` gives full PENpi (orientation, Penfield tools,
+- `cd <any project> && pi …` gives full PENpi (orientation, Penfield tools,
   web search, FIFO) with no files written into that project.
 - Editing the repo updates the global install (symlinks). In-repo development still works.
 - Fully reversible (`uninstall`); the repo and unrelated user settings are untouched.

@@ -148,12 +148,13 @@ export function getShellEnv(): NodeJS.ProcessEnv {
 		[pathKey]: updatedPath,
 	};
 
-	// PENpi: Strip the Penfield bearer token so it cannot leak into
-	// agent-spawned shell commands. The token is only needed by the Pi
-	// live read+write memory credential. The adapter reads process.env directly and
-	// is unaffected. (Defense in depth: MCP servers the adapter itself spawns still
-	// inherit it — a scoped/short-lived token is the real fix.)
+	// PENpi: strip the Penfield credentials so they cannot leak into agent-spawned
+	// shell commands: the bearer token (PENFIELD_JWT) and the long-lived API key
+	// (PENPI_PENFIELD_API_KEY). PENpi and the embedded adapter read process.env
+	// directly and are unaffected. (Defense in depth: MCP servers the adapter itself
+	// spawns still inherit them; a scoped, short-lived token is the real fix.)
 	delete env.PENFIELD_JWT;
+	delete env.PENPI_PENFIELD_API_KEY;
 	return env;
 }
 

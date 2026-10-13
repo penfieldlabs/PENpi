@@ -3,6 +3,15 @@
 - Status: Accepted
 - Date: 2026-10-11
 
+> **Amended (0.4.1).** Print mode (`pi -p`) printed only the last assistant message, so
+> a continued answer came out as its final part. It now prints the whole final answer:
+> the last message plus every earlier part it continues (a `length` stop followed by
+> the follow-up in the same run), and no narration from earlier tool steps. If the
+> answer is still cut off when the run ends, print mode writes one line to stderr and
+> exits non-zero. The 3-continuation cap holds with PENpi's own extensions; another
+> extension whose `input` handler awaits I/O can delay the follow-up past the end of the
+> run, which starts a new run and resets the budget.
+
 ## Context
 
 When a model reaches its output token limit (`maxTokens`), the provider ends the response

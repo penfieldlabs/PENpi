@@ -10,7 +10,7 @@ release and whenever an auth/hook/tool path changes, since they need external se
 ```bash
 npm ci                 # install from the committed lockfile
 npm run build          # REQUIRED before check/test — see note
-npm run check          # biome lint/format + tsgo + supply-chain checks + check:penpi (extension tsc)
+npm run check          # biome lint/format + tsc + supply-chain checks + check:penpi (extension tsc)
 npm test               # all workspace tests
 npm test -w penpi      # just the PENpi extension suite
 npm audit --omit=dev   # production advisories — must be clean
@@ -37,13 +37,13 @@ EBADENGINE Unsupported engine: @earendil-works/gondolin@0.12.0
 The documented source install includes Gondolin as an upstream example workspace
 (`packages/coding-agent/examples/extensions/gondolin`), which causes the expected
 Node-engine warning. PENpi and Pi core do not import or load it during normal execution,
-and coding-agent's runtime shrinkwrap/install-lock exclude it. The repo supports Node
+and coding-agent's generated install lock excludes it. The repo supports Node
 >=22.19.0; that example alone wants >=23.6.0, and npm warns once at install time.
 
 It is left in place deliberately. Deleting an upstream example workspace would add
-divergence to merge against for the planned Pi 0.84.2 integration, in exchange for
-silencing a warning about a workspace that is not part of the runtime. Revisit when that
-upgrade lands — either the example's engine requirement will have moved, or it can be
+divergence to merge against at every upstream merge, in exchange for
+silencing a warning about a workspace that is not part of the runtime. Revisit at the next
+upstream merge: either the example's engine requirement will have moved, or it can be
 dropped as part of a change that is already reconciling upstream.
 
 ### Release / review archives

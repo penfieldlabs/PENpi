@@ -41,7 +41,15 @@ jobs:
           fi
           git show-ref --verify --quiet "refs/tags/${RELEASE_TAG}"
           test "$(git rev-parse HEAD)" = "$(git rev-list -n 1 "${RELEASE_TAG}")"
-          git merge-base --is-ancestor HEAD origin/main
+          # The tag must be a PENpi commit on main's first-parent history. main records
+          # upstream Pi as merged, so every upstream commit is an ancestor of main and
+          # `git merge-base --is-ancestor` would also accept an upstream tag. Process
+          # substitution, not a pipe: under `-o pipefail`, grep -q exiting early sends
+          # SIGPIPE to rev-list and the pipeline would fail on a match.
+          if ! grep -qxF "$(git rev-parse HEAD)" < <(git rev-list --first-parent origin/main); then
+            echo "${RELEASE_TAG} is not on the first-parent history of main" >&2
+            exit 1
+          fi
 
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0

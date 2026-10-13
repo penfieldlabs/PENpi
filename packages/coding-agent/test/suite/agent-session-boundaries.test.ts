@@ -787,7 +787,8 @@ describe("durable length recovery", () => {
 		};
 		const harness = await createHarness({
 			models: [{ id: "faux-1", contextWindow: 1000, maxTokens: 100 }],
-			settings: { compaction: { keepRecentTokens: 1, reserveTokens: 0 } },
+			// PENpi fork: routine compaction defaults to OFF (ADR 0023); enable it explicitly.
+			settings: { compaction: { enabled: true, keepRecentTokens: 1, reserveTokens: 0 } },
 			tools: [tool],
 			extensionFactories: [
 				(pi) => {
@@ -830,7 +831,8 @@ describe("durable length recovery", () => {
 		let queued = false;
 		const harness = await createHarness({
 			models: [{ id: "faux-1", contextWindow: 1000, maxTokens: 100 }],
-			settings: { compaction: { keepRecentTokens: 1, reserveTokens: 0 } },
+			// PENpi fork: routine compaction defaults to OFF (ADR 0023); enable it explicitly.
+			settings: { compaction: { enabled: true, keepRecentTokens: 1, reserveTokens: 0 } },
 			extensionFactories: [
 				(pi) => {
 					pi.on("session_before_compact", (event) => ({
@@ -1034,7 +1036,8 @@ describe("durable length recovery", () => {
 		const harness = await createHarness({
 			models: [{ id: "faux-1", contextWindow: 1000, maxTokens: 100 }],
 			settings: {
-				compaction: { keepRecentTokens: 1, reserveTokens: 0 },
+				// PENpi fork: routine compaction defaults to OFF (ADR 0023); enable it explicitly.
+				compaction: { enabled: true, keepRecentTokens: 1, reserveTokens: 0 },
 				retry: { enabled: false, maxRetries: 0, baseDelayMs: 1 },
 			},
 		});

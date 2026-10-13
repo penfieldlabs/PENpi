@@ -42,3 +42,4 @@ the same PR (see [CONTRIBUTING.md](../../CONTRIBUTING.md)).
 | [0028](0028-length-continuation.md) | Continue responses cut off at the output token limit | Accepted |
 | [0029](0029-sanitizer-normalization-and-bounds.md) | Normalize and bound memory text before fence sanitization | Accepted |
 | [0030](0030-strict-config-values.md) | Validate configuration values instead of coercing them | Accepted |
+| [0031](0031-upstream-ancestry-and-patch-manifest.md) | Record upstream ancestry and list every patch against it | Accepted |
