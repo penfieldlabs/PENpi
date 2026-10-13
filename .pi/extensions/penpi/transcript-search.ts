@@ -136,6 +136,8 @@ export async function searchTranscripts(
 					continue;
 				}
 				const { role, text, ts } = entryText(entry);
+				// System entries are operator and harness instructions, not conversation memory.
+				if (role === "system") continue;
 				const idx = text.toLowerCase().indexOf(q);
 				if (idx >= 0) matches.push({ file, timestamp: ts, role, snippet: makeSnippet(text, idx, query.length) });
 			}

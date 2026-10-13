@@ -1,22 +1,13 @@
 #!/usr/bin/env bash
 #
 # Build pi binaries for all platforms locally.
-#
-# PENpi note: this is an UPSTREAM PI helper and is NOT part of the PENpi release
-# process. It packages packages/coding-agent and does not copy
-# .pi/extensions/penpi, so its output is Pi, not PENpi — the published v0.2.0
-# asset identified itself as @earendil-works/pi-coding-agent 0.83.0. PENpi
-# releases ship source; see .github/workflows/release.yml.
-#
-# If PENpi binaries are built here in future, scripts/check-release-assets.mjs is
-# the interlock that must pass before anything is published.
+# Mirrors .github/workflows/build-binaries.yml
 #
 # Usage:
-#   ./scripts/build-binaries.sh [--skip-install] [--skip-deps] [--skip-build] [--offline-model-data] [--platform <platform>] [--out <dir>]
+#   ./scripts/build-binaries.sh [--skip-install] [--skip-build] [--offline-model-data] [--platform <platform>] [--out <dir>]
 #
 # Options:
 #   --skip-install       Skip npm ci
-#   --skip-deps          Skip installing cross-platform dependencies
 #   --skip-build         Skip the package build
 #   --offline-model-data Build with bundled model data instead of refreshing it
 #   --platform <name>    Build only for specified platform (darwin-arm64, darwin-x64, linux-x64, linux-arm64, windows-x64, windows-arm64)
@@ -36,7 +27,6 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 SKIP_INSTALL=false
-SKIP_DEPS=false
 SKIP_BUILD=false
 OFFLINE_MODEL_DATA=false
 PLATFORM=""
@@ -46,10 +36,6 @@ while [[ $# -gt 0 ]]; do
     case $1 in
         --skip-install)
             SKIP_INSTALL=true
-            shift
-            ;;
-        --skip-deps)
-            SKIP_DEPS=true
             shift
             ;;
         --skip-build)
@@ -102,29 +88,6 @@ else
     echo "==> Skipping npm ci (--skip-install)"
 fi
 
-if [[ "$SKIP_DEPS" == "false" ]]; then
-    echo "==> Installing cross-platform native bindings..."
-    CLIPBOARD_VERSION=$(node -p "require('./packages/coding-agent/package.json').optionalDependencies['@mariozechner/clipboard']")
-    # npm ci only installs optional deps for the current platform
-    # We need the base clipboard package and all platform bindings for bun cross-compilation
-    # Install outside the workspace to avoid npm Arborist resolving the monorepo's peer graph
-    # while adding platform-incompatible packages. Then copy the staged packages into node_modules.
-    CLIPBOARD_STAGE=$(mktemp -d "${TMPDIR:-/tmp}/penpi-clipboard-deps.XXXXXX")
-    trap 'rm -rf "$CLIPBOARD_STAGE"' EXIT
-    npm install --prefix "$CLIPBOARD_STAGE" --include=optional --no-save --package-lock=false --force --ignore-scripts \
-        @mariozechner/clipboard@"$CLIPBOARD_VERSION" \
-        @mariozechner/clipboard-darwin-arm64@"$CLIPBOARD_VERSION" \
-        @mariozechner/clipboard-darwin-x64@"$CLIPBOARD_VERSION" \
-        @mariozechner/clipboard-linux-x64-gnu@"$CLIPBOARD_VERSION" \
-        @mariozechner/clipboard-linux-arm64-gnu@"$CLIPBOARD_VERSION" \
-        @mariozechner/clipboard-win32-x64-msvc@"$CLIPBOARD_VERSION" \
-        @mariozechner/clipboard-win32-arm64-msvc@"$CLIPBOARD_VERSION"
-    mkdir -p node_modules/@mariozechner
-    cp -R "$CLIPBOARD_STAGE/node_modules/@mariozechner/." node_modules/@mariozechner/
-else
-    echo "==> Skipping cross-platform native bindings (--skip-deps)"
-fi
-
 if [[ "$SKIP_BUILD" == "false" ]]; then
     if [[ "$OFFLINE_MODEL_DATA" == "true" ]]; then
         echo "==> Building all packages with bundled model data..."
@@ -153,13 +116,23 @@ fi
 
 for platform in "${PLATFORMS[@]}"; do
     echo "Building for $platform..."
+    bun_target="bun-$platform"
+    if [[ "$platform" == *-x64 ]]; then
+        bun_target="${bun_target}-baseline"
+    fi
+
     # Bun compiled executables only embed worker scripts when they are passed as
-    # explicit build entrypoints. The runtime can still use new URL(...), but the
-    # worker must be present in the compiled executable.
+    # explicit build entrypoints. Bun places them at their path relative to the
+    # common directory of all entrypoints, so the main entry must stay in dist/
+    # for the worker specifiers in the runtime to resolve.
+    #
+    # Disable cwd bunfig.toml autoload so project preload scripts cannot crash the
+    # standalone binary before pi starts (see #7684). Disable cwd .env autoload so
+    # project env files do not leak into pi's environment (see #10473).
     if [[ "$platform" == windows-* ]]; then
-        bun build --compile --target=bun-$platform ./dist/bun/cli.js ./src/utils/image-resize-worker.ts --outfile "$OUTPUT_DIR/$platform/pi.exe"
+        bun build --compile --no-compile-autoload-bunfig --no-compile-autoload-dotenv --target="$bun_target" ./dist/bun/cli.js ./src/utils/image-resize-worker.ts ./src/extensions/codemode/worker.ts --outfile "$OUTPUT_DIR/$platform/pi.exe"
     else
-        bun build --compile --target=bun-$platform ./dist/bun/cli.js ./src/utils/image-resize-worker.ts --outfile "$OUTPUT_DIR/$platform/pi"
+        bun build --compile --no-compile-autoload-bunfig --no-compile-autoload-dotenv --target="$bun_target" ./dist/bun/cli.js ./src/utils/image-resize-worker.ts ./src/extensions/codemode/worker.ts --outfile "$OUTPUT_DIR/$platform/pi"
     fi
 done
 
@@ -179,52 +152,11 @@ for platform in "${PLATFORMS[@]}"; do
     cp -r docs "$OUTPUT_DIR/$platform/"
     cp -r examples "$OUTPUT_DIR/$platform/"
 
-    case "$platform" in
-        darwin-arm64)
-            clipboard_native_package="clipboard-darwin-arm64"
-            clipboard_native_file="clipboard.darwin-arm64.node"
-            ;;
-        darwin-x64)
-            clipboard_native_package="clipboard-darwin-x64"
-            clipboard_native_file="clipboard.darwin-x64.node"
-            ;;
-        linux-x64)
-            clipboard_native_package="clipboard-linux-x64-gnu"
-            clipboard_native_file="clipboard.linux-x64-gnu.node"
-            ;;
-        linux-arm64)
-            clipboard_native_package="clipboard-linux-arm64-gnu"
-            clipboard_native_file="clipboard.linux-arm64-gnu.node"
-            ;;
-        windows-x64)
-            clipboard_native_package="clipboard-win32-x64-msvc"
-            clipboard_native_file="clipboard.win32-x64-msvc.node"
-            ;;
-        windows-arm64)
-            clipboard_native_package="clipboard-win32-arm64-msvc"
-            clipboard_native_file="clipboard.win32-arm64-msvc.node"
-            ;;
-    esac
-    mkdir -p "$OUTPUT_DIR/$platform/node_modules/@mariozechner"
-    cp -r ../../node_modules/@mariozechner/clipboard "$OUTPUT_DIR/$platform/node_modules/@mariozechner/"
-    cp -r ../../node_modules/@mariozechner/$clipboard_native_package "$OUTPUT_DIR/$platform/node_modules/@mariozechner/"
-    cp "../../node_modules/@mariozechner/$clipboard_native_package/$clipboard_native_file" \
-        "$OUTPUT_DIR/$platform/node_modules/@mariozechner/clipboard/"
-
-    # Copy terminal input native helpers next to compiled binaries.
-    if [[ "$platform" == darwin-* ]]; then
-        mkdir -p "$OUTPUT_DIR/$platform/native/darwin/prebuilds/$platform"
-        cp ../tui/native/darwin/prebuilds/$platform/darwin-modifiers.node "$OUTPUT_DIR/$platform/native/darwin/prebuilds/$platform/"
-    fi
-    if [[ "$platform" == windows-* ]]; then
-        if [[ "$platform" == "windows-arm64" ]]; then
-            win32_arch_dir="win32-arm64"
-        else
-            win32_arch_dir="win32-x64"
-        fi
-        mkdir -p "$OUTPUT_DIR/$platform/native/win32/prebuilds/$win32_arch_dir"
-        cp ../tui/native/win32/prebuilds/$win32_arch_dir/win32-console-mode.node "$OUTPUT_DIR/$platform/native/win32/prebuilds/$win32_arch_dir/"
-    fi
+    # Copy the selected architecture's native platform helpers next to the executable.
+    native_platform="${platform/windows-/win32-}"
+    native_path="native/${native_platform%-*}/prebuilds"
+    mkdir -p "$OUTPUT_DIR/$platform/$native_path"
+    cp -R "../tui/$native_path/$native_platform" "$OUTPUT_DIR/$platform/$native_path/"
 done
 
 # Create archives

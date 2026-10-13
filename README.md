@@ -41,7 +41,7 @@ compaction events when it does. See [ADR 0023](docs/adr/0023-overflow-compaction
 
 PENpi is a Pi **extension** (`.pi/extensions/penpi/`) plus two fork-level defaults.
 
-**The automatic layer — four hooks:**
+**The automatic layer — six hooks:**
 
 | Hook | What PENpi does |
 |------|-----------------|
@@ -49,6 +49,7 @@ PENpi is a Pi **extension** (`.pi/extensions/penpi/`) plus two fork-level defaul
 | `context` | FIFO watermark pruning before every LLM call |
 | `agent_end` | a response cut off at the output token limit gets up to 3 follow-ups asking the model to continue ([ADR 0028](docs/adr/0028-length-continuation.md)) |
 | `session_before_compact` | reason-aware: cancels routine `threshold` compaction (FIFO owns context); allows `overflow` and `manual` ([ADR 0023](docs/adr/0023-overflow-compaction-escape-hatch.md)) |
+| `agent_settled` | emergency compaction for a model that reports no context window, after a few settled runs ([ADR 0025](docs/adr/0025-compaction-fallback-without-fifo-window.md)) |
 | `session_shutdown` | optional `save_context()` checkpoint, then disconnect |
 
 **The conscious layer:** Penfield's 17 MCP tools are exposed to the model through
@@ -162,12 +163,14 @@ PENpi is model-agnostic — any provider Pi supports. From any project directory
 ```bash
 cd ~/my-project
 export ZAI_API_KEY=…                      # or your provider's key
-pi -a --provider zai --model glm-5.2     # PENpi core: memory + FIFO
+pi --provider zai --model glm-5.2        # PENpi core: memory + FIFO
 # add --penpi-raw to diagnose behavior without automatic orientation
 # resume a session created elsewhere:  pi … --session <id>
-# -a auto-trusts project .pi/ dirs: extensions run without a prompt and MCP
-# servers inherit the Penfield bearer token. Use only on your own repos.
 ```
+
+PENpi itself loads from the global agent dir, so it needs no project trust. Do not use
+`pi -a` (`--approve`): it trusts every project's `.pi/` directory without asking, so a
+repository's own extensions run inside PENpi with access to your Penfield token file.
 
 The generated `mcp.json` stays in the global agent dir (nothing is written into your
 project), and a dedupe guard prevents double-loading if you also run inside this repo.
@@ -220,7 +223,7 @@ The extension is a workspace with a [Vitest](https://vitest.dev) suite covering 
 pruning, config precedence, MCP config generation, token management, and transcript
 search. `npm run check` also type-checks and lints the extension (`check:penpi`). See
 [README.pi.md](README.pi.md) for Pi's full development and supply-chain notes (all of
-which PENpi follows: exact-pinned direct deps, lockfile guard, shrinkwrap, `npm audit`).
+which PENpi follows: exact-pinned direct deps, lockfile guard, generated install lock, `npm audit`).
 
 ## Documentation
 

@@ -1821,7 +1821,7 @@ export class DefaultPackageManager implements PackageManager {
 	private getGitDependencyInstallArgs(): string[] {
 		switch (this.getPackageManagerName()) {
 			case "bun":
-				return ["install", "--omit=dev", "--omit=peer", "--exact"];
+				return ["install", "--omit=dev", "--omit=peer"];
 			case "pnpm":
 				return [
 					"install",
@@ -1829,10 +1829,9 @@ export class DefaultPackageManager implements PackageManager {
 					"--config.auto-install-peers=false",
 					"--config.strict-peer-dependencies=false",
 					"--config.strict-dep-builds=false",
-					"--save-exact",
 				];
 			case "npm":
-				return ["install", "--omit=dev", "--legacy-peer-deps", "--save-exact"];
+				return ["install", "--omit=dev", "--legacy-peer-deps"];
 			default:
 				return ["install"];
 		}

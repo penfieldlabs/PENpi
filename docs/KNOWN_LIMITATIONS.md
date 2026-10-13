@@ -6,8 +6,8 @@ choices and so accepted risk is not mistaken for a completed fix.
 
 ## Package integrity metadata
 
-The generated coding-agent shrinkwrap and install lock contain resolved npm URLs but no
-`integrity` hash for the four internal `@earendil-works/pi-*` packages. Other registry
+The generated coding-agent install lock contains resolved npm URLs but no `integrity`
+hash for the eight internal `@earendil-works/*` workspace packages. Other registry
 dependencies in the root lock are integrity-hashed. Versions and generated-lock checks
 reduce accidental drift, and CI runs npm signature verification, but the missing hashes
 leave weaker artifact verification for the inherited core packages.

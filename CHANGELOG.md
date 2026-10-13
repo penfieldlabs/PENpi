@@ -6,6 +6,74 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
 
 ## [Unreleased]
 
+## [0.4.1] — 2026-10-13
+
+### Fixed
+- **A short length stop no longer hides the reply and summarizes with compaction
+  disabled ([ADR 0023]).** The 0.4.0 guard move let pi's length recovery run with
+  `compaction.enabled` false: a `length` stop below the model's `maxTokens` hid the
+  reply and compacted. It now runs only with compaction enabled; otherwise the reply
+  stays and length continuation carries on. Context overflow still recovers with
+  compaction disabled: an explicit provider error, a completed response whose usage
+  exceeds the window, and a zero-output `length` stop whose input fills the window.
+- **`pi -p` prints the whole continued answer ([ADR 0028]).** Print mode printed only
+  the last part of an answer continued after an output-limit stop. It now prints every
+  part of the final answer and nothing from earlier tool steps; if the answer is still
+  cut off when the run ends it writes one line to stderr and exits non-zero.
+- **Pi's built-in MCP extension is disabled in the settings PENpi writes
+  (`"extensions": ["-builtin:mcp"]`).** It reads the global `mcp.json` that holds
+  PENpi's `penfield` entry and would have served it if the embedded adapter failed to
+  load. This also removes the warning it printed on every launch.
+- `scripts/penpi-global.sh` and `scripts/make-review-archive.sh` are executable again;
+  the release workflow runs the archive script directly.
+- `scripts/release.mjs` reads and bumps PENpi's version (root `package.json`, the
+  extension manifest and the MCP handshake) and only PENpi's changelog. It used
+  `packages/ai`, which would have produced the upstream version and tag `v1.1.1`.
+- Git package dependencies install without `--save-exact` again: pnpm 11 rejects it
+  and npm ignores it there. Managed package installs still pin exactly ([ADR 0020]).
+- `search_transcript` skips `system` entries.
+
+### Security
+- Removed every user-facing recommendation of `pi -a` (README, installer message,
+  [ADR 0018]). `-a` trusts every project's `.pi/` directory, so a repository's own
+  extensions would run inside PENpi with access to the Penfield token file.
+- Agent-spawned shell commands no longer receive `PENPI_PENFIELD_API_KEY` (they already
+  did not receive `PENFIELD_JWT`).
+- The Penfield token file is written atomically (temp file + rename, mode 0600) and
+  never through a symbolic link.
+- Penfield OAuth and API-key requests refuse redirects (`redirect: "error"`), and
+  discovered OAuth endpoints must be on one of the exact configured Penfield origins
+  (auth, API, MCP) instead of any `*.penfield.app` host.
+- The sandbox example lockfile takes `shell-quote` 1.12.0 again.
+
+### Changed
+- CI runs the release archive script on every PR, checks that every shell script the
+  workflows, README or installer invoke is executable (`npm run check:script-modes`,
+  also part of `npm run check`), and checks out without persisting credentials.
+- The weekly npm audit uses upstream's `scripts/npm-audit.mjs`, which records reviewed
+  advisories with their reasons.
+- Restored upstream Pi v1.1.0's `scripts/build-binaries.sh`,
+  `scripts/create-source-archive.sh` and `packages/coding-agent/README.md` (with a
+  PENpi note).
+- Removed three upstream files PENpi does not use (PENpi deviations, listed in
+  `docs/UPSTREAM_PATCHES.txt`): `.pi/extensions/import-repro.ts`, an upstream dev
+  extension that would load in every PENpi session started in this repository, and
+  `scripts/publish-model-catalog.mjs` with its test (PENpi publishes no model catalog).
+- Audited every file that differs from upstream Pi v1.1.0 ([ADR 0031]). `docs/UPSTREAM_PATCHES.txt`
+  records the upstream base and each intentional difference with its reason, and
+  `npm run check:upstream-patches` (in `npm run check` and CI) fails when the set of
+  differing paths does not match it exactly.
+- `README.pi.md` and `AGENTS.pi.md` take upstream's changes since 0.83; PENpi's own docs
+  drop stale 0.83-era claims (shrinkwrap, `tsgo`, "four hooks", a planned 0.84.2
+  integration); `SECURITY.md` takes upstream's corrections. ADR 0002 now describes the
+  LICENSE accurately (Penfield line added, MIT terms and Mario Zechner's notice kept).
+- Removed `packages/coding-agent/npm-shrinkwrap.json` and its generator, as upstream did:
+  nothing in PENpi uses them (no CI step, script, installer or ADR); the generated
+  install lock is what CI enforces.
+- The release workflow accepts only a tag on `main`'s first-parent history. Once `main`
+  records upstream as merged, `git merge-base --is-ancestor` would also accept an
+  upstream commit.
+
 ## [0.4.0] — 2026-10-12
 
 ### Changed

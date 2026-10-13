@@ -82,6 +82,6 @@ skipping the automatic orientation prompt layer.
 
 ## CI / quality
 
-`npm run check` (biome + `tsgo` + supply-chain checks + `check:penpi` tsc over the
+`npm run check` (biome + `tsc` + supply-chain checks + `check:penpi` tsc over the
 extension) and `npm test` (all workspaces incl. the extension) run on pre-commit and in
 CI. See [CONTRIBUTING.md](../CONTRIBUTING.md) and [docs/TEST_PROTOCOL.md](TEST_PROTOCOL.md).

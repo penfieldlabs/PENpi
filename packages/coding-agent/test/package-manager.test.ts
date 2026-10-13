@@ -822,13 +822,9 @@ Content`,
 
 			await packageManager.install(source);
 
-			expect(runCommandSpy).toHaveBeenCalledWith(
-				"npm",
-				["install", "--omit=dev", "--legacy-peer-deps", "--save-exact"],
-				{
-					cwd: targetDir,
-				},
-			);
+			expect(runCommandSpy).toHaveBeenCalledWith("npm", ["install", "--omit=dev", "--legacy-peer-deps"], {
+				cwd: targetDir,
+			});
 		});
 
 		it("should remove a newly created checkout when git clone fails", async () => {
@@ -892,13 +888,9 @@ Content`,
 				cwd: targetDir,
 			});
 			expect(runCommandSpy).toHaveBeenCalledWith("git", ["clean", "-fdx"], { cwd: targetDir });
-			expect(runCommandSpy).toHaveBeenCalledWith(
-				"npm",
-				["install", "--omit=dev", "--legacy-peer-deps", "--save-exact"],
-				{
-					cwd: targetDir,
-				},
-			);
+			expect(runCommandSpy).toHaveBeenCalledWith("npm", ["install", "--omit=dev", "--legacy-peer-deps"], {
+				cwd: targetDir,
+			});
 		});
 
 		it("should reconcile an existing git checkout to its update target when installing without a ref", async () => {
@@ -952,7 +944,6 @@ Content`,
 				"--config.auto-install-peers=false",
 				"--config.strict-peer-dependencies=false",
 				"--config.strict-dep-builds=false",
-				"--save-exact",
 			]);
 		});
 
@@ -990,7 +981,6 @@ Content`,
 					"--config.auto-install-peers=false",
 					"--config.strict-peer-dependencies=false",
 					"--config.strict-dep-builds=false",
-					"--save-exact",
 				],
 				{ cwd: targetDir },
 			);
@@ -1020,7 +1010,7 @@ Content`,
 
 			await packageManager.install(source);
 
-			expect(runCommandSpy).toHaveBeenCalledWith("bun", ["install", "--omit=dev", "--omit=peer", "--exact"], {
+			expect(runCommandSpy).toHaveBeenCalledWith("bun", ["install", "--omit=dev", "--omit=peer"], {
 				cwd: targetDir,
 			});
 		});
@@ -1049,13 +1039,9 @@ Content`,
 
 			await packageManager.update(source);
 
-			expect(runCommandSpy).toHaveBeenCalledWith(
-				"npm",
-				["install", "--omit=dev", "--legacy-peer-deps", "--save-exact"],
-				{
-					cwd: targetDir,
-				},
-			);
+			expect(runCommandSpy).toHaveBeenCalledWith("npm", ["install", "--omit=dev", "--legacy-peer-deps"], {
+				cwd: targetDir,
+			});
 		});
 
 		it("should repair missing git package dependencies when the checkout is already current", async () => {
@@ -1080,13 +1066,9 @@ Content`,
 
 			await packageManager.update(source);
 
-			expect(runCommandSpy).toHaveBeenCalledWith(
-				"npm",
-				["install", "--omit=dev", "--legacy-peer-deps", "--save-exact"],
-				{
-					cwd: targetDir,
-				},
-			);
+			expect(runCommandSpy).toHaveBeenCalledWith("npm", ["install", "--omit=dev", "--legacy-peer-deps"], {
+				cwd: targetDir,
+			});
 			expect(runCommandSpy).not.toHaveBeenCalledWith("git", ["clean", "-fdx"], { cwd: targetDir });
 		});
 
@@ -1118,13 +1100,9 @@ Content`,
 
 			await expect(packageManager.update(source)).rejects.toThrow("simulated clean failure");
 
-			expect(runCommandSpy).toHaveBeenCalledWith(
-				"npm",
-				["install", "--omit=dev", "--legacy-peer-deps", "--save-exact"],
-				{
-					cwd: targetDir,
-				},
-			);
+			expect(runCommandSpy).toHaveBeenCalledWith("npm", ["install", "--omit=dev", "--legacy-peer-deps"], {
+				cwd: targetDir,
+			});
 		});
 
 		it("should disable peer installation through wrapped pnpm when updating git dependencies", async () => {
@@ -1172,7 +1150,6 @@ Content`,
 					"--config.auto-install-peers=false",
 					"--config.strict-peer-dependencies=false",
 					"--config.strict-dep-builds=false",
-					"--save-exact",
 				],
 				{ cwd: targetDir },
 			);

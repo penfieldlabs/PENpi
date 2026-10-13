@@ -527,7 +527,8 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps): void | Promise<voi
 	//
 	// Only with output > 0. pi's overflow recovery treats "length" with zero output and an
 	// input filling the window as a context overflow (a server that truncated the INPUT) and
-	// compacts and continues on its own; a second continuation from here would pile on top.
+	// compacts and continues on its own, also with compaction disabled (ADR 0023); a second
+	// continuation from here would pile on top.
 	pi.on("agent_end", async (event, ctx) => {
 		const last = [...event.messages].reverse().find((m) => m.role === "assistant") as
 			| { stopReason?: string; usage?: { output?: number } }

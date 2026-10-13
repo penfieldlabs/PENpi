@@ -1,0 +1,187 @@
+# Paths that intentionally differ from the upstream Pi base, one per line: <path><TAB><reason>.
+# scripts/check-upstream-patches.mjs fails when `git diff --name-only <base>` (index) is not
+# exactly this set. Add a line when PENpi changes or adds a file; remove it when the file
+# matches upstream again. Update the base after each upstream merge.
+base: abe508e1b89912adde45528136c3221eb69acdd7 (upstream Pi v1.1.0)
+.github/APPROVED_CONTRIBUTORS	deleted: upstream contributor gate
+.github/ISSUE_TEMPLATE/bug.yml	PENpi links and wording; no upstream auto-close gate
+.github/ISSUE_TEMPLATE/contribution.yml	PENpi links; no upstream contributor gate
+.github/ISSUE_TEMPLATE/package-report.yml	deleted: upstream package-report template
+.github/workflows/approve-contributor.yml	deleted: upstream contributor gate
+.github/workflows/build-binaries.yml	deleted: PENpi ships source only
+.github/workflows/ci.yml	PENpi CI: offline build, split checks, archive dry run, script modes, patch manifest; no env daemon or MCP conformance job
+.github/workflows/env-daemons.yml	deleted: PENpi does not ship the pi-env daemon
+.github/workflows/env.yml	deleted: PENpi does not ship the pi-env daemon
+.github/workflows/issue-analysis.yml	deleted: upstream issue automation
+.github/workflows/issue-gate.yml	deleted: upstream issue automation
+.github/workflows/issue-triage-labels.yml	deleted: upstream issue automation
+.github/workflows/nix.yml	deleted: PENpi has no Nix packaging
+.github/workflows/npm-audit.yml	weekly schedule, job timeout, no persisted credentials; runs upstream's npm-audit.mjs
+.github/workflows/pr-gate.yml	deleted: upstream contributor gate
+.github/workflows/publish-model-catalog.yml	deleted: PENpi publishes no model catalog
+.github/workflows/release.yml	PENpi source-only manual release, first-parent tag check
+.github/workflows/remove-inprogress-on-close.yml	deleted: upstream issue automation
+.gitignore	track the model-data snapshot; ignore .env.* and the runtime .pi/mcp.json
+.pi/extensions/import-repro.ts	deleted: upstream in-repo dev extension, would load in PENpi sessions
+.pi/extensions/penpi/README.md	PENpi extension
+.pi/extensions/penpi/__fixtures__/penfield-server.ts	PENpi extension
+.pi/extensions/penpi/config.test.ts	PENpi extension
+.pi/extensions/penpi/config.ts	PENpi extension
+.pi/extensions/penpi/fifo.property.test.ts	PENpi extension
+.pi/extensions/penpi/fifo.test.ts	PENpi extension
+.pi/extensions/penpi/fifo.ts	PENpi extension
+.pi/extensions/penpi/index.test.ts	PENpi extension
+.pi/extensions/penpi/index.ts	PENpi extension
+.pi/extensions/penpi/mcp-config.test.ts	PENpi extension
+.pi/extensions/penpi/mcp-config.ts	PENpi extension
+.pi/extensions/penpi/mcp-integration.test.ts	PENpi extension
+.pi/extensions/penpi/package.json	PENpi extension
+.pi/extensions/penpi/penfield-client.test.ts	PENpi extension
+.pi/extensions/penpi/penfield-client.ts	PENpi extension
+.pi/extensions/penpi/penfield-credentials.test.ts	PENpi extension
+.pi/extensions/penpi/transcript-search.test.ts	PENpi extension
+.pi/extensions/penpi/transcript-search.ts	PENpi extension
+.pi/extensions/penpi/tsconfig.json	PENpi extension
+.pi/settings.json	PENpi project defaults (compaction off)
+AGENTS.md	PENpi's agent rules (upstream's live in AGENTS.pi.md)
+AGENTS.pi.md	upstream AGENTS.md kept as Pi's rules, with PENpi's contribution and release notes
+CHANGELOG.md	PENpi changelog
+CONTRIBUTING.md	PENpi contribution process
+LICENSE	adds the Penfield copyright line; MIT terms and Mario Zechner's notice unchanged
+README.md	PENpi README
+README.pi.md	upstream README kept as Pi's README, minus upstream-only banner and binary section
+SECURITY.md	PENpi reporting and trust boundaries, upstream policy preserved below
+assets/penpi-logo.png	PENpi logo
+biome.json	lint and format the PENpi extension
+docs/ARCHITECTURE.md	PENpi documentation
+docs/KNOWN_LIMITATIONS.md	PENpi documentation
+docs/PROMPT_LAYERS.md	PENpi documentation
+docs/ROADMAP.md	PENpi documentation
+docs/TEST_PROTOCOL.md	PENpi documentation
+docs/UPSTREAM_PATCHES.txt	this manifest
+docs/WEB_SEARCH.md	PENpi documentation
+docs/adr/0001-record-architecture-decisions.md	PENpi decision record
+docs/adr/0002-penpi-is-a-fork-of-pi.md	PENpi decision record
+docs/adr/0003-fifo-replaces-compaction.md	PENpi decision record
+docs/adr/0004-three-tier-memory.md	PENpi decision record
+docs/adr/0005-penfield-over-mcp.md	PENpi decision record
+docs/adr/0006-two-layer-penfield-access.md	PENpi decision record
+docs/adr/0007-device-code-auth.md	PENpi decision record
+docs/adr/0008-oauth-endpoint-discovery.md	PENpi decision record
+docs/adr/0009-single-shared-jwt.md	PENpi decision record
+docs/adr/0010-save-context-on-shutdown-opt-in.md	PENpi decision record
+docs/adr/0012-transcript-search-tier-3.md	PENpi decision record
+docs/adr/0013-web-search-via-mcp.md	PENpi decision record
+docs/adr/0014-pin-third-party-dependencies.md	PENpi decision record
+docs/adr/0015-layered-configuration.md	PENpi decision record
+docs/adr/0016-prompt-layer-control.md	PENpi decision record
+docs/adr/0017-fast-fail-timeouts.md	PENpi decision record
+docs/adr/0018-global-install.md	PENpi decision record
+docs/adr/0019-disable-upstream-update-banner.md	PENpi decision record
+docs/adr/0020-pin-managed-package-installs.md	PENpi decision record
+docs/adr/0021-optional-user-selected-web-search.md	PENpi decision record
+docs/adr/0022-raw-diagnostic-boundary.md	PENpi decision record
+docs/adr/0023-overflow-compaction-escape-hatch.md	PENpi decision record
+docs/adr/0024-memory-fence-sanitization.md	PENpi decision record
+docs/adr/0025-compaction-fallback-without-fifo-window.md	PENpi decision record
+docs/adr/0026-global-only-configuration.md	PENpi decision record
+docs/adr/0027-slope-free-fifo-budget.md	PENpi decision record
+docs/adr/0028-length-continuation.md	PENpi decision record
+docs/adr/0029-sanitizer-normalization-and-bounds.md	PENpi decision record
+docs/adr/0030-strict-config-values.md	PENpi decision record
+docs/adr/0031-upstream-ancestry-and-patch-manifest.md	PENpi decision record
+docs/adr/README.md	PENpi decision record
+package-lock.json	follows package.json (PENpi workspace and pins)
+package.json	PENpi version, workspace, checks and pins; no npm publishing scripts
+packages/ai/package.json	build uses the committed model-data snapshot (offline)
+packages/ai/scripts/generate-models.ts	pin Claude Sonnet 5.5 cache-read price
+packages/ai/src/providers/data/.manifest.json	committed model-data snapshot (offline builds)
+packages/ai/src/providers/data/amazon-bedrock.json	committed model-data snapshot (offline builds)
+packages/ai/src/providers/data/ant-ling.json	committed model-data snapshot (offline builds)
+packages/ai/src/providers/data/anthropic.json	committed model-data snapshot (offline builds)
+packages/ai/src/providers/data/azure.json	committed model-data snapshot (offline builds)
+packages/ai/src/providers/data/baseten.json	committed model-data snapshot (offline builds)
+packages/ai/src/providers/data/cerebras.json	committed model-data snapshot (offline builds)
+packages/ai/src/providers/data/cloudflare-ai-gateway.json	committed model-data snapshot (offline builds)
+packages/ai/src/providers/data/cloudflare-workers-ai.json	committed model-data snapshot (offline builds)
+packages/ai/src/providers/data/deepseek.json	committed model-data snapshot (offline builds)
+packages/ai/src/providers/data/fireworks.json	committed model-data snapshot (offline builds)
+packages/ai/src/providers/data/github-copilot.json	committed model-data snapshot (offline builds)
+packages/ai/src/providers/data/google-vertex.json	committed model-data snapshot (offline builds)
+packages/ai/src/providers/data/google.json	committed model-data snapshot (offline builds)
+packages/ai/src/providers/data/groq.json	committed model-data snapshot (offline builds)
+packages/ai/src/providers/data/huggingface.json	committed model-data snapshot (offline builds)
+packages/ai/src/providers/data/kimi-coding.json	committed model-data snapshot (offline builds)
+packages/ai/src/providers/data/meta.json	committed model-data snapshot (offline builds)
+packages/ai/src/providers/data/minimax-cn.json	committed model-data snapshot (offline builds)
+packages/ai/src/providers/data/minimax.json	committed model-data snapshot (offline builds)
+packages/ai/src/providers/data/mistral.json	committed model-data snapshot (offline builds)
+packages/ai/src/providers/data/moonshotai-cn.json	committed model-data snapshot (offline builds)
+packages/ai/src/providers/data/moonshotai.json	committed model-data snapshot (offline builds)
+packages/ai/src/providers/data/nvidia.json	committed model-data snapshot (offline builds)
+packages/ai/src/providers/data/openai-codex.json	committed model-data snapshot (offline builds)
+packages/ai/src/providers/data/openai.json	committed model-data snapshot (offline builds)
+packages/ai/src/providers/data/opencode-go.json	committed model-data snapshot (offline builds)
+packages/ai/src/providers/data/opencode.json	committed model-data snapshot (offline builds)
+packages/ai/src/providers/data/openrouter.json	committed model-data snapshot (offline builds)
+packages/ai/src/providers/data/qwen-token-plan-cn.json	committed model-data snapshot (offline builds)
+packages/ai/src/providers/data/qwen-token-plan-individual.json	committed model-data snapshot (offline builds)
+packages/ai/src/providers/data/qwen-token-plan.json	committed model-data snapshot (offline builds)
+packages/ai/src/providers/data/radius.json	committed model-data snapshot (offline builds)
+packages/ai/src/providers/data/together.json	committed model-data snapshot (offline builds)
+packages/ai/src/providers/data/typesafe.json	committed model-data snapshot (offline builds)
+packages/ai/src/providers/data/vercel-ai-gateway.json	committed model-data snapshot (offline builds)
+packages/ai/src/providers/data/xai.json	committed model-data snapshot (offline builds)
+packages/ai/src/providers/data/xiaomi-token-plan-ams.json	committed model-data snapshot (offline builds)
+packages/ai/src/providers/data/xiaomi-token-plan-cn.json	committed model-data snapshot (offline builds)
+packages/ai/src/providers/data/xiaomi-token-plan-sgp.json	committed model-data snapshot (offline builds)
+packages/ai/src/providers/data/xiaomi.json	committed model-data snapshot (offline builds)
+packages/ai/src/providers/data/zai-coding-cn.json	committed model-data snapshot (offline builds)
+packages/ai/src/providers/data/zai.json	committed model-data snapshot (offline builds)
+packages/coding-agent/README.md	upstream README plus a PENpi note
+packages/coding-agent/docs/settings.md	documents PENpi's compaction-off default
+packages/coding-agent/examples/extensions/gondolin/package-lock.json	undici 6.29.0 security update
+packages/coding-agent/examples/extensions/sandbox/package-lock.json	shell-quote 1.12.0 security update
+packages/coding-agent/src/cli/args.ts	core patch: hidden extension CLI flags
+packages/coding-agent/src/core/agent-session.ts	core patch: compaction-disabled recovery gating (ADR 0023)
+packages/coding-agent/src/core/extensions/loader.ts	core patch: hidden extension CLI flags
+packages/coding-agent/src/core/extensions/types.ts	core patch: hidden extension CLI flags
+packages/coding-agent/src/core/package-manager.ts	core patch: exact pins for managed installs (ADR 0020)
+packages/coding-agent/src/core/settings-manager.ts	core patch: compaction off by default (ADR 0003)
+packages/coding-agent/src/modes/interactive/interactive-mode.ts	core patch: no upstream update banner (ADR 0019)
+packages/coding-agent/src/modes/print-mode.ts	core patch: print every continuation part (ADR 0028)
+packages/coding-agent/src/utils/shell.ts	core patch: strip Penfield credentials from shell commands
+packages/coding-agent/test/agent-session-auto-compaction-queue.test.ts	upstream test adapted to PENpi's compaction-off default
+packages/coding-agent/test/args.test.ts	tests hidden extension CLI flags
+packages/coding-agent/test/package-manager.test.ts	tests exact pins for managed installs
+packages/coding-agent/test/penpi-builtin-mcp-disabled.test.ts	PENpi test against the real session
+packages/coding-agent/test/penpi-emergency-compaction.test.ts	PENpi test against the real session
+packages/coding-agent/test/penpi-length-continuation.test.ts	PENpi test against the real session
+packages/coding-agent/test/penpi-print-mode-continuation.test.ts	PENpi test against the real session
+packages/coding-agent/test/penpi-shell-env.test.ts	PENpi test against the real session
+packages/coding-agent/test/settings-manager-compaction.test.ts	upstream test adapted to PENpi's compaction-off default
+packages/coding-agent/test/suite/agent-session-boundaries.test.ts	upstream test adapted to PENpi's compaction-off default
+packages/coding-agent/test/suite/agent-session-compaction-model-overrides.test.ts	upstream test adapted to PENpi's compaction-off default
+packages/coding-agent/test/suite/agent-session-compaction.test.ts	compaction-off default; the disabled case stays under the window because PENpi recovers usage-inferred overflow (ADR 0023)
+packages/coding-agent/test/suite/virtual-models.test.ts	upstream test adapted to PENpi's compaction-off default
+packages/env/vitest.config.ts	skip daemon tests when the pi-env daemon is not built
+scripts/check-lockfile-versions.mjs	PENpi version-surface check
+scripts/check-release-assets.mjs	PENpi release asset interlock
+scripts/check-shell-script-modes.mjs	CI check: invoked shell scripts are executable
+scripts/check-shell-script-modes.test.mjs	tests a PENpi script
+scripts/check-upstream-patches.mjs	CI check: this manifest matches the diff from the upstream base
+scripts/check-upstream-patches.test.mjs	tests a PENpi script
+scripts/make-review-archive.sh	PENpi release/review archive
+scripts/make-review-archive.test.mjs	tests a PENpi script
+scripts/model-catalog-policy.test.mjs	tests a PENpi script
+scripts/penpi-global.sh	PENpi global installer
+scripts/penpi-global.test.mjs	tests a PENpi script
+scripts/penpi-settings.mjs	PENpi installer settings editor
+scripts/penpi-version.mjs	PENpi version surfaces for the release script
+scripts/penpi-version.test.mjs	tests a PENpi script
+scripts/publish-model-catalog.mjs	deleted: PENpi publishes no model catalog
+scripts/publish-model-catalog.test.mjs	deleted: tests the removed publishing script
+scripts/release-notes.mjs	accepts PENpi's changelog heading format
+scripts/release-notes.test.mjs	tests a PENpi script
+scripts/release.mjs	bumps and tags PENpi's version, not upstream's
+scripts/release.test.mjs	tests a PENpi script

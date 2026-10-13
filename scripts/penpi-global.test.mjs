@@ -163,8 +163,11 @@ test("install and uninstall are idempotent", () => {
 	const settings = JSON.parse(readFileSync(settingsPath(testHome), "utf8"));
 	assert.equal(settings.compaction.enabled, false);
 	assert.equal(settings.packages, undefined);
+	// Pi's built-in MCP must not serve PENpi's penfield entry if the embedded adapter fails.
+	assert.deepEqual(settings.extensions, ["-builtin:mcp"]);
 	assert.equal(run(testHome, "uninstall").status, 0);
 	assert.equal(run(testHome, "uninstall").status, 0);
+	assert.equal(JSON.parse(readFileSync(settingsPath(testHome), "utf8")).extensions, undefined);
 });
 
 test("installer remains valid Bash", () => {

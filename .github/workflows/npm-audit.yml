@@ -24,6 +24,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Nothing after checkout needs to push; do not leave the token in .git/config.
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -34,14 +37,10 @@ jobs:
       - name: Install dependencies without lifecycle scripts
         run: npm ci --ignore-scripts --no-audit --no-fund
 
+      # Upstream's script: npm audit --omit=dev at moderate, minus advisories reviewed
+      # and accepted in the script with a recorded reason.
       - name: Audit production vulnerabilities
-        run: npm audit --omit=dev --audit-level=moderate
-
-      # Dev-only advisories can't reach a user, but a high one still warrants a look
-      # (it ran on a maintainer's machine and in CI). Gated at `high` so routine
-      # moderate churn in the test toolchain doesn't red the build.
-      - name: Audit dev vulnerabilities
-        run: npm audit --audit-level=high
+        run: node scripts/npm-audit.mjs
 
       - name: Verify registry signatures
         run: npm audit signatures --omit=dev

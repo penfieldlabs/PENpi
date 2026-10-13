@@ -67,17 +67,9 @@ cd "$repo_root"
 
 commit="$(git rev-parse --verify --end-of-options "${source_ref}^{commit}")"
 
-# NOTE: this helper is inherited from upstream Pi and packages Pi, not PENpi. It
-# validates against packages/coding-agent/package.json (Pi's version, 0.83.x), so
-# a PENpi version such as 0.3.0 can never match. It is NOT part of the PENpi
-# release process; see docs/TEST_PROTOCOL.md.
 package_version="$(git show "${commit}:packages/coding-agent/package.json" | node -p 'JSON.parse(require("fs").readFileSync(0, "utf8")).version')"
 if [[ "$package_version" != "$version" ]]; then
     echo "Version ${version} does not match package version ${package_version} at ${source_ref}" >&2
-    echo "" >&2
-    echo "This script archives upstream Pi (packages/coding-agent), not PENpi." >&2
-    echo "For a PENpi review or release archive use: scripts/make-review-archive.sh" >&2
-    echo "Documented in docs/TEST_PROTOCOL.md under 'Release / review archives'." >&2
     exit 1
 fi
 
@@ -126,8 +118,19 @@ required_paths=(
     "package-lock.json"
     "scripts/build-binaries.sh"
     "packages/ai/src/models.generated.ts"
-    "packages/ai/src/image-models.generated.ts"
     "packages/ai/src/providers/data/.manifest.json"
+    "packages/tui/native/napi.h"
+    "packages/tui/native/clipboard.h"
+    "packages/tui/native/darwin/src/darwin-platform.m"
+    "packages/tui/native/darwin/prebuilds/darwin-arm64/darwin-platform.node"
+    "packages/tui/native/darwin/prebuilds/darwin-x64/darwin-platform.node"
+    "packages/tui/native/linux/build.sh"
+    "packages/tui/native/linux/src/linux-platform-x11.c"
+    "packages/tui/native/linux/prebuilds/linux-arm64/linux-platform-x11.node"
+    "packages/tui/native/linux/prebuilds/linux-x64/linux-platform-x11.node"
+    "packages/tui/native/win32/src/win32-platform.c"
+    "packages/tui/native/win32/prebuilds/win32-arm64/win32-platform.node"
+    "packages/tui/native/win32/prebuilds/win32-x64/win32-platform.node"
     "packages/coding-agent/package.json"
     "packages/coding-agent/src/utils/image-resize-worker.ts"
     "packages/coding-agent/src/core/export-html/template.css"

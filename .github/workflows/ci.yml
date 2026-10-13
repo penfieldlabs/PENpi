@@ -13,6 +13,12 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Not carried from upstream Pi's CI, deliberately:
+# - The pi-env Rust daemon build. PENpi does not ship the daemon; packages/env skips its
+#   daemon tests with a warning when no binary is built (packages/env/vitest.config.ts).
+# - The mcp-conformance job. It tests Pi's built-in MCP client, which PENpi disables
+#   (`-builtin:mcp` in the settings the installer writes); PENpi's MCP runs through the
+#   embedded pi-mcp-adapter instead.
 jobs:
   build-check-test:
     runs-on: ubuntu-latest
@@ -25,12 +31,21 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Nothing after checkout needs to push; do not leave the token in .git/config.
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
           cache: npm
+
+      # Runs the release workflow's archive script on every PR, before anything writes to
+      # the tree (it refuses a dirty tree), so a broken release script fails here and not
+      # on release day.
+      - name: Release archive dry run
+        run: ./scripts/make-review-archive.sh HEAD "${RUNNER_TEMP}/penpi-ci-source.zip"
 
       # Capped because this step has hung on an unresponsive apt mirror: PR #12 sat
       # here for 6h0m43s until GitHub's job ceiling killed it, having never reached
@@ -62,6 +77,14 @@ jobs:
 
       - name: Lockfile version check
         run: npm run check:lockfile-versions
+
+      - name: Invoked shell scripts are executable
+        run: npm run check:script-modes
+
+      # Every path that differs from the upstream Pi base must be listed with a reason in
+      # docs/UPSTREAM_PATCHES.txt (fetches the base commit by SHA in this shallow checkout).
+      - name: Upstream patch manifest
+        run: npm run check:upstream-patches
 
       - name: Check runtime deps
         run: npm run check:runtime-deps

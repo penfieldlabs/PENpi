@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Release script for pi-mono
+ * Release script for PENpi
  *
  * Usage:
  *   node scripts/release.mjs <major|minor|patch>
@@ -8,24 +8,28 @@
  *
  * Steps:
  * 1. Check for uncommitted changes
- * 2. Bump version via npm run version:xxx or set an explicit version
- * 3. Update CHANGELOG.md files: [Unreleased] -> [version] - date
+ * 2. Bump PENpi's version or set an explicit version
+ * 3. Update CHANGELOG.md: [Unreleased] -> [version] — date
  * 4. Regenerate release artifacts
  * 5. Run checks and tests
- * 6. Commit and tag the release
+ * 6. Commit the release (the tag is made later, on the merged squash commit)
  * 7. Add new [Unreleased] section to changelogs
  * 8. Commit next-cycle changelog updates
- * 9. Push main and the tag
+ * 9. Print the manual steps that follow. This script never pushes: the release goes
+ *    through a PR, and the tag is pushed by name only after the release is approved.
  *
  * PENpi does not publish to npm (the upstream @earendil-works scope isn't ours);
- * distribution is `scripts/penpi-global.sh` plus the binaries built by the
- * manually-dispatched Build Binaries workflow.
+ * distribution is `scripts/penpi-global.sh` plus the source archive the manually
+ * dispatched Release workflow builds.
+ *
+ * The version is PENpi's (root package.json, the extension manifest and the MCP
+ * handshake literal; see scripts/penpi-version.mjs). The upstream workspace packages
+ * keep upstream Pi's version: bumping them would produce an upstream tag name.
  */
 
 import { execSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { findPackageDirectories } from "./package-workspaces.mjs";
+import { getPenpiVersion, nextVersion, setPenpiVersion } from "./penpi-version.mjs";
 
 const RELEASE_TARGET = process.argv[2];
 const BUMP_TYPES = new Set(["major", "minor", "patch"]);
@@ -49,57 +53,8 @@ function run(cmd, options = {}) {
 	}
 }
 
-function getVersion() {
-	const pkg = JSON.parse(readFileSync("packages/ai/package.json", "utf-8"));
-	return pkg.version;
-}
-
-function compareVersions(a, b) {
-	const aParts = a.split(".").map(Number);
-	const bParts = b.split(".").map(Number);
-
-	for (let i = 0; i < 3; i++) {
-		const diff = (aParts[i] || 0) - (bParts[i] || 0);
-		if (diff !== 0) {
-			return diff;
-		}
-	}
-
-	return 0;
-}
-
 function shellQuote(value) {
 	return `'${value.replace(/'/g, `'\\''`)}'`;
-}
-
-function removeStaleWorkspaceLockEntries() {
-	const workspaceVersions = new Map(
-		findPackageDirectories()
-			.map((directory) => JSON.parse(readFileSync(join(directory, "package.json"), "utf8")))
-			.filter((pkg) => pkg.private !== true)
-			.map((pkg) => [pkg.name, pkg.version]),
-	);
-	const lockPath = "package-lock.json";
-	const lock = JSON.parse(readFileSync(lockPath, "utf8"));
-	let removed = 0;
-
-	for (const [path, pkg] of Object.entries(lock.packages)) {
-		if (!path.startsWith("packages/") || pkg.link === true) {
-			continue;
-		}
-		for (const [name, version] of workspaceVersions) {
-			if (path.endsWith(`/node_modules/${name}`) && pkg.version !== version) {
-				delete lock.packages[path];
-				removed++;
-				break;
-			}
-		}
-	}
-
-	if (removed > 0) {
-		writeFileSync(lockPath, `${JSON.stringify(lock, null, "\t")}\n`);
-		console.log(`Removed ${removed} stale workspace package lock ${removed === 1 ? "entry" : "entries"}.`);
-	}
 }
 
 function stageChangedFiles() {
@@ -113,34 +68,25 @@ function stageChangedFiles() {
 }
 
 function bumpOrSetVersion(target) {
-	const currentVersion = getVersion();
-
-	if (BUMP_TYPES.has(target)) {
-		console.log(`Bumping version (${target})...`);
-		run(`npm run version:${target}`);
-	} else {
-		if (compareVersions(target, currentVersion) <= 0) {
-			console.error(`Error: explicit version ${target} must be greater than current version ${currentVersion}.`);
-			process.exit(1);
-		}
-
-		console.log(`Setting explicit version (${target})...`);
-		run(`npm version ${target} -ws --no-git-tag-version && node scripts/sync-versions.js && npm install --package-lock-only --ignore-scripts`);
+	const currentVersion = getPenpiVersion();
+	let version;
+	try {
+		version = nextVersion(currentVersion, target);
+	} catch (error) {
+		console.error(`Error: ${error.message}.`);
+		process.exit(1);
 	}
 
-	// npm version can temporarily install the previous workspace versions before
-	// sync-versions updates inter-package ranges. Remove those stale lock entries,
-	// refresh the lockfile, then hydrate from the final dependency graph.
-	removeStaleWorkspaceLockEntries();
+	console.log(`Setting PENpi version ${currentVersion} -> ${version}...`);
+	setPenpiVersion(version);
 	run("npm install --package-lock-only --ignore-scripts");
 	run("npm ci --ignore-scripts");
-	return getVersion();
+	return getPenpiVersion();
 }
 
 function getChangelogs() {
-	return findPackageDirectories()
-		.map((directory) => join(directory, "CHANGELOG.md"))
-		.filter((path) => existsSync(path));
+	// PENpi's changelog only; packages/*/CHANGELOG.md belong to upstream Pi.
+	return ["CHANGELOG.md"].filter((path) => existsSync(path));
 }
 
 function updateChangelogsForRelease(version) {
@@ -157,7 +103,7 @@ function updateChangelogsForRelease(version) {
 
 		const updated = content.replace(
 			"## [Unreleased]",
-			`## [${version}] - ${date}`
+			`## [${version}] — ${date}`
 		);
 		writeFileSync(changelog, updated);
 		console.log(`  Updated ${changelog}`);
@@ -223,11 +169,10 @@ console.log("Running tests...");
 run("./test.sh");
 console.log();
 
-// 6. Commit and tag
-console.log("Committing and tagging...");
+// 6. Commit. No tag here: the release tag goes on the merged squash commit on main (step 9).
+console.log("Committing...");
 stageChangedFiles();
 run(`git commit -m "Release v${version}"`);
-run(`git tag v${version}`);
 console.log();
 
 // 7. Add new [Unreleased] sections
@@ -241,10 +186,13 @@ stageChangedFiles();
 run(`git commit -m "Add [Unreleased] section for next cycle"`);
 console.log();
 
-// 9. Push
-console.log("Pushing to remote...");
-run("git push origin main");
-run(`git push origin v${version}`);
-console.log();
-
-console.log(`=== Prepared release v${version}; run the Build Binaries workflow to attach artifacts ===`);
+// 9. Next steps. Nothing is pushed from here (see the header).
+console.log(`=== Prepared release v${version} locally. Nothing was pushed. ===`);
+console.log("Next, by hand (docs/TEST_PROTOCOL.md, AGENTS.pi.md):");
+console.log("  1. Run the full gate from a clean checkout of this branch.");
+console.log("  2. Open a PR to main; squash-merge it once CI passes.");
+console.log("  3. Verify the merged tree equals the gated tree, then tag the merged commit:");
+console.log(`       git tag -a v${version} <merged-commit> -m "PENpi ${version}"`);
+console.log("  4. Only after the release is approved, push that one tag by name:");
+console.log(`       git push <remote> v${version}`);
+console.log(`  5. Dispatch the Release workflow with tag v${version}.`);
