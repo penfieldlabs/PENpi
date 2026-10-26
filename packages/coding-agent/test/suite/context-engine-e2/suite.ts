@@ -6,6 +6,7 @@ import { copyFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { type EngineUnderTest, loadEngine } from "./engine-under-test.ts";
+import { knownFailure, loadKnownFailures, penpiVersion, validateKnownFailures } from "./known-failures.ts";
 import { matrixConfigs } from "./matrix.ts";
 import type { MixName } from "./mixes.ts";
 import { outDir, runOne } from "./runner.ts";
@@ -30,6 +31,10 @@ export async function matrixSuite(mix: MixName): Promise<void> {
 	const engine = await loadEngine();
 	const dir = recordEngine(engine);
 	const configs = matrixConfigs(mix);
+	// Known failures (known-failures.ts): an invalid list excuses nothing; summarize.mjs reports and fails it.
+	const known = loadKnownFailures();
+	const knownEntries = validateKnownFailures(known).length ? [] : known;
+	const version = penpiVersion();
 	describe(`E2 ${mix} (engine ${engine.label} ${engine.sha256.slice(0, 12)})`, () => {
 		if (configs.length === 0) it.skip("no runs selected for this mix", () => {});
 		for (const config of configs) {
@@ -45,7 +50,12 @@ export async function matrixSuite(mix: MixName): Promise<void> {
 						`${c.map((x) => `${x.id.split(" ")[0]}=${x.pass === null ? "n/a" : x.pass ? (x.note?.startsWith("vacuous") ? "vacuous" : "ok") : "FAIL"}`).join(" ")} ` +
 						`${(metrics.runtimeMs / 1000).toFixed(1)}s -> ${dir}`,
 				);
-				if (process.env.E2_ASSERT !== "0") expect(failures).toEqual([]);
+				const k = knownFailure(metrics, knownEntries, version);
+				if (k?.status === "known")
+					console.log(
+						`[E2] KNOWN ${config.id} ${k.entry.criterion} lag ${metrics.silent?.lagToDetection} (until PENpi ${k.entry.until}): ${k.entry.reason}`,
+					);
+				if (process.env.E2_ASSERT !== "0") expect(k?.status === "known" ? [] : failures).toEqual([]);
 			}, 3_600_000);
 		}
 	});

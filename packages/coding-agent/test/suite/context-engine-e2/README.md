@@ -226,6 +226,25 @@ Notes:
   a 500-turn session may cut only a few times; C3 is then judged on the few hundred requests after the first
   cut, which is still a steady state.
 
+## Known failures
+
+`known-failures.json` lists runs that fail one named criterion within a recorded bound, accepted by decision
+until a PENpi version. Each entry names the run id (exactly; no patterns), the criterion (only
+`C6 detection-lag` is supported), `maxLag`, `until` (a version) and the reason. An entry covers a run only
+when all of these hold: the id matches, that criterion is the run's only failing one, the engine detected at all
+and the lag is at most `maxLag`, and PENpi's version (the root `package.json`) is below `until`.
+
+- The run's own `<run>.json` still says FAIL; the criteria and their thresholds do not change.
+- `suite.ts` lets that run's test pass and logs `[E2] KNOWN <id> ...`; `summarize.mjs` counts it as KNOWN
+  (`- runs: 96, PASS 95, FAIL 0, KNOWN 1 (...)`), shows KNOWN in the table, and lists every entry under
+  "Known failures": occurred, did not occur (the run passed: remove the entry), EXPIRED, or does not cover the
+  failure.
+- The summary fails when an entry has expired, is malformed, or names a run that is not in the full matrix.
+  Anything an entry does not cover fails as before.
+
+Today's entry: research.glm.32k.silent-messages, C6 lag 4 (limit 3), until 0.5.1. It is the same at this
+checkout's path length and at the GitHub runner's.
+
 ## C3 trend
 
 `summary.md` ends with the C3 distribution over the runs (min, p10, median, mean, and how many runs fall
@@ -265,6 +284,12 @@ differ by a few tokens between repetitions. Re-running four 32k configurations w
 (CJK and data, GLM, reject and silent) reproduced every verdict, cut count, truncation count and rejection
 count; per-request sizes differed by at most 63 tokens.
 
+The checkout's path is part of every request: the sessions' working directory is under the checkout
+(`.cache/scratch`), and Pi puts it in the system prompt. A checkout at another path length gives other request
+sizes. RC5's matrix from a 91-character scratch path and from the GitHub runner's 99 characters gave the same
+verdict, failing criteria and silent-truncation record in all 96 runs; the largest request per run differed by
+-287 to +69 tokens.
+
 The default matrix uses seed 1. Other seeds give other sessions (other tasks, sizes and content), which
 is a cheap robustness check of borderline behaviour, for example the silent modes on the fast mixes
 (about 2 minutes per seed on 2 cores):
@@ -295,4 +320,6 @@ so 88 of 90 pass today).
 | `e2-*.e2.ts` | the matrix, one file per mix (vitest spreads them over workers); `.e2.ts` keeps them out of `npm test` |
 | `sim.e2.ts` | self-test of the simulator, generator and error styles |
 | `summarize.mjs` | summary tables and comparison; exit code |
+| `known-failures.json`, `known-failures.ts` | accepted known failures and the rule that applies them (see Known failures) |
+| `known-failures.test.ts` | unit test of the rule and the summary's counting (runs in `npm test`) |
 | `vitest.config.ts`, `tsconfig.json` | config (temp files and Vite cache under `.cache/scratch`) |

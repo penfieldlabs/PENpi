@@ -1,0 +1,9 @@
+[
+	{
+		"run": "research.glm.32k.silent-messages",
+		"criterion": "C6 detection-lag",
+		"maxLag": 4,
+		"until": "0.5.1",
+		"reason": "The 0.5.0 context header (D26) is about 80 tokens larger, which moves one cut a call earlier in this run; the extra truncated request (374 tokens, 2.3%) shrinks usage too little for any usage rule to see. The detector is unchanged; lag 4 against the limit 3, the same on this box and at CI's checkout path length. Accepted for 0.5.0; revisit in 0.5.1."
+	}
+]

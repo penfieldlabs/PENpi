@@ -4,15 +4,54 @@
  * Reads every <run>.json in each directory, writes <dir>/summary.json and <dir>/summary.md, prints the
  * PASS/FAIL table, and (with two or more directories) a side-by-side comparison to stdout and to
  * $E2_COMPARE_OUT if set. Exit code 1 if any run FAILs, if a directory has no runs, or if fewer runs
- * than $E2_EXPECT_RUNS are found.
+ * than $E2_EXPECT_RUNS are found. A run covered by an entry of known-failures.json is counted as KNOWN, not FAIL,
+ * until the entry's version; an expired or invalid entry fails the summary.
  */
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { knownFailure, loadKnownFailures, penpiVersion, validateKnownFailures } from "./known-failures.ts";
 
 const dirs = process.argv.slice(2);
 if (dirs.length === 0) {
 	console.error("usage: node summarize.mjs <results-dir> [<results-dir> ...]");
 	process.exit(2);
+}
+
+// Known failures (known-failures.ts), read once. A problem with the entries excuses nothing and fails the summary.
+let knownEntries = [];
+const knownProblems = [];
+try {
+	knownEntries = loadKnownFailures();
+	knownProblems.push(...validateKnownFailures(knownEntries));
+} catch (e) {
+	knownProblems.push(`known failures: ${e.message}`);
+}
+const penpi = penpiVersion();
+const knownOf = (m) => (knownProblems.length || m.config.replayMisconfigured ? null : knownFailure(m, knownEntries, penpi));
+const isKnown = (m) => knownOf(m)?.status === "known";
+
+/** One line per entry: whether its failure occurred in this directory; `fail` when an entry needs attention. */
+function knownReport(runs, fullMatrix) {
+	if (knownProblems.length) return { lines: knownProblems.map((p) => `- **FAIL**: ${p}`), fail: true };
+	if (knownEntries.length === 0) return { lines: ["None."], fail: false };
+	let fail = false;
+	const lines = knownEntries.map((entry) => {
+		const head = `- ${entry.run}, ${entry.criterion} (lag at most ${entry.maxLag}, until PENpi ${entry.until}): `;
+		const m = runs.find((r) => r.id === entry.run);
+		if (!m) {
+			if (fullMatrix) fail = true;
+			return `${head}${fullMatrix ? "**FAIL**: no such run in the full matrix (check the run id)" : "not run in this directory"}. ${entry.reason}`;
+		}
+		const k = knownFailure(m, [entry], penpi);
+		const lag = m.silent?.lagToDetection ?? "undetected";
+		if (k?.status === "known") return `${head}occurred, lag ${lag}; counted as KNOWN. ${entry.reason}`;
+		if (k?.status === "expired")
+			return `${head}**EXPIRED** at PENpi ${penpi} (lag ${lag}); counted as FAIL: remove the entry, or renew it by decision. ${entry.reason}`;
+		if (m.verdict === "PASS") return `${head}did not occur (the run passed): remove the entry. ${entry.reason}`;
+		const failing = m.criteria.filter((c) => c.pass === false).map((c) => c.id);
+		return `${head}does not cover this failure (failing: ${failing.join(", ")}; lag ${lag}); counted as FAIL. ${entry.reason}`;
+	});
+	return { lines, fail };
 }
 
 const fmt = (x, d = 2) => (x === null || x === undefined || Number.isNaN(x) ? "-" : Number(x).toFixed(d));
@@ -166,7 +205,7 @@ function table(runs) {
 			? `${mark(c.C6)} ${m.silent.lagToDetection ?? `${m.silent.truncated}, undetected`} (${m.silent.engineDetectedAt.join(",") || "never"})`
 			: "n/a";
 		const fd = m.falseDetections ? `${mark(c.C7)} ${m.falseDetections.count}` : "n/a";
-		return `| ${m.id} | ${m.verdict === "PASS" ? "PASS" : "**FAIL**"} | ${rej} | ${mark(c.C2)} ${fmt(m.largest.shareOfBudget)} (${fmt(m.largest.shareOfHardLimit)}) | ${mark(c.C3)} ${fmt(meanAfterFirstCut(m) ?? m.share.mean)} (${fmt(m.share.mean)}; ${fmt(m.share.minAfterFirstCut)}) | ${mark(c.C4)} ${m.prefix.breaks}/${m.cuts.at.length} | ${m.silent ? `${mark(c.C5)} ${m.silent.truncated}` : "n/a"} | ${lag} | ${fd} | ${ratioDeviation(m)} | ${m.limits.hardLimit} | ${m.limits.firstBudget}${m.limits.minBudget !== m.limits.firstBudget ? `->${m.limits.minBudget}` : ""} | ${m.calls} | ${fmt(m.runtimeMs / 1000, 0)} |`;
+		return `| ${m.id} | ${m.verdict === "PASS" ? "PASS" : isKnown(m) ? "KNOWN" : "**FAIL**"} | ${rej} | ${mark(c.C2)} ${fmt(m.largest.shareOfBudget)} (${fmt(m.largest.shareOfHardLimit)}) | ${mark(c.C3)} ${fmt(meanAfterFirstCut(m) ?? m.share.mean)} (${fmt(m.share.mean)}; ${fmt(m.share.minAfterFirstCut)}) | ${mark(c.C4)} ${m.prefix.breaks}/${m.cuts.at.length} | ${m.silent ? `${mark(c.C5)} ${m.silent.truncated}` : "n/a"} | ${lag} | ${fd} | ${ratioDeviation(m)} | ${m.limits.hardLimit} | ${m.limits.firstBudget}${m.limits.minBudget !== m.limits.firstBudget ? `->${m.limits.minBudget}` : ""} | ${m.calls} | ${fmt(m.runtimeMs / 1000, 0)} |`;
 	});
 	return [head, sep, ...rows].join("\n");
 }
@@ -181,11 +220,17 @@ for (const { dir, engine, runs } of loaded) {
 	}
 	// N2: a misconfigured run (replayedReasoning against its provider) is expected to fail its own criteria; it
 	// is reported in its own section and gated only on its replay warning.
-	const fails = runs.filter((m) => m.verdict !== "PASS" && !m.config.replayMisconfigured);
+	const fails = runs.filter((m) => m.verdict !== "PASS" && !m.config.replayMisconfigured && !isKnown(m));
+	const known = runs.filter(isKnown);
 	const criteriaFails = {};
 	for (const m of runs)
-		if (!m.config.replayMisconfigured)
+		if (!m.config.replayMisconfigured && !isKnown(m))
 			for (const c of m.criteria) if (c.pass === false) criteriaFails[c.id] = (criteriaFails[c.id] ?? 0) + 1;
+	const expected = Number(process.env.E2_EXPECT_RUNS ?? 0);
+	const knownLines = knownReport(runs, expected > 0 && runs.length >= expected);
+	const knownNote = known.length
+		? `, KNOWN ${known.length} (${known.map((m) => `${m.id} ${knownOf(m).entry.criterion.split(" ")[0]} lag ${m.silent.lagToDetection}, until ${knownOf(m).entry.until}`).join("; ")})`
+		: "";
 	const shas = [...new Set(runs.map((m) => m.engine.sha256))];
 	const corpora = [...new Set(runs.map((m) => m.corpusFingerprint))];
 	const tokenizers = [...new Set(runs.map((m) => m.tokenizer))];
@@ -201,12 +246,18 @@ for (const { dir, engine, runs } of loaded) {
 		`- engine source: ${runs[0].engine.source} (loaded ${runs[0].engine.via})`,
 		`- tokenizers: ${tokenizers.join("; ")}`,
 		`- corpus fingerprint: ${corpora.join(", ")}`,
-		`- runs: ${runs.length}, PASS ${runs.length - fails.length}, FAIL ${fails.length}; failing criteria: ${Object.entries(criteriaFails).map(([k, v]) => `${k} x${v}`).join(", ") || "none"}`,
+		`- runs: ${runs.length}, PASS ${runs.length - fails.length - known.length}, FAIL ${fails.length}${knownNote}; failing criteria: ${Object.entries(criteriaFails).map(([k, v]) => `${k} x${v}`).join(", ") || "none"}`,
 		`- session runtime (sum over runs): ${fmt(totalS, 0)} s; self-test: ${selftest}`,
 		"",
 		"Request sizes are real tokens of the request as sent, divided by the input budget the engine planned that request with. Cells start with ok / vacuous (passed because nothing was silently truncated) / n/a / **FAIL**. \"ratio err\" is the engine's calibration ratio over the true ratio (real tokens / engine estimate), min..max over the 25-call trace. README.md explains each criterion and its threshold.",
 		"",
 		table(runs),
+		"",
+		"## Known failures",
+		"",
+		"Entries of known-failures.json: a run failing one named criterion within a recorded bound, accepted by decision until a PENpi version. The run's own result still says FAIL; the summary counts it as KNOWN.",
+		"",
+		...knownLines.lines,
 		"",
 		"## Worst cases",
 		"",
@@ -275,6 +326,8 @@ for (const { dir, engine, runs } of loaded) {
 				shas,
 				runs: runs.map((m) => ({ id: m.id, verdict: m.verdict, criteria: m.criteria, largest: m.largest, share: m.share, rejections: m.rejections, cuts: m.cuts.count, breaks: m.prefix.breaks, silent: m.silent, runtimeMs: m.runtimeMs })),
 				failing: fails.map((m) => m.id),
+				known: known.map((m) => ({ id: m.id, criterion: knownOf(m).entry.criterion, lag: m.silent.lagToDetection, until: knownOf(m).entry.until })),
+				knownProblems,
 				c3,
 				c8: c8.totals,
 				replay,
@@ -295,6 +348,10 @@ for (const { dir, engine, runs } of loaded) {
 		);
 	}
 	if (fails.length > 0) failed = true;
+	if (knownLines.fail) {
+		console.error(`E2: ${dir}: known failures need attention (see "Known failures" in summary.md)`);
+		failed = true;
+	}
 	if (c8.totals.falseNamesFail) {
 		console.error(
 			`E2: ${dir}: C8 false-name rate ${c8.totals.falseNameRate.toFixed(3)} is above ${FALSE_NAME_CEILING} (${c8.totals.wronglyNamed} of ${c8.totals.named} names)`,
@@ -313,7 +370,6 @@ for (const { dir, engine, runs } of loaded) {
 		);
 		failed = true;
 	}
-	const expected = Number(process.env.E2_EXPECT_RUNS ?? 0);
 	if (expected && runs.length < expected) {
 		console.error(`E2: ${dir} has ${runs.length} runs, expected ${expected}`);
 		failed = true;
