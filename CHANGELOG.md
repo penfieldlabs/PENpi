@@ -29,14 +29,14 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
   are learned from errors, length stops and silent truncation, and `/penpi doctor` shows them.
   Overflow and output-limit stops recover without compaction. See
   [docs/CONTEXT_ENGINE.md](docs/CONTEXT_ENGINE.md). On cost: in the PENpi-bench release gate,
-  measured on c722a67c0 (2026-10-18), the billed cost per filler step was about the same as stock
-  Pi's ($0.0050 against $0.0052), so the engine is cost-neutral per step, not a saving. The lower
-  cost per run pair (0.66 of stock's) comes from stock running 33.7 filler steps to reach its three
-  compactions against the engine's 18.8 to its three cuts.
+  measured on the 0.5.0 code (b5211ed48), 2026-10-26, the billed cost per filler step was about the
+  same as stock Pi's ($0.0038 against $0.0037), so the engine is cost-neutral per step, not a
+  saving. The lower cost per unit ($0.094 against $0.138, 0.68 of stock's) comes from stock running
+  34.0 filler steps to reach its three compactions against the engine's 18.8 to its three cuts.
 - **`context_search` finds a tool result by its call's arguments**, such as the path a read
   took or the command a bash call ran, and a hit names the result. In the PENpi-bench release
-  gate, measured on c722a67c0 (2026-10-18), the release candidate recalled 116 of 116 file and
-  tool-output facts. An earlier run on a different day, before this change, recalled 104 of 120.
+  gate, measured on the 0.5.0 code (b5211ed48), 2026-10-26, the release candidate recalled 115 of
+  116 file and tool-output facts. An earlier run on a different day, before this change, recalled 104 of 120.
   The result is consistent with the change, not proof of it.
 - **Planning is capped at 200,000 tokens (`windowCeiling`).** A model with a larger window, such
   as a 1M-token model, is planned as if it had 200,000; set `windowCeiling` (or `0` for no cap)
@@ -50,8 +50,10 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
 - **The length continuation is a hidden message** (0.4 sent it as a user message). After a
   stop that spent the whole output limit on reasoning, the model is asked for the answer
   directly (`reasoningOnlyContinuation`), and the turn goes on instead of ending. In the
-  PENpi-bench release gate, measured on c722a67c0 (2026-10-18), the release candidate's 11 such
-  stops all resolved; stock Pi's 13 all ended in an error.
+  PENpi-bench release gate, measured on the 0.5.0 code (b5211ed48), 2026-10-26, the release
+  candidate had 11 such stops: the next response was a tool call 6 times and an answer 4 times.
+  After the other one, the provider rate-limited the next three requests, and the turn went on once
+  Pi's retry got through. Stock Pi's 11 length stops each ended the step.
 - **A new status line** shows the window the engine plans against, the last request against the
   cut threshold, the number of cuts and the calibration ratio.
 - `/penpi doctor` and `/penpi reset-limits` report and clear what the engine learned.
