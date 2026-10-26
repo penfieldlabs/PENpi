@@ -21,6 +21,6 @@
 	},
 	"devDependencies": {
 		"undici": "8.10.2",
-		"vitest": "4.1.11"
+		"vitest": "4.1.12"
 	}
 }
