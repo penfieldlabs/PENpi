@@ -1,9 +1,9 @@
 {
 	"name": "penpi",
-	"version": "0.4.1",
+	"version": "0.5.0",
 	"private": true,
 	"type": "module",
-	"description": "PENpi — Penfield persistent memory + FIFO context management for Pi",
+	"description": "PENpi — Penfield persistent memory + the context engine for Pi",
 	"pi": {
 		"extensions": [
 			"./index.ts"
@@ -20,7 +20,7 @@
 		"pi-mcp-adapter": "2.12.1"
 	},
 	"devDependencies": {
-		"undici": "8.10.2",
-		"vitest": "4.1.11"
+		"undici": "8.12.3",
+		"vitest": "4.1.12"
 	}
 }

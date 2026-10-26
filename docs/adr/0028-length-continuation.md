@@ -1,6 +1,6 @@
 # 28. Continue responses cut off at the output token limit
 
-- Status: Accepted
+- Status: Superseded by [0032](0032-context-engine.md)
 - Date: 2026-10-11
 
 > **Amended (0.4.1).** Print mode (`pi -p`) printed only the last assistant message, so

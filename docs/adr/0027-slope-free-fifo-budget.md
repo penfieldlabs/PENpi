@@ -1,6 +1,6 @@
 # 27. The FIFO prune budget is floor × window, with no learned calibration
 
-- Status: Accepted
+- Status: Superseded by [0032](0032-context-engine.md)
 - Date: 2026-10-11
 
 ## Context

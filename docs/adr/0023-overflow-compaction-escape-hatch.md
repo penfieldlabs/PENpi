@@ -1,6 +1,6 @@
 # 23. Overflow compaction is an escape hatch, not a contradiction
 
-- Status: Accepted
+- Status: Superseded by [0032](0032-context-engine.md)
 - Date: 2026-08-06
 
 > **Amended (0.4.1).** Moving the guard also let the recoverable length stop through:

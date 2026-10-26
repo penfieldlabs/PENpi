@@ -75,9 +75,10 @@ Once you already have a built tree, `npm run check` / `npm test` / `npm test -w 
 are enough for an edit-test loop. All must be green before commit (husky) and in CI.
 Unit tests use fixtures only — they **never** touch real session logs or live network.
 
-Covered by unit tests: `planFifo` (watermarks/edge cases), config precedence,
-`mcp-config` generation, `TokenManager` (single-flight and device-login guard),
-`searchTranscripts`.
+Covered by unit tests: config precedence, the context engine's settings, entry points and
+telemetry, `mcp-config` generation, `TokenManager` (single-flight and device-login guard),
+`searchTranscripts`. The context engine's behaviours are covered by suites that run against
+a real Pi session with a faux provider ([CONTEXT_ENGINE.md](CONTEXT_ENGINE.md#tests)).
 
 ## Manual / live
 
@@ -99,7 +100,7 @@ Relaunch should auto-orient with no login.
 
 ### 2. Orientation
 On startup (authenticated), expect `awaken` + `reflect` to run and an orientation briefing
-injected. `/penpi` shows `connected=true` and an oriented timestamp.
+in the system prompt (`<penpi-memory>`), still there after the context engine's first cut. `/penpi` shows `connected=true` and an oriented timestamp.
 
 ### 3. Conscious layer — Penfield tools
 Ask the agent to `recall`/`search`/`store`. Expect the adapter to connect to Penfield with
@@ -110,27 +111,31 @@ relaunch → recall it.
 If a backend is configured, follow [WEB_SEARCH.md](WEB_SEARCH.md): run at least three
 varied searches, one content fetch, a clean no-results case, and a private-address refusal
 test. If none is configured, confirm PENpi starts normally without a search tool. Search
-failure must not affect Penfield, FIFO, or transcript search.
+failure must not affect Penfield, the context engine, or transcript search.
 
 ### 5. Tier-3 transcript search
-Ask for something said in an earlier session that FIFO dropped. Expect `search_transcript`
-to find it in the session logs.
+Ask for something said in an earlier session. Expect `search_transcript` to find it in
+the session logs.
 
-### 6. FIFO
-With a long conversation crossing the ceiling, expect oldest messages to drop to the floor
-(watch `PENPI_DEBUG=1` `[PENpi] FIFO: …`). Orientation/injections survive.
+### 6. Context engine
+Run a long conversation and watch the status line (`ctx … · req …/… · N cuts · ratio …`)
+and `/penpi doctor`, or set `PENPI_ENGINE_LOG=<path>` to log each cut. Expect a cut when a
+request would cross 75% of the input budget, after which the request falls to about 45%.
+After a cut, expect your earlier messages to appear verbatim in the header, and
+`context_search` / `context_recall` to find and read what left the window. `/penpi doctor`
+should report `compaction.enabled is false: yes`. See [CONTEXT_ENGINE.md](CONTEXT_ENGINE.md).
 
 ### 7. Graceful degradation
 With Penfield unreachable **or slow**, expect startup to skip cleanly within the request
 timeout (default 15s, `PENPI_PENFIELD_TIMEOUT_MS`; [ADR 0017](adr/0017-fast-fail-timeouts.md)) —
-no hang — with FIFO still working and tool errors surfaced (not a crash). If optional web
+no hang — with the context engine still working and tool errors surfaced (not a crash). If optional web
 search is configured, it should remain independent of the Penfield failure.
 
 ### 8. Raw diagnostic mode (`--penpi-raw`)
 Ask once normally and once with `--penpi-raw`: "is there a Penfield orientation briefing in
 your context? ORIENT-YES or ORIENT-NO." Expect **`ORIENT-YES`** normally and
-**`ORIENT-NO`** in raw mode. At byte level, normal mode has one current `penpi-briefing`
-message with `BEGIN/END PENFIELD PERSISTENT MEMORY` markers; raw mode has none. Confirm raw
-mode still connects and retains Penfield tools, transcript search, FIFO, and compaction
-cancellation while making no automatic `awaken` or `reflect` call. See
+**`ORIENT-NO`** in raw mode. At byte level, normal mode's system prompt has one `<penpi-memory>`
+section with `BEGIN/END PENFIELD PERSISTENT MEMORY` markers; raw mode has none. Confirm raw
+mode still connects and retains Penfield tools, transcript search, and the context engine
+(with its compaction cancellation) while making no automatic `awaken` or `reflect` call. See
 [PROMPT_LAYERS.md](PROMPT_LAYERS.md).

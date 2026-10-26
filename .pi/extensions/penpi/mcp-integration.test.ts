@@ -9,13 +9,13 @@ import {
 	type ExtensionContextActions,
 	ExtensionRunner,
 	type ModelRegistry,
-	type SessionManager,
+	SessionManager,
 	type ToolInfo,
 } from "@earendil-works/pi-coding-agent";
 import { Agent, type Dispatcher, getGlobalDispatcher, setGlobalDispatcher } from "undici";
 import { afterAll, describe, expect, it } from "vitest";
 import { FIXTURE_BRIEFING, type FixturePenfield, startFixturePenfield } from "./__fixtures__/penfield-server.ts";
-import { BRIEFING_CUSTOM_TYPE } from "./config.ts";
+import { BRIEFING_CUSTOM_TYPE, BRIEFING_SECTION } from "./config.ts";
 
 /**
  * Cross-package integration: PENpi and the REAL pi-mcp-adapter, which PENpi embeds
@@ -253,10 +253,10 @@ async function startSession(profile: string, entry: string = penpiEntry): Promis
 		result.extensions,
 		runtime,
 		profile,
-		// Neither extension touches these during session_start: PENpi does not, and
-		// the adapter only forwards ctx.modelRegistry into its sampling config,
-		// which it skips entirely when there is no UI (as here).
-		undefined as unknown as SessionManager,
+		// PENpi's context engine reads the session at session_start (its state and cut); the
+		// adapter only forwards ctx.modelRegistry into its sampling config, which it skips
+		// entirely when there is no UI (as here).
+		SessionManager.inMemory(profile),
 		undefined as unknown as ModelRegistry,
 	);
 	runner.bindCore(actions, contextActions);
@@ -386,11 +386,13 @@ describe("integration: Penfield direct tools across both startup paths", () => {
 				session = await startSession(profile);
 
 				// --- before session_start: only the proxy exists -----------------------
+				// (besides PENpi's own tools: transcript search and the context engine's three)
+				const own = ["context_notes", "context_recall", "context_search", "search_transcript"];
 				expect(
 					[...session.registered()].sort(),
 					"on a clean profile the adapter must have only its proxy tool before session_start",
-				).toEqual(["mcp", "search_transcript"]);
-				expect([...session.active].sort()).toEqual(["mcp", "search_transcript"]);
+				).toEqual(["mcp", ...own].sort());
+				expect([...session.active].sort()).toEqual(["mcp", ...own].sort());
 				expect(existsSync(mcpPath), "nothing may write mcp.json before session_start").toBe(false);
 
 				// The adapter's load-time initialization is scheduled with setImmediate;
@@ -419,9 +421,12 @@ describe("integration: Penfield direct tools across both startup paths", () => {
 				expect(process.env.PENFIELD_JWT).toBe(SEEDED_TOKEN);
 				// PENpi's own orientation path ran for real against the fixture.
 				expect(session.appended).toContain("penpi-state");
-				const briefing = session.injected.find((m) => m.customType === BRIEFING_CUSTOM_TYPE);
-				expect(briefing, "PENpi must inject the orientation briefing").toBeDefined();
-				expect(String(briefing?.content)).toContain(FIXTURE_BRIEFING);
+				// The briefing is a system prompt section on the next run, never a message (ADR 0032).
+				expect(session.injected.find((m) => m.customType === BRIEFING_CUSTOM_TYPE)).toBeUndefined();
+				const run = await session.runner.emitBeforeAgentStart("next task", undefined, { cwd: profile });
+				const briefing = run.systemPromptOptions.sections[BRIEFING_SECTION];
+				expect(briefing, "PENpi must put the orientation briefing in the system prompt").toBeDefined();
+				expect(briefing).toContain(FIXTURE_BRIEFING);
 
 				// --- the adapter's discovery hot-registers the direct tools ------------
 				// No metadata cache exists, so 2.12.1 bootstraps every server here.

@@ -1,6 +1,6 @@
 # 25. Emergency compaction when the model has no context window
 
-- Status: Accepted
+- Status: Superseded by [0032](0032-context-engine.md)
 - Date: 2026-10-10
 
 > **Amended (0.3.2).** The `agent_settled` handler now awaits the compaction, resolving on

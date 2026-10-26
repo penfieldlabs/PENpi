@@ -1,6 +1,6 @@
 # PENpi extension
 
-Penfield persistent memory + FIFO context management for [Pi](https://pi.dev).
+Penfield persistent memory + the context engine for [Pi](https://pi.dev).
 This directory is the PENpi extension; see the [repo README](../../../README.md) for
 the project overview and the [architecture description](../../../docs/ARCHITECTURE.md).
 
@@ -8,38 +8,34 @@ the project overview and the [architecture description](../../../docs/ARCHITECTU
 
 | File | Responsibility |
 |------|----------------|
-| `index.ts` | Entry point — wires the six hooks, the `/penpi` command, and the conscious-layer setup |
+| `index.ts` | Entry point — wires PENpi's hooks, the `/penpi` command, the context engine, and the conscious-layer setup |
 | `penfield-client.ts` | Thin MCP client over `@modelcontextprotocol/sdk` + device-code `TokenManager` |
-| `fifo.ts` | Pure `planFifo()` watermark pruner |
-| `config.ts` | Layered config (defaults ← global `settings.json` `penpi` ← env); exports `BRIEFING_CUSTOM_TYPE` |
+| `engine/` | The context engine: planner, estimator, limits, recovery, header and pin, settings, telemetry, and the `context_notes` / `context_search` / `context_recall` tools and `doctor` command ([docs/CONTEXT_ENGINE.md](../../../docs/CONTEXT_ENGINE.md)) |
+| `engine-only.ts` | Loads the context engine alone, without Penfield, MCP or orientation (the benchmark entry) |
+| `config.ts` | Layered config (defaults ← global `settings.json` `penpi` ← env); exports `BRIEFING_SECTION` (and `BRIEFING_CUSTOM_TYPE`, the 0.4 message type) |
 | `mcp-config.ts` | Builds the embedded `pi-mcp-adapter` config (global `mcp.json` only) and its `penfield` entry, so the conscious layer shares our JWT |
 | `*.test.ts` | Vitest suite (run with `npm test -w penpi`) |
 
 ## The hooks (automatic layer)
 
 - **`session_start`** — connect to Penfield, `awaken()` + `reflect("recent")`, cache via
-  `pi.appendEntry`, and inject an orientation briefing (+ a behavioral protocol) into the
-  agent's context with `pi.sendMessage` (`display: false` — hidden from the user, present
-  for the model). Also sets `PENFIELD_JWT` and writes the adapter's `mcp.json`.
-- **`context`** — `planFifo()` before every LLM call: when usage exceeds the ceiling,
-  drop the oldest non-protected messages down to the floor. PENpi injections are
-  protected; the newest message is always kept; order is preserved. After three
-  consecutive triggers PENpi warns once per session that history is aging out of the
-  window and durable facts belong in Penfield. Wrapped in try/catch so a fault can never
-  block the call.
-- **`session_before_compact`** — reason-aware. Cancels routine `threshold` compaction
-  (FIFO owns context) and cancels when no reason is given; allows `overflow` (a single
-  atomic unit too large for the window, which FIFO cannot shrink) and `manual` (an
-  explicit `/compact` is user intent). See
-  [ADR 0023](../../../docs/adr/0023-overflow-compaction-escape-hatch.md).
-- **`agent_end`** — when the last response stopped at the output token limit
-  (`stopReason: "length"` with output), queue a follow-up asking the model to continue,
-  at most 3 per run. See [ADR 0028](../../../docs/adr/0028-length-continuation.md).
-- **`agent_settled`** — reset the continuation budget, and force one emergency compaction
-  after `emergencyCompactionRuns` runs without a context window. See
-  [ADR 0025](../../../docs/adr/0025-compaction-fallback-without-fifo-window.md).
+  `pi.appendEntry`, and build the orientation briefing (+ a behavioral protocol). Also sets
+  `PENFIELD_JWT` and writes the adapter's `mcp.json`.
+- **`before_agent_start`** — put the briefing into the system prompt as the
+  `<penpi-memory>` section, on every run. It is never a message, so it stays in view after
+  the context engine cuts, and the text stays the same for the session (ADR 0032).
+- **`context`** — refresh the shared Penfield token before every LLM call.
 - **`session_shutdown`** — optional `save_context()` checkpoint (skipped on hot-reload),
   then disconnect.
+
+The context engine (`engine/`) registers its own hooks: `context_with_system` plans each
+request (cuts above 75% of the input budget down to 45%, adds the header),
+`before_provider_request` caps the requested output, `message_end` / `turn_end` /
+`agent_before_settle` calibrate, learn limits, retry overflows and continue after an
+output-limit stop, `session_before_compact` cancels every compaction (a manual `/compact`
+moves the window forward), and `session_before_tree` replaces `/tree` summaries with a fixed
+notice. See [docs/CONTEXT_ENGINE.md](../../../docs/CONTEXT_ENGINE.md) and
+[ADR 0032](../../../docs/adr/0032-context-engine.md).
 
 ## Conscious layer
 
@@ -74,32 +70,41 @@ adapter picks up refreshes on reconnect.
 
 The global `~/.pi/agent/settings.json` (or `$PI_CODING_AGENT_DIR/settings.json`) under a
 `penpi` key; env vars override. A project `.pi/settings.json` is never read for these.
-An empty env var counts as unset. Numbers must be finite (a setting must be a JSON number,
-not a string), and `contextCeiling` / `contextFloor` above 1 are rejected rather than
-clamped; a rejected value is reported and the next source is used ([ADR 0030](../../../docs/adr/0030-strict-config-values.md)).
+An empty env var counts as unset. A value of the wrong type is reported and the next
+source is used ([ADR 0030](../../../docs/adr/0030-strict-config-values.md)).
 
 | settings.json | env var | default | meaning |
 |---------------|---------|---------|---------|
 | `penfield.clientId` | `PENPI_PENFIELD_CLIENT_ID` | — | OAuth client id (else dynamically registered) |
 | `penfield.tokenStore` | `PENPI_PENFIELD_TOKEN_STORE` | `~/.config/penpi/penfield-tokens-prod.json` | device-code token store |
-| `contextCeiling` | `PENPI_CONTEXT_CEILING` | `0.8` | FIFO trigger fraction of the context window |
-| `contextFloor` | `PENPI_CONTEXT_FLOOR` | `0.2` | FIFO keeps this fraction of the window in estimated message tokens (forced below ceiling); the budget ignores learned calibration (ADR 0027) |
-| `emergencyCompactionRuns` | `PENPI_EMERGENCY_COMPACTION_RUNS` | `15` | emergency fallback: consecutive agent runs without a valid context window (FIFO inactive) before PENpi forces one compaction; a minimum, not an exact trigger — the size gate may defer (ADR 0025) |
 | `saveContextOnShutdown` | `PENPI_SAVE_CONTEXT_ON_SHUTDOWN` | `false` | `save_context()` on shutdown (opt-in; env `=true`/`1` to enable) |
 | `injectBriefing` | `PENPI_INJECT_BRIEFING` | `true` | advanced diagnostic control for automatic orientation; normally leave enabled (`--penpi-raw` disables it for one session) |
 | `displayBriefing` | `PENPI_DISPLAY_BRIEFING` | `false` | also **show** normal automatic orientation in the UI. It does not change model context; set `true` to audit exactly what memory is injected each session |
 | `mcpLifecycle` | `PENPI_MCP_LIFECYCLE` | `lazy` | adapter connection lifecycle. `lazy` prevents warm-profile connections before PENpi publishes `PENFIELD_JWT`; explicit overrides are advanced and `eager` can reintroduce the startup race |
 
-Other env: `PENPI_DEBUG=1` (verbose hook logging); `PENFIELD_JWT` (set by PENpi for the
-adapter — do not set manually).
+The context engine's settings (`windowCeiling`, `highWater` / `lowWater`, `limitOverrides`,
+`pinUserMessages` and the rest) go in the same `penpi` block and have no env vars; see
+[docs/CONTEXT_ENGINE.md](../../../docs/CONTEXT_ENGINE.md#settings). PENpi 0.4's FIFO settings
+(`contextFloor`, `contextCeiling`, `emergencyCompactionRuns`) and their env vars are no
+longer read; PENpi warns at startup when one is set.
+
+Other env: `PENPI_DEBUG=1` (verbose hook logging); `PENPI_ENGINE_LOG=<path>` (the context
+engine's log, off by default); `PENFIELD_JWT` (set by PENpi for the adapter — do not set
+manually).
 
 ## Flags & commands
 
 - **`--penpi-raw`** — advanced diagnostic mode: connect and keep Penfield tools,
-  transcript search, and FIFO active, but skip automatic `awaken`, `reflect`, orientation,
-  and memory-protocol injection. Manually recalled memory remains ordinary tool output.
-- **`/penpi`** — status: Penfield auth/connection, automatic orientation, and FIFO.
+  transcript search, and the context engine active, but skip automatic `awaken`, `reflect`,
+  orientation, and memory-protocol injection. Manually recalled memory remains ordinary tool output.
+- **`/penpi`** — status: Penfield auth/connection, automatic orientation, and whether the
+  context engine is installed.
 - **`/penpi login`** — run the Penfield device-code login (RFC 8628).
+- **`/penpi doctor`** — the context engine's effective window and output limit and where
+  they come from, the cut band, the calibration ratio, learned limits with their evidence,
+  answers produced from truncated input, and the settings that apply.
+- **`/penpi reset-limits`** — forget the windows and output limits the engine learned in
+  this session.
 
 ## Testing
 
@@ -107,11 +112,14 @@ adapter — do not set manually).
 npm test -w penpi
 ```
 
-Pure logic (`planFifo`, config precedence, `mcp-config`, `TokenManager` exchange &
-single-flight) is unit-tested with mocked fetch — no network or live Penfield required.
+Pure logic (config precedence, the context engine's settings, entry points and telemetry,
+`mcp-config`, `TokenManager` exchange & single-flight) is unit-tested with mocked fetch — no
+network or live Penfield required. The engine's behaviour suites run against a real Pi
+session in `packages/coding-agent/test/suite/` (see
+[docs/CONTEXT_ENGINE.md](../../../docs/CONTEXT_ENGINE.md#tests)).
 
 ## Credit
 
 PENpi is a fork of [Pi](https://pi.dev) by Mario Zechner / Earendil (MIT). The
-extension system and the per-LLM-call `context` hook this builds on are Pi's. The
+extension system and the per-LLM-call context hooks this builds on are Pi's. The
 conscious layer uses [`pi-mcp-adapter`](https://github.com/nicobailon/pi-mcp-adapter).
