@@ -150,10 +150,13 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
   - The gondolin example extension takes gondolin 0.14.0 (as upstream Pi did), which drops
     `node-forge`, and undici 6.29.1.
 - **Known, deferred to 0.5.1:** `zod` 3.25.76 (GHSA-mrhx-c7xc-m3w5, memory exhaustion when
-  validating oversized collections) has no 3.x fix. PENpi's Penfield client validates server
-  messages with it through the MCP SDK 1.x client, so only a malicious or compromised Penfield
-  server could exploit it; nothing reachable from the open network does. Moving the SDK to
-  zod 4 needs an override and its own tests.
+  validating oversized collections) has no 3.x fix. It validates data from any MCP server
+  configured in the global `mcp.json`: pi-mcp-adapter checks its own result-patch notification
+  with a zod 3 schema, and, for servers with UI resources, the visualization envelope of a tool
+  result. It also validates Penfield's messages, through PENpi's MCP SDK 1.x client. So only a
+  malicious or compromised configured server could exploit it. A repository cannot add servers
+  ([ADR 0026]), and nothing on the open network reaches it without a configured server. The
+  0.5.1 fix is zod 4 through a scoped override, because `sandbox-runtime` pins zod ^3.
 
 ### Known issues
 - **With weaker models, an agent can go on with work that is already done, or that was off
@@ -161,6 +164,10 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
   handled and names the current one, which removes the cue seen on Chief, but it does not stop
   drift once it has started. The same happens when the model is given the full history, with no
   cut at all.
+- **A provider tool call with no id and no name makes every later request in the session fail
+  with a 400.** It is rare; it has been seen with GLM-5.3-Flash through OpenRouter. Use `/tree` to
+  go back to before that reply, or start a new session. The same happens in 0.4.0 and in upstream
+  Pi. A fix is planned for 0.5.1.
 
 ## [0.4.1] — 2026-10-13
 
