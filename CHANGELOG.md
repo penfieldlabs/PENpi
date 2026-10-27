@@ -6,7 +6,7 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
 
 ## [Unreleased]
 
-## [0.5.0] — 2026-10-24
+## [0.5.0] — 2026-10-27
 
 ### Breaking
 - **PENpi refuses to run with `compaction.enabled: true` ([ADR 0032]).** The context engine
@@ -37,8 +37,8 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
   under decision v3, with v2 and v1 alike, on 29 of 30 pairs. The release candidate recalled 278
   of 290 facts exactly, followed all rules in 56 of 58 tasks, completed 58 of 58, and made no
   compaction and no summarization request. In that run, five stock sessions' compaction summaries
-  replaced the session's exact values with wrong ones (none did on 2026-10-18), so we don't quote
-  a single day's gap against stock. RC6 adds only the tool-call repair, which leaves every one of
+  replaced those sessions' exact values with wrong ones (none did in the earlier run on
+  2026-10-18), so we don't quote a single day's gap against stock. The repair leaves every one of
   the 14,548 bench requests byte-identical.
 - **`context_search` finds a tool result by its call's arguments**, such as the path a read
   took or the command a bash call ran, and a hit names the result. In the PENpi-bench release
