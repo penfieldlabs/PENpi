@@ -200,6 +200,8 @@ export interface EngineStats {
 	alignMismatches: number;
 	/** D25: capped system prompt sections re-capped for a smaller window. */
 	sectionRecaps: number;
+	/** RC6: requests sent with a broken tool call repaired (no name or no id). */
+	toolCallRepairs: number;
 	cancelledCompactions: Record<string, number>;
 	calibrationSamples: number[];
 	/** Per request: the budget estimate, the ratio and budget it was planned with, and the detector's appended estimate. */
@@ -283,6 +285,7 @@ export function newStats(): EngineStats {
 		reasoningOnlyStops: 0,
 		alignMismatches: 0,
 		sectionRecaps: 0,
+		toolCallRepairs: 0,
 		cancelledCompactions: {},
 		calibrationSamples: [],
 		sent: [],

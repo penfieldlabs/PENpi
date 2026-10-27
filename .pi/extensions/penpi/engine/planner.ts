@@ -21,6 +21,7 @@ import {
 	STATE_TYPE,
 	systemPromptSection,
 } from "./options.ts";
+import { repairToolCalls } from "./repair.ts";
 import type { Item, Limits, SectionMap, WindowIndex } from "./state.ts";
 
 export function isStartable(message: AgentMessage): boolean {
@@ -482,7 +483,7 @@ export function installPlanner(core: EngineCore): void {
 		for (const item of leaving) {
 			if (item.message.role !== "assistant") continue;
 			for (const block of (item.message as AssistantMessage).content) {
-				if (block.type !== "toolCall") continue;
+				if (block.type !== "toolCall" || !block.name.trim()) continue;
 				tools.set(block.name, (tools.get(block.name) ?? 0) + 1);
 				const args = (block.arguments ?? {}) as Record<string, unknown>;
 				for (const key of ["path", "file_path", "filePath", "file", "filename"]) {
@@ -797,6 +798,22 @@ export function installPlanner(core: EngineCore): void {
 				result = kept;
 				// D17: the estimate is of Pi's messages; what is sent carries the cut's section instead of Pi's.
 				if (estimate !== undefined) estimate += sendTotal(kept) - sendTotal(visible);
+			}
+		}
+		// RC6: a tool call with no name or no id is repaired in what is sent (the session keeps it as recorded).
+		const unrepaired = result ?? visible;
+		const repair = repairToolCalls(unrepaired);
+		if (repair.messages !== unrepaired) {
+			result = repair.messages;
+			// As D17: the estimate is of the messages before the repair; what is sent is the repaired request.
+			if (estimate !== undefined) estimate += sendTotal(result) - sendTotal(unrepaired);
+			stats.toolCallRepairs++;
+			for (const kind of repair.kinds) {
+				if (st.repairsLogged.has(kind)) continue;
+				st.repairsLogged.add(kind);
+				log(
+					`tool-call repair (${kind}): the request leaves out or re-ids a broken tool call; the session is unchanged`,
+				);
 			}
 		}
 		// E3: remember the estimate of exactly what is sent; message_end pairs it with provider usage.

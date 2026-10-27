@@ -135,6 +135,7 @@ export function installDoctor(core: EngineCore): void {
 			`window: #${currentSeq()}${st.lastRequestTokens === undefined ? "" : `, last request ${n(st.lastRequestTokens)} tokens (${Math.round((100 * st.lastRequestTokens) / limits.high)}% of the cut threshold)`}`,
 			`user-message pin: ${pinOpts ? `on (cap ${n(core.pinCap())} = min(${Math.round(pinOpts.capFraction * 100)}% of the window, ${n(pinOpts.capMaxTokens)}); sources ${pinOpts.sources.join(", ")}; unrecorded ${pinOpts.unrecordedSource}; last request carried ${n(stats.pinTokens.at(-1) ?? 0)} tokens, largest ${n(Math.max(0, ...stats.pinTokens))})` : "off"}`,
 			`pre-cut notice: ${opts.notice ? "on" : "off"}`,
+			`tool-call repairs: ${stats.toolCallRepairs === 0 ? "none" : `${stats.toolCallRepairs} requests (${[...st.repairsLogged].join(", ")})`}`,
 			`compaction.enabled is false: ${compactionOff ? "yes" : "NO (the engine refuses to run)"}`,
 			`fault injection: ${core.faults ? `ON (${describeFaults(core.faults)}); ${stats.faults.length} injected so far` : core.faultsRefused ? `REFUSED (${core.faultsRefused} marks production)` : "off"}`,
 		];

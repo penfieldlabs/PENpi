@@ -179,6 +179,11 @@ seed gives the same session on every run.
 | D26.11 | planner, state | The forced cut records sections (D19) and applies a pending refresh (E8.14) exactly as an ordinary cut does. | none | `d26-header-format.test.ts :: d26 sections (D19) and a pending refresh behave as at any cut` |
 | D26.12 | planner, state | After the forced cut, a /compact rebuild and a second resume do not cut for the format again (both see `hv` current). | none | `d26-header-format.test.ts :: d26 after the forced cut, a /compact rebuild and a second resume do not cut for the format again` |
 | D26.13 | planner, state | A session whose only cut-like entry is Pi's native compaction (no engine details) has no cut for the check and is untouched. | none | `d26-header-format.test.ts :: d26 a session whose only cut-like entry is Pi's native compaction is untouched` |
+| TC.1 | repair, planner | A provider tool call with no name (with or without an id) is sent as a fixed, neutral note in its assistant message, and its result ("Tool  not found") is left out, so the request has no empty tool_call_id. The session file keeps the raw entries. The next request repeats the repaired messages byte for byte. Logged once per kind, counted in `/penpi doctor`. | none | `rc6-tool-call-repair.test.ts :: rc6 a call with no id and no name: the next request is valid and stays the same; the session keeps it` |
+| TC.2 | repair, planner | A call with a real name and no id keeps its result: the call and the result get the same id, made from the stored message (`penpi_<timestamp>_<index>`). Calls and results with an empty id pair first in, first out, checked by tool name. On a mismatch, no result, or an id already in the request, the call becomes a note and the result is left out. | none | `rc6-tool-call-repair.test.ts :: rc6 a call with a real name and no id: the tool's output is kept under one stable id`; PENpi's `engine/repair.test.ts` |
+| TC.3 | repair, planner | A request with no broken tool call is sent unchanged (the repair returns the same array, nothing is counted or logged). | none | `rc6-tool-call-repair.test.ts :: rc6 a session with valid tool calls is sent unchanged`; PENpi's `engine/repair.test.ts` |
+| TC.4 | repair, planner | The request estimate and the silent-truncation appended estimate count the repaired request (as D17). | none | `rc6-tool-call-repair.test.ts :: rc6 a call with no id and no name: the next request is valid and stays the same; the session keeps it` |
+| TC.5 | repair, planner | Stock s01's broken session from the 0.5.0 bench (trimmed, `samples/s01-empty-tool-call.jsonl`): all 12 requests after the broken call are valid, and the session file keeps its entries. | none | `rc6-tool-call-repair.test.ts :: rc6 stock s01: all 12 requests after the broken call are valid, and the session file keeps its entries` |
 | EQ | all | With the pin off and the notice on, the engine sends exactly what the reference engine `reference/p2-context-engine.ts` sends, request for request (context cuts and overflow recovery). | `pinUserMessages: null`, `notice: true` | `pin-off-equivalence.test.ts :: mode a, <cuts, overflow> (<path>): every request identical to the reference engine (pin off, notice on)` |
 
 ## Every request: properties
@@ -276,7 +281,8 @@ describes the runs and the criteria.
 | detector | E3.2, E3.5, E3.6, E3.9, E3.10, E3.11, E3.12, E3.13, E5.3, E5.4 |
 | state | E2.3, E3.3, E3.4, E3.7, E4.3, E6.5, D26.8, D26.11–D26.13 |
 | limits | E3.8, E3.10, E5.2, E5.6, E7.1–E7.12 |
-| planner | E2.1, E2.2, E2.6, E2.7, E2.8, E2.10, E2.11, E2.12, HID, E4.1, E4.2, E4.3, E4.4, E4.5, P2b, D26.8–D26.13 |
+| planner | E2.1, E2.2, E2.6, E2.7, E2.8, E2.10, E2.11, E2.12, HID, E4.1, E4.2, E4.3, E4.4, E4.5, P2b, D26.8–D26.13, TC.1–TC.5 |
+| repair | TC.1–TC.5 |
 | pin | E8.2, E8.3, E8.4, P2, P2b, A1, A2, A3, A4, A5, A7, AP, D5, D7, D8, D9, D26.1–D26.7 |
 | header | E1.3, E2.10, E8.1–E8.5, D6, D10, D26.1–D26.3, D26.6, D26.7 |
 | recovery | E1.1, E1.2, E1.5, E5.1, E5.5–E5.9, E6.1–E6.4, D15, E7.13, E7.14 |

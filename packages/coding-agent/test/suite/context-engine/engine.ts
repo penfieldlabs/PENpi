@@ -60,6 +60,8 @@ export const MIN_OUTPUT_ROOM = engine.MIN_OUTPUT_ROOM;
 // Round 5 (undefined on the baseline).
 export const SEARCH_TOOL = engine.SEARCH_TOOL ?? "context_search";
 export const NOTICE_TYPE = engine.NOTICE_TYPE ?? "context-engine.notice";
+// RC6 (undefined on the baseline): what the engine counts of a message for a target.
+export const serializedParts = engine.serializedParts;
 export type {
 	EngineMode,
 	EngineOptions,

@@ -239,6 +239,8 @@ export function newEngineState(faults: FaultConfig | undefined) {
 		 */
 		replayShares: new Map<string, number[]>(),
 		replayWarned: new Set<string>(),
+		/** RC6: the tool-call repair kinds already logged (each is logged once). */
+		repairsLogged: new Set<string>(),
 		/** D24: the upstream provider named by the current response's stream (provider_stream_event), if any. */
 		streamProvider: undefined as string | undefined,
 		/** System prompt sections to change at the next cut, and those changed at a cut in this session (E8.14). */
