@@ -29,13 +29,20 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
   are learned from errors, length stops and silent truncation, and `/penpi doctor` shows them.
   Overflow and output-limit stops recover without compaction. See
   [docs/CONTEXT_ENGINE.md](docs/CONTEXT_ENGINE.md). On cost: in the PENpi-bench release gate,
-  measured on the 0.5.0 code (b5211ed48), 2026-10-26, the billed cost per filler step was about the
+  measured on RC5 (b5211ed48), 2026-10-26, the billed cost per filler step was about the
   same as stock Pi's ($0.0038 against $0.0037), so the engine is cost-neutral per step, not a
   saving. The lower cost per unit ($0.094 against $0.138, 0.68 of stock's) comes from stock running
   34.0 filler steps to reach its three compactions against the engine's 18.8 to its three cuts.
+  In the PENpi-bench release gate, measured on RC5 (b5211ed48), 2026-10-26: PASS, no sign of harm,
+  under decision v3, with v2 and v1 alike, on 29 of 30 pairs. The release candidate recalled 278 of
+  290 facts exactly, followed all rules in 56 of 58 tasks, completed 58 of 58, and made no
+  compaction and no summarization request. Stock Pi's own figures vary between runs, because its
+  compaction summaries sometimes replace a session's exact values with wrong ones, so we don't
+  quote a single day's gap against it. RC6 adds only the tool-call repair, which leaves every one
+  of the 14,548 bench requests byte-identical.
 - **`context_search` finds a tool result by its call's arguments**, such as the path a read
   took or the command a bash call ran, and a hit names the result. In the PENpi-bench release
-  gate, measured on the 0.5.0 code (b5211ed48), 2026-10-26, the release candidate recalled 115 of
+  gate, measured on RC5 (b5211ed48), 2026-10-26, the release candidate recalled 115 of
   116 file and tool-output facts. An earlier run on a different day, before this change, recalled 104 of 120.
   The result is consistent with the change, not proof of it.
 - **Planning is capped at 200,000 tokens (`windowCeiling`).** A model with a larger window, such
@@ -50,7 +57,7 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
 - **The length continuation is a hidden message** (0.4 sent it as a user message). After a
   stop that spent the whole output limit on reasoning, the model is asked for the answer
   directly (`reasoningOnlyContinuation`), and the turn goes on instead of ending. In the
-  PENpi-bench release gate, measured on the 0.5.0 code (b5211ed48), 2026-10-26, the release
+  PENpi-bench release gate, measured on RC5 (b5211ed48), 2026-10-26, the release
   candidate had 11 such stops: the next response was a tool call 6 times and an answer 4 times.
   After the other one, the provider rate-limited the next three requests, and the turn went on once
   Pi's retry got through. Stock Pi's 11 length stops each ended the step.
@@ -138,6 +145,13 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
   for the rest of that window. Each cut now records the header's format, and a session whose
   latest cut has an older one cuts once at its first request (logged as `header format 1 -> 2`).
   Older messages leave the view there, as at any cut, and stay recallable.
+- **A provider tool call with no id and no name no longer breaks the session.** It is rare; it
+  has been seen with GLM-5.3-Flash through OpenRouter. Pi recorded the call and its "tool not
+  found" result with an empty id, and the provider then rejected every later request with a 400.
+  The engine now leaves such a call out of each request, with a short note in its place, and drops
+  its result. A call that has a name but no id keeps its result, under an id made from the saved
+  message. The session file is not changed, and requests without such a call are sent exactly as
+  before. 0.4.0 and upstream Pi still have the problem.
 
 ### Security
 - Dependency updates for advisories published after 0.5.0's first candidates:
@@ -166,10 +180,6 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
   handled and names the current one, which removes the cue seen on Chief, but it does not stop
   drift once it has started. The same happens when the model is given the full history, with no
   cut at all.
-- **A provider tool call with no id and no name makes every later request in the session fail
-  with a 400.** It is rare; it has been seen with GLM-5.3-Flash through OpenRouter. Use `/tree` to
-  go back to before that reply, or start a new session. The same happens in 0.4.0 and in upstream
-  Pi. A fix is planned for 0.5.1.
 
 ## [0.4.1] — 2026-10-13
 

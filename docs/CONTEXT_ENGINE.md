@@ -45,6 +45,13 @@ made while porting it.
   per run. A response cut off at the output limit gets up to 3 continuations per run. A response
   that spent the whole output limit on reasoning, with no text and no tool call, is asked for the
   answer directly (`reasoningOnlyContinuation`).
+- **Broken tool calls are repaired in the request.** Some providers return a tool call with no id
+  or no name. Pi records it, and a provider that checks ids rejects every later request. The engine
+  leaves a call with no name out of what it sends, with the note *[a tool call with no name was
+  removed from this request]*, and drops its result. A call with a name but no id keeps its result:
+  both get the same id, made from the saved message, so every request carries the same bytes. The
+  session file keeps what was recorded. The engine log notes each kind of repair once, and `/penpi
+  doctor` counts the repaired requests.
 - **Large units are capped.** One tool result or user message may use at most 25% of the input
   budget. The rest stays recallable. Images count toward the budget.
 - **A ceiling.** The engine plans against min(model window, 200,000 tokens) (`windowCeiling`).

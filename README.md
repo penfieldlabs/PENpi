@@ -21,7 +21,7 @@ three tiers of memory, none of which summarize your work away:
   messages leave the model's view. The cut persists, which keeps the provider's prompt
   cache, and the session rides in a healthy band instead of pinned near 100%, which suits
   the many models that degrade past ~70–80% utilization. On cost it is neutral, not a
-  saving: in the PENpi-bench release gate, measured on the 0.5.0 code (b5211ed48), 2026-10-26,
+  saving: in the PENpi-bench release gate, measured on RC5 (b5211ed48), 2026-10-26,
   the billed cost per filler step was about the same as stock Pi's ($0.0038 against $0.0037). A header after each cut carries your
   earlier messages verbatim and says how to get the rest back
   (`context_search` / `context_recall`). See [docs/CONTEXT_ENGINE.md](docs/CONTEXT_ENGINE.md).
