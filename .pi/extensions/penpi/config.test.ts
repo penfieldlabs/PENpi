@@ -13,23 +13,17 @@ afterEach(clearPenpiEnv);
 describe("resolvePenpiConfig", () => {
 	it("uses defaults with empty settings", () => {
 		expect(resolvePenpiConfig({})).toEqual({
-			contextCeiling: 0.8,
-			contextFloor: 0.2,
 			saveContextOnShutdown: false,
 			injectBriefing: true,
 			displayBriefing: false,
-			emergencyCompactionRuns: 15,
 		});
 	});
 
 	it("honors settings.json values", () => {
-		expect(resolvePenpiConfig({ contextCeiling: 0.6, contextFloor: 0.4, saveContextOnShutdown: false })).toEqual({
-			contextCeiling: 0.6,
-			contextFloor: 0.4,
-			saveContextOnShutdown: false,
+		expect(resolvePenpiConfig({ saveContextOnShutdown: true, displayBriefing: true })).toEqual({
+			saveContextOnShutdown: true,
 			injectBriefing: true,
-			displayBriefing: false,
-			emergencyCompactionRuns: 15,
+			displayBriefing: true,
 		});
 	});
 
@@ -40,22 +34,8 @@ describe("resolvePenpiConfig", () => {
 	});
 
 	it("lets env override settings", () => {
-		process.env.PENPI_CONTEXT_CEILING = "0.9";
-		expect(resolvePenpiConfig({ contextCeiling: 0.6 }).contextCeiling).toBe(0.9);
-	});
-
-	it("resolves emergencyCompactionRuns from settings and env, never below 1", () => {
-		expect(resolvePenpiConfig({ emergencyCompactionRuns: 30 }).emergencyCompactionRuns).toBe(30);
-		expect(resolvePenpiConfig({ emergencyCompactionRuns: 0 }).emergencyCompactionRuns).toBe(1);
-		process.env.PENPI_EMERGENCY_COMPACTION_RUNS = "7.9";
-		expect(resolvePenpiConfig({ emergencyCompactionRuns: 30 }).emergencyCompactionRuns).toBe(7);
-		process.env.PENPI_EMERGENCY_COMPACTION_RUNS = "abc";
-		expect(resolvePenpiConfig({}).emergencyCompactionRuns).toBe(15);
-	});
-
-	it("forces floor below ceiling", () => {
-		const c = resolvePenpiConfig({ contextCeiling: 0.5, contextFloor: 0.8 });
-		expect(c.contextFloor).toBeLessThan(c.contextCeiling);
+		process.env.PENPI_SAVE_CONTEXT_ON_SHUTDOWN = "1";
+		expect(resolvePenpiConfig({ saveContextOnShutdown: false }).saveContextOnShutdown).toBe(true);
 	});
 });
 
@@ -156,10 +136,9 @@ describe("penpi settings are global-only", () => {
 
 	it("ignores non-credential project settings too", () => {
 		// A repo could otherwise switch Penfield environments, disable orientation,
-		// reintroduce the eager-lifecycle race, or set a ceiling that prunes every turn.
+		// reintroduce the eager-lifecycle race, or shrink the context engine's window.
 		writeProjectSettings({
-			contextCeiling: 0.02,
-			contextFloor: 0.01,
+			windowCeiling: 1_000,
 			injectBriefing: false,
 			mcpLifecycle: "eager",
 			penfield: { env: "dev" },
@@ -170,15 +149,15 @@ describe("penpi settings are global-only", () => {
 	});
 
 	it("honors the global settings and ignores a conflicting project block", () => {
-		writeGlobalSettings({ contextCeiling: 0.6, penfield: { env: "dev" }, mcpLifecycle: "keep-alive" });
-		writeProjectSettings({ contextCeiling: 0.9, penfield: { env: "prod" }, mcpLifecycle: "eager" });
-		expect(resolvePenpiConfig().contextCeiling).toBeCloseTo(0.6);
+		writeGlobalSettings({ displayBriefing: true, penfield: { env: "dev" }, mcpLifecycle: "keep-alive" });
+		writeProjectSettings({ displayBriefing: false, penfield: { env: "prod" }, mcpLifecycle: "eager" });
+		expect(resolvePenpiConfig().displayBriefing).toBe(true);
 		expect(resolvePenfieldConfig().env).toBe("dev");
 		expect(resolveMcpLifecycle()).toBe("keep-alive");
 	});
 
 	it("warns when a project penpi block is ignored", () => {
-		writeProjectSettings({ contextCeiling: 0.6 });
+		writeProjectSettings({ displayBriefing: true });
 		resolvePenpiConfig();
 		expect(errors).toHaveLength(1);
 		expect(errors[0]).toContain(join(project, ".pi", "settings.json"));
@@ -194,8 +173,8 @@ describe("penpi settings are global-only", () => {
 	it("does not mistake the global file for a project file", () => {
 		// PI_CODING_AGENT_DIR=<cwd>/.pi makes both paths the same file; that is global.
 		process.env.PI_CODING_AGENT_DIR = join(project, ".pi");
-		writeProjectSettings({ contextCeiling: 0.6 });
-		expect(resolvePenpiConfig().contextCeiling).toBeCloseTo(0.6);
+		writeProjectSettings({ displayBriefing: true });
+		expect(resolvePenpiConfig().displayBriefing).toBe(true);
 		expect(errors).toEqual([]);
 	});
 });
@@ -244,61 +223,17 @@ describe("value parsing (briefing item 9)", () => {
 	afterEach(() => errorSpy.mockRestore());
 
 	it("treats an empty environment variable as unset", () => {
-		// `export PENPI_CONTEXT_CEILING=` used to read as 0, then clamp to 0.01: prune on every call.
-		for (const k of [
-			"PENPI_CONTEXT_CEILING",
-			"PENPI_CONTEXT_FLOOR",
-			"PENPI_EMERGENCY_COMPACTION_RUNS",
-			"PENPI_SAVE_CONTEXT_ON_SHUTDOWN",
-			"PENPI_INJECT_BRIEFING",
-			"PENPI_DISPLAY_BRIEFING",
-		]) {
+		// `export PENPI_SAVE_CONTEXT_ON_SHUTDOWN=` must not override the setting.
+		for (const k of ["PENPI_SAVE_CONTEXT_ON_SHUTDOWN", "PENPI_INJECT_BRIEFING", "PENPI_DISPLAY_BRIEFING"]) {
 			process.env[k] = " ";
 		}
 		const settings = {
-			contextCeiling: 0.6,
-			contextFloor: 0.3,
-			emergencyCompactionRuns: 30,
 			saveContextOnShutdown: true,
 			injectBriefing: false,
 			displayBriefing: true,
 		};
 		expect(resolvePenpiConfig(settings)).toEqual(settings);
 		expect(errors).toEqual([]);
-	});
-
-	it("uses only finite numbers, from either source", () => {
-		const bad = { contextCeiling: "0.6", contextFloor: Number.NaN, emergencyCompactionRuns: "abc" } as never;
-		expect(resolvePenpiConfig(bad)).toEqual(resolvePenpiConfig({}));
-		process.env.PENPI_CONTEXT_CEILING = "Infinity";
-		process.env.PENPI_EMERGENCY_COMPACTION_RUNS = "12abc";
-		const c = resolvePenpiConfig({ contextCeiling: 0.6, emergencyCompactionRuns: 30 });
-		expect(c.contextCeiling).toBe(0.6);
-		expect(c.emergencyCompactionRuns).toBe(30);
-		for (const v of Object.values(resolvePenpiConfig(bad)))
-			if (typeof v === "number") expect(Number.isFinite(v)).toBe(true);
-	});
-
-	it("rejects a ceiling or floor above 1 instead of clamping it", () => {
-		// 75 meant 75%; clamping it to 0.99 would let the window fill completely.
-		process.env.PENPI_CONTEXT_CEILING = "75";
-		const fromEnv = resolvePenpiConfig({ contextCeiling: 0.6 });
-		expect(fromEnv.contextCeiling).toBe(0.6);
-		const fromSettings = resolvePenpiConfig({ contextFloor: 50 });
-		expect(fromSettings.contextFloor).toBe(resolvePenpiConfig({}).contextFloor);
-		expect(errors.some((e) => e.includes("PENPI_CONTEXT_CEILING") && e.includes("75"))).toBe(true);
-		expect(errors.some((e) => e.includes("contextFloor") && e.includes("50"))).toBe(true);
-	});
-
-	it("still accepts 1 and clamps it, as before", () => {
-		expect(resolvePenpiConfig({ contextCeiling: 1 }).contextCeiling).toBe(0.99);
-		expect(errors).toEqual([]);
-	});
-
-	it("reports an unparseable value by name", () => {
-		process.env.PENPI_CONTEXT_FLOOR = "half";
-		resolvePenpiConfig({});
-		expect(errors).toEqual([expect.stringContaining("PENPI_CONTEXT_FLOOR")]);
 	});
 
 	it("ignores a non-boolean setting where a boolean is expected and warns", () => {

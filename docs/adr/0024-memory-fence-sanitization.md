@@ -9,6 +9,12 @@
 > to the start of a run. Replacement is still character-for-character, but normalization can
 > change the length of text that contains compatibility forms or format characters.
 
+> **Amended (0.5.0, [ADR 0032](0032-context-engine.md)).** The briefing is a system prompt section
+> now. The sanitizer still runs, and the memory it returns is then JSON-encoded on one line (with
+> `<`, `>`, `&` and U+2028/U+2029 escaped) between the BEGIN and END fences, after a line saying it
+> is reference data. The ORIENTATION and RECENT REFLECTION fences became the JSON keys
+> `orientation` and `recent_reflection`; the sanitizer still neutralizes all five labels.
+
 ## Context
 
 `session_start` orientation ([ADR 0004](0004-three-tier-memory.md)) injects Penfield

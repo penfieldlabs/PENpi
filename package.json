@@ -35,7 +35,9 @@
 		"eval": "npm run eval --workspace=@earendil-works/pi-evals --",
 		"profile:tui": "node scripts/profile-coding-agent-node.mjs --mode tui",
 		"profile:rpc": "node scripts/profile-coding-agent-node.mjs --mode rpc",
-		"test": "npm run test:scripts && npm run test --workspaces --if-present",
+		"test": "npm run test:scripts && npm run test --workspaces --if-present && npm run test:context-engine",
+		"test:context-engine": "cd packages/coding-agent && vitest --run --config test/suite/context-engine/vitest.config.ts",
+		"setup:tokenizers": "packages/coding-agent/test/suite/context-engine-e2/setup-tokenizers.sh",
 		"test:scripts": "node --test scripts/*.test.mjs scripts/*.test.ts",
 		"test:mcp-conformance": "node packages/coding-agent/test/mcp-conformance/run.ts",
 		"version:patch": "npm version patch --workspaces --no-git-tag-version --no-workspaces-update && node scripts/sync-versions.js && npm install --package-lock-only --ignore-scripts",
@@ -71,17 +73,17 @@
 	"engines": {
 		"node": ">=22.19.0"
 	},
-	"version": "0.4.1",
+	"version": "0.5.0",
 	"overrides": {
 		"protobufjs": "7.6.6",
 		"hono": "4.13.13",
-		"nanoid": "3.3.18",
+		"nanoid": "3.3.20",
 		"rimraf": "6.1.2",
 		"gaxios": {
 			"rimraf": "6.1.2"
 		},
 		"@earendil-works/gondolin": {
-			"undici": "6.29.0"
+			"undici": "6.29.1"
 		}
 	}
 }

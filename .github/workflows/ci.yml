@@ -27,7 +27,8 @@ jobs:
     # Observed runs are 3-9 minutes, so 30 absorbs a cold cache or a slow runner
     # while still failing in a useful timeframe. The apt step carries its own
     # tighter cap below, since that is the one that has actually stalled.
-    timeout-minutes: 30
+    # 0.5.0 added the context engine suite (about 7 minutes on 2 cores): 40.
+    timeout-minutes: 40
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -107,5 +108,42 @@ jobs:
       - name: Browser smoke check
         run: npm run check:browser-smoke
 
+      # The context engine suite (part of npm test) counts with a real tokenizer (o200k_base): installs
+      # it from the lockfile next to the script, plus the GLM tokenizer files from huggingface.co at the
+      # pinned revision 91b69215, each checked by SHA-256 (E2 uses both).
+      - name: Context engine tokenizers
+        timeout-minutes: 10
+        run: npm run setup:tokenizers
+
       - name: Test
         run: npm test
+
+  # The context engine is a plain Pi extension: its suite must pass against stock upstream Pi at the recorded
+  # base, without PENpi's core patches (ADR 0032). The script checks the base out as a worktree, copies the
+  # engine and the suite in, builds upstream offline with the fork's committed model data, and runs the suite.
+  engine-on-upstream:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The upstream base commit, reachable through the recorded upstream merge.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Context engine tokenizers
+        timeout-minutes: 10
+        run: npm run setup:tokenizers
+
+      - name: Engine suite on stock upstream Pi
+        run: scripts/engine-suite-upstream.sh

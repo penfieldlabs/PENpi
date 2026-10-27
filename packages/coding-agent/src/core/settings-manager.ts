@@ -935,9 +935,9 @@ export class SettingsManager {
 	}
 
 	getCompactionEnabled(): boolean {
-		// PENpi fork default: routine compaction OFF. PENpi replaces threshold
-		// compaction with FIFO context management. Overflow recovery in
-		// _checkCompaction runs regardless of this setting. See ADR 0023.
+		// PENpi fork default: compaction OFF. PENpi's context engine manages the
+		// context window and never summarizes; it refuses to run with compaction
+		// on. See ADR 0032.
 		return this.settings.compaction?.enabled ?? false;
 	}
 

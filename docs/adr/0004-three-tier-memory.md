@@ -3,6 +3,10 @@
 - Status: Accepted
 - Date: 2026-06-21
 
+> **Amended (0.5.0).** Tier 1 is now the context engine's window ([0032](0032-context-engine.md)),
+> which replaces FIFO. What leaves the window stays in the session and is reachable with
+> `context_search` and `context_recall`; the header after a cut carries the user's earlier messages.
+
 ## Context
 
 With compaction removed ([0003](0003-fifo-replaces-compaction.md)), we need an explicit

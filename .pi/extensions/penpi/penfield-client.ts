@@ -379,7 +379,7 @@ export interface PenfieldClientOptions {
  * extension's package.json — pinned by a test, because a hardcoded literal here
  * silently misreports the client version to the server as the release moves on.
  */
-export const PENPI_VERSION = "0.4.1";
+export const PENPI_VERSION = "0.5.0";
 
 export class PenfieldClient {
 	private readonly cfg: PenfieldConfig;

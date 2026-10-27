@@ -6,6 +6,181 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-10-27
+
+### Breaking
+- **PENpi refuses to run with `compaction.enabled: true` ([ADR 0032]).** The context engine
+  replaces compaction and cannot work next to it, so with the setting `true` PENpi shows an error
+  and shuts the session down before any model request. PENpi 0.4.1 accepted the setting.
+  Migration: remove `compaction.enabled` from your settings, or set it to `false` (the fork's
+  default with the setting unset is off).
+- **Without the PENpi extension, Pi has neither compaction nor overflow recovery.** Compaction
+  stays off by default in the fork, and the 0.4 patch that let Pi recover from an overflow with
+  compaction off ([ADR 0023]) is gone: the engine does that recovery now. Run PENpi with its
+  extension, or turn compaction on when running the fork without it.
+
+### Changed
+- **The context engine replaces FIFO ([ADR 0032]).** The model sees a persistent window that
+  is cut above 75% of the input budget, down to 45%, and kept stable between cuts, which keeps
+  the provider's prompt cache. A header after each cut says what left the window, and carries
+  the user's earlier messages and the model's working notes (`context_notes`). `context_search`
+  and `context_recall` find and read what left. Nothing is summarized or deleted. Estimates
+  follow what Pi serializes for each API and are calibrated per model. Window and output limits
+  are learned from errors, length stops and silent truncation, and `/penpi doctor` shows them.
+  Overflow and output-limit stops recover without compaction. See
+  [docs/CONTEXT_ENGINE.md](docs/CONTEXT_ENGINE.md). In the PENpi-bench release gate on 2026-10-26,
+  measured on RC5, which differs from this release only by the tool-call repair below: on cost,
+  the billed cost per filler step was about the same as stock Pi's ($0.0038 against $0.0037), so
+  the engine is cost-neutral per step, not a saving. The lower cost per unit ($0.094 against
+  $0.138, 0.68 of stock's) comes from stock running 34.0 filler steps to reach its three
+  compactions against the engine's 18.8 to its three cuts. The verdict was PASS, no sign of harm,
+  under decision v3, with v2 and v1 alike, on 29 of 30 pairs. The release candidate recalled 278
+  of 290 facts exactly, followed all rules in 56 of 58 tasks, completed 58 of 58, and made no
+  compaction and no summarization request. In that run, five stock sessions' compaction summaries
+  replaced those sessions' exact values with wrong ones (none did in the earlier run on
+  2026-10-18), so we don't quote a single day's gap against stock. The repair leaves every one of
+  the 14,548 bench requests byte-identical.
+- **`context_search` finds a tool result by its call's arguments**, such as the path a read
+  took or the command a bash call ran, and a hit names the result. In the PENpi-bench release
+  gate on 2026-10-26, measured on RC5 (the 0.5.0 code without the tool-call repair), the release
+  candidate recalled 115 of 116 file and tool-output facts. An earlier run on a different day, before this change, recalled 104 of 120.
+  The result is consistent with the change, not proof of it.
+- **Planning is capped at 200,000 tokens (`windowCeiling`).** A model with a larger window, such
+  as a 1M-token model, is planned as if it had 200,000; set `windowCeiling` (or `0` for no cap)
+  or a per-model `limitOverrides` entry to change it.
+- **The requested output is capped** to what the window leaves after the input. A model that
+  declares no output limit (or an implausible one) is asked for at most 16,384 tokens.
+- **A model with no declared context window is planned at 32,768 tokens** (it was compacted
+  every so many runs, [ADR 0025]); a `limitOverrides` entry sets its real window.
+- **A manual `/compact` moves the window forward** instead of summarizing, and **`/tree`
+  summaries are replaced by a fixed notice**: no LLM summary is ever requested.
+- **The length continuation is a hidden message** (0.4 sent it as a user message). After a
+  stop that spent the whole output limit on reasoning, the model is asked for the answer
+  directly (`reasoningOnlyContinuation`), and the turn goes on instead of ending. In the
+  PENpi-bench release gate on 2026-10-26, measured on RC5 (the 0.5.0 code without the tool-call
+  repair), the release candidate had 11 such stops: the next response was a tool call 6 times and an answer 4 times.
+  After the other one, the provider rate-limited the next three requests, and the turn went on once
+  Pi's retry got through. Stock Pi's 11 length stops each ended the step.
+- **A new status line** shows the window the engine plans against, the last request against the
+  cut threshold, the number of cuts and the calibration ratio.
+- `/penpi doctor` and `/penpi reset-limits` report and clear what the engine learned.
+- **`replayedReasoning: "ignored"` is for providers that do not count the reasoning Pi
+  replays.** Set it only on evidence. On a provider that does count it, requests run up to about
+  12% over budget: in the E2 misconfigured runs, 5 of 24 went over the 1.02 x budget limit, the
+  largest at 1.12 x budget, all on 32k models, with no rejections. The engine checks the setting
+  against the provider's reported usage, warns, and `/penpi doctor` recommends `"counted"`.
+- **The orientation briefing is part of the system prompt ([ADR 0032]).** PENpi used to send it
+  as a message at session start, which the engine's first cut would remove from view. It is now
+  the system prompt's `<penpi-memory>` section. It is byte-stable within a session: PENpi reads
+  Penfield again after each run, and a changed briefing reaches the system prompt only at the
+  engine's next cut, so the provider's prompt cache holds between cuts. The memory is passed as
+  data: fenced, JSON-encoded on one line (with `<`, `>` and `&` escaped, capped at 64,000
+  characters per text as encoded), after a line saying it is reference data recalled from
+  Penfield, some of it written by other agents or copied from the web, and not instructions.
+  `displayBriefing` shows it as a notification. A resumed 0.4 session's briefing messages stay in
+  the session but are neither sent nor pinned.
+- **The memory section is capped in tokens.** Escaped or CJK memory can be many more tokens than
+  its characters suggest, and the engine cannot cut the system prompt, so the section stays within
+  20% of the planning window and at most 24,000 tokens. Longer memory is cut, with a note saying
+  how much was left out. On a 32k model that is about 6,400 tokens.
+- **The memory section shrinks with the window.** After switching to a model with a smaller
+  window, or when the engine learns that the provider's window is smaller than declared, the memory
+  section is cut to the new cap before the next request, so the first request on the smaller window
+  fits. On a model whose window does not change, nothing changes. If even the system prompt does not
+  fit the window, PENpi stops before sending the request and says so.
+- **Smaller session files.** A refresh records a hash and the length of the memory it read, not the
+  text, and a cut records the system prompt sections only when they change. Otherwise a setup
+  whose memory changes after most runs would add 100 KB or more to the session file per run.
+  `search_transcript` no longer returns these state entries, and neither it nor `context_search`
+  returns a resumed 0.4 session's briefing messages, so memory text never comes back as tool output
+  outside the fence.
+- **`/penpi login` during a session** keeps the system prompt (and the provider's prompt cache)
+  until the engine's next cut, where the new memory takes effect.
+- **A provider switch behind a router is no longer read as silent truncation.** OpenRouter can
+  move a session between upstream providers, which count the same request differently. The
+  engine now reads which provider served each response and judges each provider's responses
+  against that provider's own, so the session keeps its window and a provider that truncates is
+  still detected. The engine log shows each switch. A switch still loses the prompt cache; a provider preference in
+  `models.json` keeps a session on one provider. See
+  [docs/CONTEXT_ENGINE.md](docs/CONTEXT_ENGINE.md#routers-such-as-openrouter).
+- **Exit waits at most 2 seconds for a memory read still running**, then drops it; the read
+  writes nothing. The exit checkpoint (`save_context`, when `saveContextOnShutdown` is on) still
+  waits for Penfield, up to its request timeout (15 seconds by default,
+  `PENPI_PENFIELD_TIMEOUT_MS`), since a saved checkpoint matters more than a fast exit.
+
+### Added
+- `PENPI_ENGINE_LOG=<path>`: an opt-in engine log with one telemetry report per request. It
+  holds no prompt or message text.
+- `.pi/extensions/penpi/engine-only.ts`: the engine without Penfield memory, for benchmarks.
+- **Fault injection, a testing tool:** `PENPI_FAULTS` (for example
+  `overflow=every:7;length=at:3,9`) turns some successful responses into overflow errors,
+  output-limit errors or length stops, to exercise recovery. It is loud at startup and on every
+  fault, and `PENPI_PRODUCTION=1` refuses it. It is not a setting: `penpi.faults` and
+  `penpi.production` are ignored with a warning. See
+  [docs/CONTEXT_ENGINE.md](docs/CONTEXT_ENGINE.md#testing-with-fault-injection).
+- `npm run setup:tokenizers`: installs the pinned tokenizers the engine tests count with (needed
+  before `npm test`; see [CONTRIBUTING.md](CONTRIBUTING.md)).
+
+### Removed
+- FIFO, emergency compaction for models without a context window ([ADR 0025]), the
+  `agent_end` length continuation ([ADR 0028]; the engine continues length stops itself) and
+  the compaction-disabled recovery gating in `agent-session.ts` ([ADR 0023]; the file is upstream
+  again). ADRs 0003, 0023, 0025, 0027 and 0028 are superseded by [ADR 0032].
+- The settings `contextFloor`, `contextCeiling` and `emergencyCompactionRuns`, and their
+  environment variables. PENpi warns at startup when one is set and names it.
+
+### Fixed
+- **D26: after a cut, a model redid requests that were already done.** The header carries the
+  user's earlier messages, and one model read them as a list of open work: after cuts it edited a
+  finished article again, repeated an old cleanup and started an old discovery run. A single
+  sentence of the header said those requests were handled. Now every carried message shows the
+  day it was sent, and every one that is not the current request is labelled *earlier request,
+  already handled* (its rules still apply; its task is not done again unless the current request
+  asks for it). The label stays when a message is shown as a pointer or a range line. A line of
+  its own names the current request, whether it is pinned or still in the window, and says to stop
+  and report when it is done instead of starting requests from earlier messages. The header still
+  changes only at a cut.
+- **A resumed session gets the new header at its first request.** The header is stored with each
+  cut and replayed until the next one, so a session resumed after an upgrade kept its old header
+  for the rest of that window. Each cut now records the header's format, and a session whose
+  latest cut has an older one cuts once at its first request (logged as `header format 1 -> 2`).
+  Older messages leave the view there, as at any cut, and stay recallable.
+- **A provider tool call with no id and no name no longer breaks the session.** It is rare; it
+  has been seen with GLM-5.3-Flash through OpenRouter. Pi recorded the call and its "tool not
+  found" result with an empty id, and the provider then rejected every later request with a 400.
+  The engine now leaves such a call out of each request, with a short note in its place, and drops
+  its result. A call that has a name but no id keeps its result, under an id made from the saved
+  message. The session file is not changed, and requests without such a call are sent exactly as
+  before. 0.4.0 and upstream Pi still have the problem.
+
+### Security
+- Dependency updates for advisories published after 0.5.0's first candidates:
+  - `undici` 8.10.2 → **8.12.3**, in Pi's exact pin (`packages/coding-agent`) and PENpi's.
+    Every provider request goes through undici (Pi installs it as the global `fetch`), so this
+    closes a crash a malicious server could cause with excessive content encodings. Upstream
+    Pi still pins 8.10.2; the change is listed in `docs/UPSTREAM_PATCHES.txt`.
+  - `fast-uri` 3.1.9 (MCP SDK schema validation) and `body-parser` 2.4.0 (not loaded: only the
+    SDK's server modules use express).
+  - Development only: `vitest` 4.1.12 and `vite` 8.3.5, as upstream Pi did; the root `nanoid`
+    override follows to 3.3.20, which vite's `postcss` needs.
+  - The gondolin example extension takes gondolin 0.14.0 (as upstream Pi did), which drops
+    `node-forge`, and undici 6.29.1.
+- **Known, deferred to 0.5.1:** `zod` 3.25.76 (GHSA-mrhx-c7xc-m3w5, memory exhaustion when
+  validating oversized collections) has no 3.x fix. It validates data from any MCP server
+  configured in the global `mcp.json`: pi-mcp-adapter checks its own result-patch notification
+  with a zod 3 schema, and, for servers with UI resources, the visualization envelope of a tool
+  result. It also validates Penfield's messages, through PENpi's MCP SDK 1.x client. So only a
+  malicious or compromised configured server could exploit it. A repository cannot add servers
+  ([ADR 0026]), and nothing on the open network reaches it without a configured server. The
+  0.5.1 fix is zod 4 through a scoped override, because `sandbox-runtime` pins zod ^3.
+
+### Known issues
+- **With weaker models, an agent can go on with work that is already done, or that was off
+  task.** Seen with GLM-5.3-Flash after a long autonomous run. D26 marks earlier requests as
+  handled and names the current one, which removes the cue seen on Chief, but it does not stop
+  drift once it has started. The same happens when the model is given the full history, with no
+  cut at all.
+
 ## [0.4.1] — 2026-10-13
 
 ### Fixed

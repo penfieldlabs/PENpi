@@ -19,7 +19,10 @@ absolute checkout path short; the suite has known path-length sensitivity docume
 
 1. `npm run check` — biome + type-check (incl. `check:penpi` for the extension) +
    supply-chain checks.
-2. `npm test` — all workspace tests, including the PENpi extension suite (`npm test -w penpi`).
+2. `npm test` — all workspace tests, including the PENpi extension suite (`npm test -w penpi`)
+   and the context engine suite (`npm run test:context-engine`). Run `npm run setup:tokenizers`
+   once first: it installs the pinned tokenizers the engine suite counts with (npm registry and
+   huggingface.co, into a git-ignored directory of the repository).
 3. If you made an architectural/behavioral decision, add or update an ADR in
    [`docs/adr/`](docs/adr/) (see [ADR 0001](docs/adr/0001-record-architecture-decisions.md)).
 4. If you touched a live path (auth, hooks, MCP tools), verify it per
@@ -47,11 +50,15 @@ Husky runs the gate on commit; CI runs the same on push/PR.
 
 ## Testing strategy
 
-- **Pure logic** (FIFO planner, config precedence, MCP config, token manager, transcript
-  search): vitest unit tests against fixtures — never real sessions or live network.
+- **Pure logic** (config precedence, the context engine's settings, MCP config, token
+  manager, transcript search): vitest unit tests against fixtures — never real sessions or
+  live network.
 - **Hooks/orchestration**: tested hermetically via dependency injection — `penpiCore(pi, deps)`
   with a fake `pi` and a stub client (`index.test.ts`) drives automatic orientation,
-  `context` (FIFO), `session_before_compact`, and `session_shutdown`.
+  the `/penpi` command (including its routing to the engine), and `session_shutdown`.
+- **Context engine**: behaviour suites run each behaviour against a real Pi session with a
+  faux provider and a provider simulator, no keys needed
+  ([docs/CONTEXT_ENGINE.md](docs/CONTEXT_ENGINE.md#tests)).
 - **Live paths** (Penfield device login, GLM end-to-end, web search, transcript search,
   the persistence loop): verified manually per the test protocol, since they require
   external services. Keep these hermetic where possible; document where not.

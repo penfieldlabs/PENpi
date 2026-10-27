@@ -5,8 +5,8 @@
 # PENpi
 
 **PENpi is a fork of [Pi](https://pi.dev) that gives the coding agent persistent memory.**
-It replaces Pi's routine context *compaction* with **FIFO context management** backed by
-[Penfield](https://penfield.app) — so your work isn't summarized away as a matter of course.
+It replaces Pi's context *compaction* with the **context engine** and keeps durable memory
+in [Penfield](https://penfield.app) — so your work isn't summarized away.
 
 > Built on Pi by **Mario Zechner / Earendil** — see [Built on Pi](#built-on-pi).
 
@@ -14,12 +14,17 @@ It replaces Pi's routine context *compaction* with **FIFO context management** b
 
 Every coding agent loses context to compaction: when the window fills, an LLM
 summarizes the oldest messages and the detail is gone. PENpi takes a different path —
-three tiers of memory, none of which summarize your work away in normal operation:
+three tiers of memory, none of which summarize your work away:
 
-- **Tier 1 — Context window (FIFO):** the oldest messages silently roll off the back.
-  Pruning is *watermarked* (drop from a ceiling back down to a floor) so the session
-  rides in a healthy band instead of pinned near 100% — better for cost, and for the
-  many models that degrade past ~70–80% utilization.
+- **Tier 1 — Context window (the context engine):** when a request would cross 75% of
+  the input budget, the engine cuts at a turn boundary so it falls to 45%, and the oldest
+  messages leave the model's view. The cut persists, which keeps the provider's prompt
+  cache, and the session rides in a healthy band instead of pinned near 100%, which suits
+  the many models that degrade past ~70–80% utilization. On cost it is neutral, not a
+  saving: in the PENpi-bench release gate on 2026-10-26, measured on RC5 (the 0.5.0
+  code without the tool-call repair), the billed cost per filler step was about the same as stock Pi's ($0.0038 against $0.0037). A header after each cut carries your
+  earlier messages verbatim and says how to get the rest back
+  (`context_search` / `context_recall`). See [docs/CONTEXT_ENGINE.md](docs/CONTEXT_ENGINE.md).
 - **Tier 2 — Penfield:** curated, persistent memory the agent uses **deliberately**
   (`recall` / `store` / `connect` / `explore` / `reflect` / …). A knowledge graph that
   survives across sessions.
@@ -29,28 +34,36 @@ three tiers of memory, none of which summarize your work away in normal operatio
 Messages that leave the context window are still in the transcript verbatim and remain
 searchable; anything worth keeping durably belongs in Penfield.
 
-**The one exception.** FIFO prunes at *unit* granularity and always keeps the newest
-atomic unit (an assistant message plus its tool results). A single unit can therefore
-be too large for the window on its own — many parallel tool calls, or one enormous tool
-result. FIFO cannot shrink such a unit, so PENpi allows Pi's emergency **overflow**
-recovery to summarize it rather than hard-fail the turn. Routine threshold compaction
-stays off; this fires only when nothing else can save the session, and Pi emits
-compaction events when it does. See [ADR 0023](docs/adr/0023-overflow-compaction-escape-hatch.md).
+**No compaction exception.** The engine cancels every compaction request, overflow
+included. One tool result or user message may use at most 25% of the input budget, and
+the rest stays recallable. An overflow error is retried with a smaller window (at most 3
+times per run), and the engine learns the real window from it. A manual `/compact` moves
+the window forward instead of summarizing. See [ADR 0032](docs/adr/0032-context-engine.md).
 
 ## How it works
 
 PENpi is a Pi **extension** (`.pi/extensions/penpi/`) plus two fork-level defaults.
 
-**The automatic layer — six hooks:**
+**The automatic layer — memory hooks plus the context engine:**
 
 | Hook | What PENpi does |
 |------|-----------------|
-| `session_start` | Penfield `awaken()` + `reflect("recent")`, injected as an orientation briefing so the agent starts oriented |
-| `context` | FIFO watermark pruning before every LLM call |
-| `agent_end` | a response cut off at the output token limit gets up to 3 follow-ups asking the model to continue ([ADR 0028](docs/adr/0028-length-continuation.md)) |
-| `session_before_compact` | reason-aware: cancels routine `threshold` compaction (FIFO owns context); allows `overflow` and `manual` ([ADR 0023](docs/adr/0023-overflow-compaction-escape-hatch.md)) |
-| `agent_settled` | emergency compaction for a model that reports no context window, after a few settled runs ([ADR 0025](docs/adr/0025-compaction-fallback-without-fifo-window.md)) |
+| `session_start` | Penfield `awaken()` + `reflect("recent")`, built into an orientation briefing so the agent starts oriented |
+| `before_agent_start` | puts the briefing into the system prompt, so it stays in view after the context engine cuts |
+| `context` | keeps the shared Penfield token fresh before every LLM call |
 | `session_shutdown` | optional `save_context()` checkpoint, then disconnect |
+
+The context engine (`.pi/extensions/penpi/engine/`) registers its own hooks:
+
+| Hook | What the engine does |
+|------|----------------------|
+| `context_with_system` | plans every request: cuts at a turn boundary when it would cross 75% of the input budget, and adds the header |
+| `before_provider_request` | caps the requested output to what the window leaves |
+| `message_end`, `turn_end`, `agent_before_settle` | calibration, learned limits, overflow retries and up to 3 continuations after an output-limit stop |
+| `session_before_compact` | cancels every compaction; a manual `/compact` moves the window forward instead |
+| `session_before_tree` | a fixed notice instead of a `/tree` summary |
+
+See [docs/CONTEXT_ENGINE.md](docs/CONTEXT_ENGINE.md) for what the engine does and how to inspect it.
 
 **The conscious layer:** Penfield's 17 MCP tools are exposed to the model through
 [`pi-mcp-adapter`](https://github.com/nicobailon/pi-mcp-adapter), Pi's community MCP
@@ -66,7 +79,8 @@ The same adapter can wire an optional web-search backend. Search is deliberately
 PENpi core dependency or automatic install: choose a tested keyless, self-hosted, paid,
 or provider-native option in [Optional web search](docs/WEB_SEARCH.md).
 
-**Fork defaults:** compaction is **off by default** (PENpi replaces it); the Penfield
+**Fork defaults:** compaction is **off by default** (the context engine replaces it, and
+refuses to run while `compaction.enabled` is `true`); the Penfield
 MCP server is wired automatically.
 
 The automatic layer keeps memory effortless; the conscious layer makes it available
@@ -142,19 +156,17 @@ with a warning, so a repository you open cannot reconfigure PENpi.
 ```json
 {
   "penpi": {
-    "contextCeiling": 0.8,
-    "contextFloor": 0.2,
-    "saveContextOnShutdown": false
+    "saveContextOnShutdown": false,
+    "windowCeiling": 200000
   }
 }
 ```
 
-FIFO prunes when the conversation would cross `contextCeiling` of the window and keeps
-the newest messages up to `contextFloor` of the window, counted with Pi's chars/4 token
-estimate. Dense content (code, CJK, base64) can cost several real tokens per estimated
-token, so the gap between the two is what absorbs it: the 0.2 / 0.8 defaults hold a 4x
-undercount. Raise the floor to keep more history if your sessions are mostly prose;
-PENpi warns at startup when the floor is above 0.25, where a 4x undercount no longer fits.
+The context engine's settings live in the same `penpi` block. `windowCeiling` (default
+200,000) caps the window the engine plans against; the cut band, the per-unit cap and the
+other engine settings are listed in [docs/CONTEXT_ENGINE.md](docs/CONTEXT_ENGINE.md#settings).
+PENpi 0.4's FIFO settings (`contextFloor`, `contextCeiling`, `emergencyCompactionRuns`)
+are no longer read; PENpi warns at startup when one is set.
 
 ## Run
 
@@ -163,7 +175,7 @@ PENpi is model-agnostic — any provider Pi supports. From any project directory
 ```bash
 cd ~/my-project
 export ZAI_API_KEY=…                      # or your provider's key
-pi --provider zai --model glm-5.2        # PENpi core: memory + FIFO
+pi --provider zai --model glm-5.2        # PENpi core: memory + context engine
 # add --penpi-raw to diagnose behavior without automatic orientation
 # resume a session created elsewhere:  pi … --session <id>
 ```
@@ -189,8 +201,9 @@ Quick checks, once you already have a built tree:
 
 ```bash
 npm run check          # lint, format, type check (Pi's gate)
-npm test               # all workspace tests, including the PENpi extension suite
+npm test               # all workspace tests, the PENpi extension suite and the context engine suite
 npm test -w penpi      # just the PENpi extension tests
+npm run test:context-engine   # just the context engine suite
 ```
 
 **From a clean checkout, build first.** `@earendil-works/pi-coding-agent` resolves
@@ -202,6 +215,7 @@ gate is:
 ```bash
 npm ci                 # install from the lockfile (see note below)
 npm run build          # required — creates the dist/ that check:penpi and the penpi suite resolve
+npm run setup:tokenizers   # once: the pinned tokenizers the context engine suite counts with
 npm run check
 npm test
 npm test -w penpi
@@ -209,6 +223,11 @@ npm audit --omit=dev   # production advisories
 npm audit              # including dev advisories
 npm audit signatures --omit=dev   # registry signatures/attestations
 ```
+
+**`npm test` needs the tokenizers.** The context engine suite counts tokens with real
+tokenizers (o200k_base and GLM-5.3-Flash). `npm run setup:tokenizers` installs them once, from
+the npm registry and huggingface.co, into a git-ignored directory of the repository, pinned by
+hash; without it the suite stops with a message naming that command.
 
 > Install with `npm ci`, not `npm install`. Regenerating the lockfile from scratch
 > currently crashes npm 10.x in this workspace (`Cannot read properties of null (reading
@@ -219,15 +238,18 @@ fixed build and test inputs and does not depend on live provider catalogs. Maint
 refresh the snapshot deliberately with `npm run generate:models`, review the generated
 diff, run the full gate, and commit the catalog update as one change.
 
-The extension is a workspace with a [Vitest](https://vitest.dev) suite covering FIFO
-pruning, config precedence, MCP config generation, token management, and transcript
-search. `npm run check` also type-checks and lints the extension (`check:penpi`). See
+The extension is a workspace with a [Vitest](https://vitest.dev) suite covering config
+precedence, the context engine's settings and entry points, MCP config generation, token
+management, and transcript search. The engine's behaviour suites run against a real Pi
+session ([docs/CONTEXT_ENGINE.md](docs/CONTEXT_ENGINE.md#tests)). `npm run check` also
+type-checks and lints the extension (`check:penpi`). See
 [README.pi.md](README.pi.md) for Pi's full development and supply-chain notes (all of
 which PENpi follows: exact-pinned direct deps, lockfile guard, generated install lock, `npm audit`).
 
 ## Documentation
 
 - **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — the three-tier memory + two-layer design.
+- **[docs/CONTEXT_ENGINE.md](docs/CONTEXT_ENGINE.md)** — how the context window is managed, its settings and diagnostics.
 - **[docs/PROMPT_LAYERS.md](docs/PROMPT_LAYERS.md)** — everything the model sees, including orientation and raw diagnostic mode.
 - **[docs/adr/](docs/adr/)** — Architecture Decision Records (the "why" behind every choice).
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** — workflow, the gate, ADR/test expectations.
@@ -248,8 +270,8 @@ Pi is the minimalist, self-extensible coding agent by **Mario Zechner**
 ([@badlogicgames](https://x.com/badlogicgames)) at **[Earendil](https://earendil.com)**.
 Everything that makes PENpi possible — the agent harness, the runtime, the unified
 multi-provider AI layer, the TUI, and especially the **extension system** — is Pi's
-work. The per-LLM-call `context` hook that FIFO depends on is unique to Pi; it is *why*
-we chose to build on it. PENpi adds only the Penfield memory layer.
+work. The per-LLM-call context hooks the context engine depends on are unique to Pi; they are
+*why* we chose to build on it. PENpi adds the Penfield memory layer and the context engine.
 
 - **Upstream:** <https://github.com/earendil-works/pi>
 - **Website & docs:** <https://pi.dev>

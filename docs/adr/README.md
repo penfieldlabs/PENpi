@@ -15,7 +15,7 @@ the same PR (see [CONTRIBUTING.md](../../CONTRIBUTING.md)).
 |------|-------|--------|
 | [0001](0001-record-architecture-decisions.md) | Record architecture decisions | Accepted |
 | [0002](0002-penpi-is-a-fork-of-pi.md) | PENpi is a fork of Pi | Accepted |
-| [0003](0003-fifo-replaces-compaction.md) | Replace compaction with FIFO context management | Accepted |
+| [0003](0003-fifo-replaces-compaction.md) | Replace compaction with FIFO context management | Superseded by 0032 |
 | [0004](0004-three-tier-memory.md) | Three-tier memory model | Accepted |
 | [0005](0005-penfield-over-mcp.md) | Integrate Penfield over MCP, not a custom REST client | Accepted |
 | [0006](0006-two-layer-penfield-access.md) | Two-layer Penfield access (thin client + adapter) | Accepted |
@@ -34,12 +34,13 @@ the same PR (see [CONTRIBUTING.md](../../CONTRIBUTING.md)).
 | [0020](0020-pin-managed-package-installs.md) | Pin managed package installs exactly | Accepted |
 | [0021](0021-optional-user-selected-web-search.md) | Optional, user-selected web search | Accepted |
 | [0022](0022-raw-diagnostic-boundary.md) | Raw mode is an orientation diagnostic | Accepted |
-| [0023](0023-overflow-compaction-escape-hatch.md) | Overflow compaction is an escape hatch | Accepted |
+| [0023](0023-overflow-compaction-escape-hatch.md) | Overflow compaction is an escape hatch | Superseded by 0032 |
 | [0024](0024-memory-fence-sanitization.md) | Neutralize forged memory fences by pattern removal | Accepted |
-| [0025](0025-compaction-fallback-without-fifo-window.md) | Emergency compaction when the model has no context window | Accepted |
+| [0025](0025-compaction-fallback-without-fifo-window.md) | Emergency compaction when the model has no context window | Superseded by 0032 |
 | [0026](0026-global-only-configuration.md) | PENpi and its MCP adapter take configuration from global files only | Accepted |
-| [0027](0027-slope-free-fifo-budget.md) | The FIFO prune budget is floor × window, with no learned calibration | Accepted |
-| [0028](0028-length-continuation.md) | Continue responses cut off at the output token limit | Accepted |
+| [0027](0027-slope-free-fifo-budget.md) | The FIFO prune budget is floor × window, with no learned calibration | Superseded by 0032 |
+| [0028](0028-length-continuation.md) | Continue responses cut off at the output token limit | Superseded by 0032 |
 | [0029](0029-sanitizer-normalization-and-bounds.md) | Normalize and bound memory text before fence sanitization | Accepted |
 | [0030](0030-strict-config-values.md) | Validate configuration values instead of coercing them | Accepted |
 | [0031](0031-upstream-ancestry-and-patch-manifest.md) | Record upstream ancestry and list every patch against it | Accepted |
+| [0032](0032-context-engine.md) | Replace FIFO with the context engine | Accepted |

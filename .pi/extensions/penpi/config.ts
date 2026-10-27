@@ -31,13 +31,17 @@ export interface PenfieldConfig {
 	scope: string;
 }
 
-/** customType of the orientation briefing, injected at session_start. */
+/** customType of the orientation briefing message PENpi 0.4 sent at session_start (still in older sessions). */
 export const BRIEFING_CUSTOM_TYPE = "penpi-briefing";
 
-/** PENpi behavior knobs (FIFO watermarks, shutdown, adapter lifecycle). */
+/**
+ * The system prompt section that carries the orientation briefing (the PENpi protocol and Penfield's
+ * awaken + reflect), so it stays in view after the context engine cuts (ADR 0032).
+ */
+export const BRIEFING_SECTION = "penpi-memory";
+
+/** PENpi behavior knobs (shutdown, orientation). The context engine's settings are in engine/settings.ts. */
 export interface PenpiConfig {
-	contextCeiling: number;
-	contextFloor: number;
 	saveContextOnShutdown: boolean;
 	/** Advanced diagnostic control: inject automatic orientation into model context. */
 	injectBriefing: boolean;
@@ -47,21 +51,13 @@ export interface PenpiConfig {
 	 * orientation; this decides whether the user also sees it.
 	 */
 	displayBriefing: boolean;
-	/**
-	 * Emergency fallback: consecutive settled agent runs without a valid context
-	 * window (FIFO inactive) before PENpi forces a compaction. See ADR 0025.
-	 */
-	emergencyCompactionRuns: number;
 }
 
 interface PenpiSettings {
 	penfield?: { env?: string; apiKey?: string; apiKeyFile?: string; clientId?: string; tokenStore?: string };
-	contextCeiling?: number;
-	contextFloor?: number;
 	saveContextOnShutdown?: boolean;
 	injectBriefing?: boolean;
 	displayBriefing?: boolean;
-	emergencyCompactionRuns?: number;
 	mcpLifecycle?: string;
 }
 
@@ -90,7 +86,7 @@ function piAgentDir(): string {
  * .pi/settings.json is ignored, with a warning so a user who put settings there
  * learns why they have no effect.
  */
-function loadPenpiSettings(): PenpiSettings {
+export function loadPenpiSettings(): PenpiSettings {
 	const globalPath = resolve(piAgentDir(), "settings.json");
 	const projectPath = resolve(process.cwd(), ".pi", "settings.json");
 	if (projectPath !== globalPath && readJson(projectPath)?.penpi !== undefined) {
@@ -106,36 +102,6 @@ function loadPenpiSettings(): PenpiSettings {
 function envValue(name: string): string | undefined {
 	const v = process.env[name]?.trim();
 	return v ? v : undefined;
-}
-
-/**
- * A number from the first source that holds a usable one: the environment variable
- * (parsed), then the setting (which must already be a number — a JSON string is not
- * accepted), then the default. Non-finite values are skipped, and so are values
- * above `max` (for a fraction, 75 meant 75%: clamping it to 0.99 would let the
- * window fill). A skipped value that was actually set is reported by name.
- */
-function numberSetting(
-	envName: string,
-	settingName: string,
-	setting: unknown,
-	fallback: number,
-	max = Number.POSITIVE_INFINITY,
-): number {
-	const candidates: Array<[string, unknown]> = [
-		[envName, envValue(envName)],
-		[`penpi.${settingName}`, setting],
-	];
-	for (const [source, raw] of candidates) {
-		if (raw === undefined || raw === null) continue;
-		const n =
-			typeof raw === "number" ? raw : typeof raw === "string" && source === envName ? Number(raw) : Number.NaN;
-		if (Number.isFinite(n) && n <= max) return n;
-		console.error(
-			`[PENpi] ignoring ${source}=${JSON.stringify(raw)}: ${Number.isFinite(n) ? `must be at most ${max}` : "not a finite number"}.`,
-		);
-	}
-	return fallback;
 }
 
 /** A boolean from the environment variable (`parse`), then the setting (booleans only), then the default. */
@@ -154,14 +120,7 @@ function booleanSetting(
 	return typeof setting === "boolean" ? setting : fallback;
 }
 
-function clamp01(n: number): number {
-	return Math.min(0.99, Math.max(0.01, n));
-}
-
 export function resolvePenpiConfig(settings: PenpiSettings = loadPenpiSettings()): PenpiConfig {
-	const ceiling = clamp01(numberSetting("PENPI_CONTEXT_CEILING", "contextCeiling", settings.contextCeiling, 0.8, 1));
-	let floor = clamp01(numberSetting("PENPI_CONTEXT_FLOOR", "contextFloor", settings.contextFloor, 0.2, 1));
-	if (floor >= ceiling) floor = Math.max(ceiling / 2, ceiling - 0.1); // floor must sit below ceiling
 	const truthy = (v: string) => v === "true" || v === "1";
 	// Default OFF (opt-in): only save a checkpoint on shutdown when explicitly enabled.
 	const save = booleanSetting(
@@ -187,25 +146,10 @@ export function resolvePenpiConfig(settings: PenpiSettings = loadPenpiSettings()
 		settings.displayBriefing,
 		false,
 	);
-	// At least one run of grace; a non-integer rounds down.
-	const emergencyCompactionRuns = Math.max(
-		1,
-		Math.floor(
-			numberSetting(
-				"PENPI_EMERGENCY_COMPACTION_RUNS",
-				"emergencyCompactionRuns",
-				settings.emergencyCompactionRuns,
-				15,
-			),
-		),
-	);
 	return {
-		contextCeiling: ceiling,
-		contextFloor: floor,
 		saveContextOnShutdown: save,
 		injectBriefing,
 		displayBriefing,
-		emergencyCompactionRuns,
 	};
 }
 
