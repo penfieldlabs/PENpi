@@ -189,6 +189,48 @@ describe("tool-call repair (RC6)", () => {
 		expect(contentOf(messages[1])).toEqual([{ type: "text", text: noteNoId("bash") }]);
 	});
 
+	const system = (): AgentMessage => ({ role: "system", content: "", timestamp: 3 }) as AgentMessage;
+
+	it("a system message between a no-name call with an id and its result: the result is still dropped", () => {
+		const input = [
+			user("Go."),
+			assistant([{ type: "text", text: "Calling." }, call("c1", "")]),
+			system(),
+			result("c1", "", "Tool  not found", true),
+		];
+		const { messages } = repairToolCalls(input);
+		expect(messages).toHaveLength(3);
+		expect(contentOf(messages[1])).toEqual([
+			{ type: "text", text: "Calling." },
+			{ type: "text", text: NOTE_NO_NAME },
+		]);
+		expect(messages[2]).toBe(input[2]);
+	});
+
+	it("a system message between a named call with no id and its result: the pair keeps its output", () => {
+		const input = [user("Go."), assistant([call("", "bash")], 9), system(), result("", "bash", "ls output")];
+		const { messages, kinds } = repairToolCalls(input);
+		expect(messages).toHaveLength(4);
+		expect(contentOf(messages[1])).toEqual([call("penpi_9_0", "bash")]);
+		expect(messages[2]).toBe(input[2]);
+		expect((messages[3] as { toolCallId: string }).toolCallId).toBe("penpi_9_0");
+		expect(contentOf(messages[3])[0].text).toBe("ls output");
+		expect(kinds).toEqual(["no-id"]);
+	});
+
+	it("a no-name call that repeats a valid call's id drops its own result, not the valid one", () => {
+		const input = [
+			user("Go."),
+			assistant([call("c1", "read"), call("c1", "")]),
+			result("c1", "read", "file text"),
+			result("c1", "", "Tool  not found", true),
+		];
+		const { messages } = repairToolCalls(input);
+		expect(messages).toHaveLength(3);
+		expect(contentOf(messages[1])).toEqual([call("c1", "read"), { type: "text", text: NOTE_NO_NAME }]);
+		expect(messages[2]).toBe(input[2]);
+	});
+
 	it("rule 3: a result with an empty id that answers no call is dropped", () => {
 		const input = [user("Go."), assistant([call("call_1", "read")]), result("call_1", "read"), result("", "read")];
 		const { messages, kinds } = repairToolCalls(input);

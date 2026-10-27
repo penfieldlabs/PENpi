@@ -33,7 +33,8 @@ export function repairedId(message: AssistantMessage, callIndex: number): string
 /**
  * The messages with every tool call that has no name or no id repaired. Pure: the output depends only on
  * `messages`, which are not changed, and the same array comes back when nothing needs a repair. A message's
- * results are the run of tool results right after it (Pi records them there, sequential and parallel). As in
+ * results are the run of tool results right after it (Pi records them there, sequential and parallel); a system
+ * message inside that run is skipped, as Pi's transformMessages does. As in
  * D16, calls with an empty id pair with results with an empty id first in, first out: the k-th with the k-th.
  * - Rule 1, no name (with or without an id): nothing ran. The calls become one note; their results are dropped.
  * - Rule 2, a real name and no id: the tool ran. The call and its paired result get the same id (`repairedId`).
@@ -70,13 +71,14 @@ export function repairToolCalls(messages: AgentMessage[]): { messages: AgentMess
 					: [],
 			),
 		);
-		// This message's results: those with an empty id in order (the FIFO queue), and the others by id.
+		// This message's results: those with an empty id in order (the FIFO queue), and the others with an id. A
+		// system message among them is skipped, as Pi's transformMessages holds it back until the results are in.
 		const emptyIdResults: number[] = [];
-		const byId = new Map<string, number>();
-		for (let j = i + 1; j < messages.length && messages[j].role === "toolResult"; j++) {
-			const id = (messages[j] as ToolResultMessage).toolCallId;
-			if (blank(id)) emptyIdResults.push(j);
-			else if (!byId.has(id)) byId.set(id, j);
+		const withId: number[] = [];
+		for (let j = i + 1; j < messages.length; j++) {
+			if (messages[j].role === "system") continue;
+			if (messages[j].role !== "toolResult") break;
+			(blank((messages[j] as ToolResultMessage).toolCallId) ? emptyIdResults : withId).push(j);
 		}
 		const content: AssistantMessage["content"] = [];
 		let noted = false;
@@ -92,7 +94,14 @@ export function repairToolCalls(messages: AgentMessage[]): { messages: AgentMess
 			if (blank(call.name)) {
 				if (!noted) content.push({ type: "text", text: NOTE_NO_NAME });
 				noted = true;
-				const own = at ?? byId.get(call.id);
+				// With an id, its result is the first with that id and no name (or the call's own): a valid call that
+				// repeats the id keeps its result.
+				const own =
+					at ??
+					withId.find((j) => {
+						const r = messages[j] as ToolResultMessage;
+						return r.toolCallId === call.id && (blank(r.toolName) || r.toolName === call.name) && !drop.has(j);
+					});
 				if (own !== undefined) drop.add(own);
 				kinds.add("no-name");
 				continue;
