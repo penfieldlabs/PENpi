@@ -31,9 +31,10 @@ export interface PrintModeOptions {
  * PENpi fork: the parts of the final answer of the run that started at `runStart`.
  *
  * The last assistant message, preceded by every earlier part it continues: an assistant
- * message that stopped at the output limit ("length") followed by the follow-up user
- * message queued in the same run (PENpi length continuation, ADR 0028). The walk stops at
- * anything else, so narration from earlier tool steps is not part of the answer.
+ * message that stopped at the output limit ("length") followed by the follow-up that asked
+ * it to continue in the same run (the context engine's hidden continuation message, or a
+ * queued user message; ADR 0032). The walk stops at anything else, so narration from
+ * earlier tool steps is not part of the answer.
  */
 function finalAnswerParts(messages: readonly AgentMessage[], runStart: number): AssistantMessage[] {
 	let last = messages.length - 1;
@@ -44,7 +45,10 @@ function finalAnswerParts(messages: readonly AgentMessage[], runStart: number): 
 	while (last - 2 > promptIndex) {
 		const followUp = messages[last - 1];
 		const previous = messages[last - 2];
-		if (followUp?.role !== "user" || previous?.role !== "assistant" || previous.stopReason !== "length") break;
+		const continues =
+			followUp?.role === "user" ||
+			(followUp?.role === "custom" && (followUp as { display?: boolean }).display === false);
+		if (!continues || previous?.role !== "assistant" || previous.stopReason !== "length") break;
 		parts.unshift(previous);
 		last -= 2;
 	}

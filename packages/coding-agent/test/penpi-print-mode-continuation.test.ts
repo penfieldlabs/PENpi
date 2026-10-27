@@ -1,5 +1,5 @@
 /**
- * Print mode with PENpi length continuation (ADR 0028), against the real AgentSession.
+ * Print mode with the context engine's length continuation (ADR 0032), against the real AgentSession.
  *
  * `pi -p` used to print only the last assistant message, so an answer continued after an
  * output-limit stop came out as its final part only. stdout must carry the complete final
@@ -10,21 +10,14 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { MAX_LENGTH_CONTINUATIONS, penpiCore } from "../../../.pi/extensions/penpi/index.ts";
+import { installPenpiEngine } from "../../../.pi/extensions/penpi/engine/entry.ts";
+import { resolveOptions } from "../../../.pi/extensions/penpi/engine/options.ts";
 import { runPrintMode } from "../src/modes/print-mode.ts";
 import { createHarnessWithExtensions, fauxModel, type Harness } from "./test-harness.ts";
 
-// Penfield is never authenticated here: orientation skips, only the run hooks matter.
-const penpi = (pi: any) =>
-	penpiCore(pi, {
-		makeClient: () =>
-			({
-				connected: false,
-				hasNonInteractiveAuth: () => false,
-				disconnect: async () => {},
-			}) as any,
-		ensureMcpEntry: () => "",
-	});
+// PENpi's context engine, as the extension installs it (default settings).
+const penpi = (pi: any) => void installPenpiEngine(pi, { registerCommand: true }, { settings: {}, env: {} });
+const MAX_LENGTH_CONTINUATIONS = resolveOptions({}).maxLengthContinuations;
 
 const cutOff = (text: string) => ({ text, stopReason: "length" as const, usage: { output: 16_384 } });
 
@@ -63,7 +56,7 @@ async function printMode(h: Harness, prompt: string) {
 	}
 }
 
-describe("print mode with PENpi length continuation", () => {
+describe("print mode with the context engine's length continuation", () => {
 	let h: Harness | undefined;
 	let agentDir: string;
 	let savedAgentDir: string | undefined;

@@ -13,7 +13,7 @@
 # Pi
 
 > **PENpi note:** this is upstream Pi's package README (v1.1.0), kept as published. PENpi is a
-> fork of Pi that adds Penfield persistent memory and FIFO context management as an extension in
+> fork of Pi that adds Penfield persistent memory and the context engine as an extension in
 > [`.pi/extensions/penpi`](../../.pi/extensions/penpi); see the [PENpi README](../../README.md).
 > Links and policies that point at earendil-works/pi refer to upstream Pi.
 

@@ -123,7 +123,7 @@ describe("AgentSession virtual models", () => {
 
 	it("routes the compact-and-retry after a truncated response as a retry", async () => {
 		const { harness, requests, reasons } = await createRoutedHarness(defaultRoute, {
-			// PENpi fork: routine compaction defaults to OFF (ADR 0023); enable it explicitly.
+			// PENpi fork: compaction defaults to off (ADR 0032); enable it explicitly.
 			settings: { compaction: { enabled: true, keepRecentTokens: 1, reserveTokens: 0 } },
 			extensionFactories: [
 				(pi) => {
@@ -228,7 +228,7 @@ describe("AgentSession virtual models", () => {
 
 	it("compacts before a request routed to a model with a smaller window", async () => {
 		const { harness, dispatched } = await createRoutedHarness(defaultRoute, {
-			// PENpi fork: routine compaction defaults to OFF (ADR 0023); enable it explicitly.
+			// PENpi fork: compaction defaults to off (ADR 0032); enable it explicitly.
 			settings: { compaction: { enabled: true, keepRecentTokens: 1, reserveTokens: 0 } },
 			extensionFactories: [
 				(pi) => {
@@ -264,7 +264,7 @@ describe("AgentSession virtual models", () => {
 				? { model: ctx.modelRegistry.find("faux", "small")!, thinkingLevel: "off" }
 				: defaultRoute(request, ctx);
 		const { harness, dispatched } = await createRoutedHarness(route, {
-			// PENpi fork: routine compaction defaults to OFF (ADR 0023); enable it explicitly.
+			// PENpi fork: compaction defaults to off (ADR 0032); enable it explicitly.
 			settings: { compaction: { enabled: true, keepRecentTokens: 1, reserveTokens: 0 } },
 			extensionFactories: [
 				(pi) => {
@@ -292,7 +292,8 @@ describe("AgentSession virtual models", () => {
 	});
 
 	it("projects the session once per request under a virtual selection", async () => {
-		const { harness } = await createRoutedHarness();
+		// PENpi fork: compaction defaults to off (ADR 0032); enable it explicitly.
+		const { harness } = await createRoutedHarness(defaultRoute, { settings: { compaction: { enabled: true } } });
 		harness.setResponses([
 			fauxAssistantMessage(fauxToolCall("echo", { text: "hi" }), { stopReason: "toolUse" }),
 			fauxAssistantMessage("done"),

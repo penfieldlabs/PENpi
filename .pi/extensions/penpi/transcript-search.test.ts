@@ -33,20 +33,20 @@ describe("searchTranscripts", () => {
 		expect(r.filesSearched).toBe(1);
 	});
 
-	it("searches custom_message entries (e.g. injected briefing)", async () => {
+	it("searches custom_message entries, but not 0.4 briefing messages (memory, outside the fence)", async () => {
 		const dir = fixtureDir({
 			"a.jsonl": [
 				JSON.stringify({
 					type: "custom_message",
 					customType: "penpi-briefing",
-					content: "orientation payload",
+					content: "orientation payload from Penfield",
 					timestamp: 5,
 				}),
+				JSON.stringify({ type: "custom_message", customType: "note", content: "orientation note", timestamp: 6 }),
 			],
 		});
 		const r = await searchTranscripts(dir, "orientation");
-		expect(r.matches).toHaveLength(1);
-		expect(r.matches[0].role).toBe("custom:penpi-briefing");
+		expect(r.matches.map((m) => m.role)).toEqual(["custom:note"]);
 	});
 
 	it("skips system entries", async () => {

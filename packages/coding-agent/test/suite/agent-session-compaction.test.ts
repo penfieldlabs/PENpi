@@ -442,7 +442,7 @@ describe("AgentSession compaction characterization", () => {
 	it("compacts and resumes after a length stop below the desired output limit", async () => {
 		const harness = await createHarness({
 			models: [{ id: "faux-1", contextWindow: 1000, maxTokens: 100 }],
-			// PENpi fork: routine compaction defaults to OFF (ADR 0023); enable it explicitly.
+			// PENpi fork: compaction defaults to off (the context engine needs it off, ADR 0032); enable it explicitly.
 			settings: { compaction: { enabled: true, keepRecentTokens: 1, reserveTokens: 0 } },
 			extensionFactories: [
 				(pi) => {
@@ -673,8 +673,8 @@ describe("AgentSession compaction characterization", () => {
 		expect(harness.eventsOfType("compaction_start")).toHaveLength(0);
 	});
 
-	// PENpi fork (ADR 0023): a length stop below maxTokens is routine recovery, not explicit
-	// overflow. With compaction disabled it must neither compact nor hide the reply.
+	// PENpi fork: with compaction disabled (PENpi's default) a length stop below maxTokens neither
+	// compacts nor hides the reply; the context engine continues it (ADR 0032).
 	it("keeps a short length stop visible and uncompacted when compaction is disabled", async () => {
 		const harness = await createHarness({
 			models: [{ id: "faux-1", contextWindow: 1_000_000, maxTokens: 100 }],
@@ -697,7 +697,7 @@ describe("AgentSession compaction characterization", () => {
 	it("stops after one compact-and-retry when a second response is also truncated", async () => {
 		const harness = await createHarness({
 			models: [{ id: "faux-1", contextWindow: 1_000_000, maxTokens: 100 }],
-			// PENpi fork: routine compaction defaults to OFF (ADR 0023); enable it explicitly.
+			// PENpi fork: compaction defaults to off (the context engine needs it off, ADR 0032); enable it explicitly.
 			settings: { compaction: { enabled: true, keepRecentTokens: 1, reserveTokens: 0 } },
 			extensionFactories: [
 				(pi) => {
@@ -730,6 +730,8 @@ describe("AgentSession compaction characterization", () => {
 	it("keeps overflow wording when a repeated length stop fills the context window", async () => {
 		const harness = await createHarness({
 			models: [{ id: "faux-1", contextWindow: 100, maxTokens: 100 }],
+			// PENpi fork: compaction defaults to off (ADR 0032); enable it explicitly.
+			settings: { compaction: { enabled: true } },
 		});
 		harnesses.push(harness);
 		const sessionInternals = harness.session as unknown as SessionWithCompactionInternals;
@@ -826,7 +828,8 @@ describe("AgentSession compaction characterization", () => {
 	});
 
 	it("does not retry overflow recovery more than once", async () => {
-		const harness = await createHarness();
+		// PENpi fork: compaction defaults to off (ADR 0032); enable it explicitly.
+		const harness = await createHarness({ settings: { compaction: { enabled: true } } });
 		harnesses.push(harness);
 		const sessionInternals = harness.session as unknown as SessionWithCompactionInternals;
 		const overflowMessage = createAssistant(harness, {
@@ -921,7 +924,7 @@ describe("AgentSession compaction characterization", () => {
 	});
 
 	it("triggers threshold compaction for error messages using the last successful usage", async () => {
-		// PENpi fork: routine compaction defaults to OFF (ADR 0023); enable it explicitly.
+		// PENpi fork: compaction defaults to off (the context engine needs it off, ADR 0032); enable it explicitly.
 		const harness = await createHarness({ settings: { compaction: { enabled: true } } });
 		harnesses.push(harness);
 		const sessionInternals = harness.session as unknown as SessionWithCompactionInternals;
@@ -1032,66 +1035,11 @@ describe("AgentSession compaction characterization", () => {
 		await belowThresholdInternals._checkCompaction(
 			createAssistant(belowThresholdHarness, { stopReason: "stop", totalTokens: 1_000, timestamp: Date.now() }),
 		);
-		// PENpi fork: upstream uses 1,000,000 tokens here, which exceeds the default 128k window.
-		// That is a usage-inferred overflow, which PENpi recovers even with compaction disabled
-		// (ADR 0023; covered below). 120,000 is threshold territory but under the window, so
-		// isContextOverflow() is false and only the routine threshold path is exercised.
 		await disabledInternals._checkCompaction(
-			createAssistant(disabledHarness, { stopReason: "stop", totalTokens: 120_000, timestamp: Date.now() }),
+			createAssistant(disabledHarness, { stopReason: "stop", totalTokens: 1_000_000, timestamp: Date.now() }),
 		);
 
 		expect(belowThresholdSpy).not.toHaveBeenCalled();
 		expect(disabledSpy).not.toHaveBeenCalled();
-	});
-
-	// PENpi fork (ADR 0023): `compaction.enabled` governs routine compaction. Explicit
-	// overflow recovery (the provider rejected the request as too long) is emergency
-	// machinery and must stay reachable when compaction is disabled: FIFO cannot shrink
-	// a single oversized atomic unit, so this path is the last resort before a
-	// hard-failed turn. The session_before_compact hook is the authoritative veto by reason.
-	it("still recovers from an explicit context overflow error when compaction is disabled", async () => {
-		const harness = await createHarness({ settings: { compaction: { enabled: false } } });
-		harnesses.push(harness);
-		const sessionInternals = harness.session as unknown as SessionWithCompactionInternals;
-		const runAutoCompactionSpy = vi.spyOn(sessionInternals, "_runAutoCompaction").mockResolvedValue(false);
-
-		await sessionInternals._checkCompaction(
-			createAssistant(harness, { stopReason: "error", errorMessage: "prompt is too long", timestamp: Date.now() }),
-		);
-
-		expect(runAutoCompactionSpy).toHaveBeenCalledWith("overflow", true);
-	});
-
-	// PENpi fork (ADR 0023): usage-inferred overflow is the oversized-unit case FIFO cannot
-	// shrink, so it also recovers with compaction disabled.
-	it("recovers a zero-output length stop that fills the window when compaction is disabled", async () => {
-		const harness = await createHarness({
-			models: [{ id: "faux-1", contextWindow: 1000, maxTokens: 100 }],
-			settings: { compaction: { enabled: false } },
-		});
-		harnesses.push(harness);
-		const sessionInternals = harness.session as unknown as SessionWithCompactionInternals;
-		const runAutoCompactionSpy = vi.spyOn(sessionInternals, "_runAutoCompaction").mockResolvedValue(false);
-
-		// Input at 99% of the window, no output: the server truncated the input (isContextOverflow Case 3).
-		await sessionInternals._checkCompaction(
-			createAssistant(harness, { stopReason: "length", totalTokens: 990, timestamp: Date.now() }),
-		);
-
-		expect(runAutoCompactionSpy).toHaveBeenCalledWith("overflow", true);
-	});
-
-	it("recovers a completed response whose usage exceeds the window when compaction is disabled", async () => {
-		const harness = await createHarness({ settings: { compaction: { enabled: false } } });
-		harnesses.push(harness);
-		const sessionInternals = harness.session as unknown as SessionWithCompactionInternals;
-		const runAutoCompactionSpy = vi.spyOn(sessionInternals, "_runAutoCompaction").mockResolvedValue(false);
-
-		// A stop with usage above the window: silent overflow (isContextOverflow Case 2). Compact, no retry.
-		await sessionInternals._checkCompaction(
-			createAssistant(harness, { stopReason: "stop", totalTokens: 1_000_000, timestamp: Date.now() }),
-		);
-
-		expect(runAutoCompactionSpy).toHaveBeenCalledWith("overflow", false);
 	});
 });

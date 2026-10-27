@@ -3,7 +3,7 @@ import { InMemorySettingsStorage, SettingsManager } from "../src/core/settings-m
 
 const model = { provider: "provider", id: "family/model" };
 const modelKey = "provider/family/model";
-// PENpi fork: routine compaction defaults to OFF (ADR 0003, ADR 0023).
+// PENpi fork: compaction defaults to off (ADR 0032).
 const defaults = { enabled: false, reserveTokens: 16384, keepRecentTokens: 20000 };
 
 // Regression coverage for #8133.

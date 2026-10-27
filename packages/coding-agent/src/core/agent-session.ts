@@ -2950,6 +2950,7 @@ export class AgentSession {
 		toolResults: AgentMessage[] = [],
 	): Promise<boolean> {
 		const settings = this.settingsManager.getCompactionSettings(this.model);
+		if (!settings.enabled) return false;
 
 		// Skip if message was aborted (user cancelled) - unless skipAbortedCheck is false
 		if (skipAbortedCheck && assistantMessage.stopReason === "aborted") return false;
@@ -3004,14 +3005,8 @@ export class AgentSession {
 			sameModel &&
 			((explicitOverflow && assistantRetainedForExplicitRecovery) ||
 				(assistantUsageMatchesProjection && isContextOverflow(assistantMessage, contextWindow)));
-		// PENpi fork (ADR 0023): context overflow above recovers whether or not compaction is
-		// enabled. A length stop below maxTokens is not overflow: with compaction disabled it must
-		// not compact and hide a reply the user can still read (length continuation, ADR 0028).
 		const recoverableLength =
-			settings.enabled &&
-			sameModel &&
-			assistantIsProjected &&
-			isRecoverableLength(assistantMessage, messageModel.maxTokens);
+			sameModel && assistantIsProjected && isRecoverableLength(assistantMessage, messageModel.maxTokens);
 		if (contextOverflow || recoverableLength) {
 			const willRetry = assistantMessage.stopReason !== "stop";
 
@@ -3050,11 +3045,6 @@ export class AgentSession {
 			if (retry) this._failedResponse = assistantMessage;
 			return retry;
 		}
-
-		// PENpi fork: routine threshold compaction respects the enabled setting
-		// (guard moved here from the top of the method so overflow recovery stays
-		// reachable when compaction is disabled). See ADR 0023.
-		if (!settings.enabled) return false;
 
 		// Case 3: threshold compaction without retry.
 		// For error messages or all-zero usage messages, estimate from the last valid response.

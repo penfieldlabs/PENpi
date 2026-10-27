@@ -3,7 +3,7 @@
  *
  * Pi keeps a verbatim JSONL log per session under
  *   <agentDir>/sessions/<encoded-cwd>/*.jsonl
- * This is the safety net for everything that rolls out of the FIFO window
+ * This is the safety net for everything that left the context window
  * (Tier 1) and was never deliberately stored to Penfield (Tier 2). This module
  * searches those logs so the agent can actually reach Tier 3.
  *
@@ -16,6 +16,7 @@ import { createReadStream, readdirSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { BRIEFING_CUSTOM_TYPE } from "./config.ts";
 
 export interface TranscriptMatch {
 	/** Session file basename. */
@@ -95,8 +96,11 @@ function makeSnippet(text: string, idx: number, query: number): string {
 export async function searchTranscripts(
 	dir: string,
 	query: string,
-	opts: { limit?: number; excludeFile?: string } = {},
+	opts: { limit?: number; excludeFile?: string; hiddenCustomTypes?: string[] } = {},
 ): Promise<TranscriptSearchResult> {
+	// Custom messages never sent to the model (PENpi 0.4's briefing messages in resumed sessions): their text is
+	// Penfield memory, which must not come back as tool output outside the fence.
+	const hidden = new Set(opts.hiddenCustomTypes ?? [BRIEFING_CUSTOM_TYPE]);
 	const limit = opts.limit ?? 10;
 	const q = query.toLowerCase();
 	const matches: TranscriptMatch[] = [];
@@ -135,6 +139,11 @@ export async function searchTranscripts(
 				} catch {
 					continue;
 				}
+				// State entries (appendEntry: extension and engine state, such as the context engine's cut
+				// records with their system prompt sections) are not conversation (D19): their memory text
+				// would come back as tool output, outside the fence.
+				if (entry.type === "custom") continue;
+				if (entry.type === "custom_message" && hidden.has(String(entry.customType ?? ""))) continue;
 				const { role, text, ts } = entryText(entry);
 				// System entries are operator and harness instructions, not conversation memory.
 				if (role === "system") continue;

@@ -1,6 +1,6 @@
 # 3. Replace compaction with FIFO context management
 
-- Status: Accepted
+- Status: Superseded by [0032](0032-context-engine.md)
 - Date: 2026-06-21
 
 ## Context

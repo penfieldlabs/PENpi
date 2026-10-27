@@ -3,6 +3,9 @@
 - Status: Accepted
 - Date: 2026-06-21
 
+> **Amended (0.5.0).** FIFO's ceiling and floor are gone with FIFO ([0032](0032-context-engine.md)).
+> The context engine's settings live in the same `penpi` block of the global settings ([0026](0026-global-only-configuration.md)).
+
 ## Context
 
 PENpi has several knobs (Penfield env/auth, FIFO ceiling/floor, save-on-shutdown, MCP

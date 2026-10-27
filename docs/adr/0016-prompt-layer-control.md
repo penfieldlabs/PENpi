@@ -3,6 +3,9 @@
 - Status: Accepted
 - Date: 2026-06-21
 
+> **Amended (0.5.0).** The context engine replaces FIFO ([0032](0032-context-engine.md)); raw mode keeps
+> it. The orientation briefing is now a system prompt section (`<penpi-memory>`) instead of a message.
+
 ## Context
 
 We must be able to run the bare model with full control over what shapes it — especially

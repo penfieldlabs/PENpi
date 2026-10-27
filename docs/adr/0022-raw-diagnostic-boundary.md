@@ -2,6 +2,9 @@
 
 - Status: Accepted
 - Date: 2026-08-01
+
+> **Amended (0.5.0).** Where this record says FIFO, read the context engine, which replaces it
+> ([0032](0032-context-engine.md)) and which raw mode keeps, with its compaction cancellation.
 - Clarifies: [ADR 0016](0016-prompt-layer-control.md)
 
 ## Context

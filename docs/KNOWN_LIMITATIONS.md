@@ -58,7 +58,7 @@ from overriding current instructions or independently authorizing actions. Model
 prompt-injection defenses are not guarantees.
 
 `--penpi-raw` is an advanced diagnostic control: it skips automatic orientation but retains
-Penfield tools and FIFO. Manually recalled memory in raw mode is ordinary tool output and
+Penfield tools and the context engine. Manually recalled memory in raw mode is ordinary tool output and
 does not receive the automatic persistent-memory boundary. Raw mode is not a poisoned-memory
 remedy; correct or neutralize the record by ID and return to normal mode.
 
@@ -67,5 +67,5 @@ remedy; correct or neutralize the record by ID and return to normal mode.
 The pre-release review exercised install and uninstall on Linux with Bash, Zsh, and Fish;
 each preserved the user's profile content and removed the PENpi block cleanly. macOS was
 not independently exercised before the initial public release. FIFO's small-context
-overflow fix was verified hermetically because no funded small-context live endpoint was
-available to the reviewer.
+overflow fix (PENpi 0.4; the context engine has since replaced FIFO) was verified
+hermetically because no funded small-context live endpoint was available to the reviewer.

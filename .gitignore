@@ -50,3 +50,6 @@ packages/agent/docs/extensions/pi-server-artifact/index.md
 
 # PENpi: runtime-generated, env-specific MCP adapter config (not committed)
 .pi/mcp.json
+
+# PENpi: local caches (stock upstream worktree for scripts/engine-suite-upstream.sh)
+/.cache/
