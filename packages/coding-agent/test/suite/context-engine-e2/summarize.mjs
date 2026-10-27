@@ -5,7 +5,9 @@
  * PASS/FAIL table, and (with two or more directories) a side-by-side comparison to stdout and to
  * $E2_COMPARE_OUT if set. Exit code 1 if any run FAILs, if a directory has no runs, or if fewer runs
  * than $E2_EXPECT_RUNS are found. A run covered by an entry of known-failures.json is counted as KNOWN, not FAIL,
- * until the entry's version; an expired or invalid entry fails the summary.
+ * until the entry's version; an expired or invalid entry fails the summary. An entry whose run is missing fails
+ * only in the default matrix ($E2_DEFAULT_MATRIX=1, set by run-e2.sh when nothing is selected); in any other set
+ * (a selection, the misconfigured runs) it is reported as not run.
  */
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -227,7 +229,7 @@ for (const { dir, engine, runs } of loaded) {
 		if (!m.config.replayMisconfigured && !isKnown(m))
 			for (const c of m.criteria) if (c.pass === false) criteriaFails[c.id] = (criteriaFails[c.id] ?? 0) + 1;
 	const expected = Number(process.env.E2_EXPECT_RUNS ?? 0);
-	const knownLines = knownReport(runs, expected > 0 && runs.length >= expected);
+	const knownLines = knownReport(runs, process.env.E2_DEFAULT_MATRIX === "1" && expected > 0 && runs.length >= expected);
 	const knownNote = known.length
 		? `, KNOWN ${known.length} (${known.map((m) => `${m.id} ${knownOf(m).entry.criterion.split(" ")[0]} lag ${m.silent.lagToDetection}, until ${knownOf(m).entry.until}`).join("; ")})`
 		: "";

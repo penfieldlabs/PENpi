@@ -79,14 +79,19 @@ afterEach(() => {
 });
 
 /** summarize.mjs on these runs with these entries: its exit code and summary.md. */
-function summary(runs: ReturnType<typeof run>[], entries: unknown, expectRuns = 0) {
+function summary(runs: ReturnType<typeof run>[], entries: unknown, expectRuns = 0, defaultMatrix = false) {
 	const dir = mkdtempSync(join(tmpdir(), "e2-known-"));
 	dirs.push(dir);
 	const results = join(dir, "results");
 	mkdirSync(results);
 	for (const r of runs) writeFileSync(join(results, `${r.id}.json`), JSON.stringify(r));
 	writeFileSync(join(dir, "known.json"), JSON.stringify(entries));
-	const env = { ...process.env, E2_KNOWN_FAILURES: join(dir, "known.json"), E2_EXPECT_RUNS: String(expectRuns) };
+	const env = {
+		...process.env,
+		E2_KNOWN_FAILURES: join(dir, "known.json"),
+		E2_EXPECT_RUNS: String(expectRuns),
+		E2_DEFAULT_MATRIX: defaultMatrix ? "1" : "0",
+	};
 	const p = spawnSync(process.execPath, [summarize, results], { env, encoding: "utf8" });
 	return { code: p.status, md: readFileSync(join(results, "summary.md"), "utf8") };
 }
@@ -138,11 +143,36 @@ describe("E2 known failures", () => {
 	});
 
 	it("an entry for a run the full matrix does not have fails; an invalid entry excuses nothing", () => {
-		expect(summary([run("other.run")], [entry({ run: "no.such.run" })], 1).code).toBe(1);
+		expect(summary([run("other.run")], [entry({ run: "no.such.run" })], 1, true).code).toBe(1);
 		expect(summary([run("other.run")], [entry({ run: "no.such.run" })]).md).toContain("not run in this directory");
 		const bad = summary([run(RUN, { failing: ["C6"], lag: 4 })], [entry({ criterion: "C5 truncated" })]);
 		expect(bad.code).toBe(1);
 		expect(bad.md).toContain("FAIL 1;");
 		expect(validateKnownFailures([{ run: RUN }])).toHaveLength(4);
+	});
+
+	it("a complete set that is not the default matrix (the misconfigured runs, a selection) reports the entry as not run", () => {
+		// The release gate's 8 misconfigured runs: every run present, the entry's run not among them.
+		const misconfigured = ["coding", "research", "cjk", "data"].flatMap((mix) =>
+			["glm", "o200k"].map((tok) => {
+				const id = `${mix}.${tok}.128k.reasoning-high-misconfigured`;
+				const r = run(id);
+				return {
+					...r,
+					config: { ...r.config, replayMisconfigured: true },
+					engineStats: { replayWarnings: ["replayed reasoning is counted by the provider"] },
+				};
+			}),
+		);
+		const s = summary(misconfigured, [entry()], 8);
+		expect(s.code).toBe(0);
+		expect(s.md).toContain(
+			`- ${RUN}, C6 detection-lag (lag at most 4, until PENpi ${later}): not run in this directory`,
+		);
+		// A complete selection of two default-matrix runs without the entry's run.
+		const selection = [run("coding.glm.32k.silent-messages"), run("coding.glm.32k.reasoning-minimal")];
+		expect(summary(selection, [entry()], 2).code).toBe(0);
+		// The same runs as the default matrix: the entry's run is missing there, which fails.
+		expect(summary(selection, [entry()], 2, true).code).toBe(1);
 	});
 });

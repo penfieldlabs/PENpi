@@ -44,6 +44,9 @@ echo "E2: engine $label sha256 $sha ($nfiles files, from $src); results in $out"
 # Expected number of runs for the summary check.
 count() { local v="$1" d="$2"; [ -n "$v" ] && echo "$v" | tr ',' '\n' | grep -c . || echo "$d"; }
 expect=$(( $(count "${E2_MIXES:-}" 4) * $(count "${E2_TOKENIZERS:-}" 2) * $(count "${E2_WINDOWS:-}" 3) * $(count "${E2_MODES:-}" 4) ))
+# The default matrix (no selection, no system section): only there must every known failure's run be present.
+default_matrix=0
+[ -z "${E2_MIXES:-}${E2_TOKENIZERS:-}${E2_WINDOWS:-}${E2_MODES:-}${E2_SYSTEM_SECTION_TOKENS:-}" ] && default_matrix=1
 
 files=(test/suite/context-engine-e2/e2-coding.e2.ts test/suite/context-engine-e2/e2-research.e2.ts test/suite/context-engine-e2/e2-cjk.e2.ts test/suite/context-engine-e2/e2-data.e2.ts)
 [ "${E2_SKIP_SELFTEST:-0}" = 1 ] || files=(test/suite/context-engine-e2/sim.e2.ts "${files[@]}")
@@ -51,7 +54,7 @@ cd "$pkg"
 npx vitest --run --config test/suite/context-engine-e2/vitest.config.ts "${files[@]}" 2>&1 | tee "$out/vitest.log"
 vitest_exit=${PIPESTATUS[0]}
 
-E2_EXPECT_RUNS=$expect node "$here/summarize.mjs" "$out"
+E2_EXPECT_RUNS=$expect E2_DEFAULT_MATRIX=$default_matrix node "$here/summarize.mjs" "$out"
 summary_exit=$?
 elapsed=$(( $(date +%s) - started ))
 echo "E2: vitest exit $vitest_exit, summary exit $summary_exit, ${elapsed}s total; engine $label $sha; summary $out/summary.md"

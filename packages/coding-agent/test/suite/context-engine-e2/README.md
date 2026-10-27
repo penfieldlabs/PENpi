@@ -239,8 +239,9 @@ and the lag is at most `maxLag`, and PENpi's version (the root `package.json`) i
   (`- runs: 96, PASS 95, FAIL 0, KNOWN 1 (...)`), shows KNOWN in the table, and lists every entry under
   "Known failures": occurred, did not occur (the run passed: remove the entry), EXPIRED, or does not cover the
   failure.
-- The summary fails when an entry has expired, is malformed, or names a run that is not in the full matrix.
-  Anything an entry does not cover fails as before.
+- The summary fails when an entry has expired, is malformed, or names a run that is not in the default matrix
+  (`run-e2.sh` with no selection). In any other set, such as a selection or the misconfigured runs, an entry whose
+  run is not there is reported as not run. Anything an entry does not cover fails as before.
 
 Today's entry: research.glm.32k.silent-messages, C6 lag 4 (limit 3), until 0.5.1. It is the same at this
 checkout's path length and at the GitHub runner's.
