@@ -865,3 +865,24 @@ alters the semantics ADR 0023 documents and needs its own review and tests.
 
 ### Notes
 - Built on Pi (MIT, © Mario Zechner / Earendil). See [README.md](README.md).
+
+[ADR 0003]: docs/adr/0003-fifo-replaces-compaction.md
+[ADR 0004]: docs/adr/0004-three-tier-memory.md
+[ADR 0010]: docs/adr/0010-save-context-on-shutdown-opt-in.md
+[ADR 0012]: docs/adr/0012-transcript-search-tier-3.md
+[ADR 0014]: docs/adr/0014-pin-third-party-dependencies.md
+[ADR 0017]: docs/adr/0017-fast-fail-timeouts.md
+[ADR 0018]: docs/adr/0018-global-install.md
+[ADR 0019]: docs/adr/0019-disable-upstream-update-banner.md
+[ADR 0020]: docs/adr/0020-pin-managed-package-installs.md
+[ADR 0021]: docs/adr/0021-optional-user-selected-web-search.md
+[ADR 0023]: docs/adr/0023-overflow-compaction-escape-hatch.md
+[ADR 0024]: docs/adr/0024-memory-fence-sanitization.md
+[ADR 0025]: docs/adr/0025-compaction-fallback-without-fifo-window.md
+[ADR 0026]: docs/adr/0026-global-only-configuration.md
+[ADR 0027]: docs/adr/0027-slope-free-fifo-budget.md
+[ADR 0028]: docs/adr/0028-length-continuation.md
+[ADR 0029]: docs/adr/0029-sanitizer-normalization-and-bounds.md
+[ADR 0030]: docs/adr/0030-strict-config-values.md
+[ADR 0031]: docs/adr/0031-upstream-ancestry-and-patch-manifest.md
+[ADR 0032]: docs/adr/0032-context-engine.md

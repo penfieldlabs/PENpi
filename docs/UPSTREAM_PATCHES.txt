@@ -330,7 +330,7 @@ scripts/penpi-version.mjs	PENpi version surfaces for the release script
 scripts/penpi-version.test.mjs	tests a PENpi script
 scripts/publish-model-catalog.mjs	deleted: PENpi publishes no model catalog
 scripts/publish-model-catalog.test.mjs	deleted: tests the removed publishing script
-scripts/release-notes.mjs	accepts PENpi's changelog heading format
+scripts/release-notes.mjs	accepts PENpi's changelog heading format; carries the reference definitions a section uses
 scripts/release-notes.test.mjs	tests a PENpi script
 scripts/release.mjs	bumps and tags PENpi's version, not upstream's
 scripts/release.test.mjs	tests a PENpi script

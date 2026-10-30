@@ -12,6 +12,10 @@ const DEFAULT_FIX_SINCE_TAG = "v0.74.0";
 const LEGACY_REPO_RE = /^https:\/\/github\.com\/(?:badlogic|earendil-works)\/pi-mono(?=\/|$)/;
 const URL_SCHEME_RE = /^[a-z][a-z0-9+.-]*:/i;
 const INLINE_MARKDOWN_LINK_RE = /(!?\[[^\]\n]+\]\()([^\s)]+)((?:\s+[^)]*)?\))/g;
+// A reference definition, "[label]: target" on a line of its own (PENpi cites ADRs as "[ADR 0032]").
+const LINK_DEFINITION_RE = /^( {0,3}\[([^\]\n]+)\]:[ \t]*)(\S+)(.*)$/gm;
+// A shortcut or full reference ("[label]" or "[text][label]"), not an inline link or a definition.
+const LINK_REFERENCE_RE = /\[([^\]\n]+)\](?![(:])/g;
 
 function printUsage() {
 	console.log(`Usage: node scripts/release-notes.mjs <command> [options]
@@ -158,6 +162,26 @@ function extractChangelogSection(changelog, version) {
 	return section.trim();
 }
 
+/**
+ * The reference definitions `section` uses, from anywhere in `changelog`: a section taken out of the file
+ * loses the definitions kept at its end, and its references would render as literal brackets.
+ */
+function referencedDefinitions(section, changelog) {
+	const definitions = new Map();
+	for (const match of changelog.matchAll(LINK_DEFINITION_RE)) {
+		const label = match[2].toLowerCase();
+		if (!definitions.has(label)) definitions.set(label, match[0].trim());
+	}
+	const inSection = new Set([...section.matchAll(LINK_DEFINITION_RE)].map((m) => m[2].toLowerCase()));
+	const used = [];
+	for (const match of section.matchAll(LINK_REFERENCE_RE)) {
+		const label = match[1].toLowerCase();
+		if (inSection.has(label) || !definitions.has(label) || used.includes(label)) continue;
+		used.push(label);
+	}
+	return used.map((label) => definitions.get(label));
+}
+
 function splitLocalTarget(target) {
 	const hashIndex = target.indexOf("#");
 	const beforeHash = hashIndex === -1 ? target : target.slice(0, hashIndex);
@@ -246,8 +270,15 @@ function normalizeReleaseNoteLinks(markdown, options) {
 		}
 		return `${prefix}${normalizedTarget}${suffix}`;
 	});
+	const withDefinitions = normalized.replace(LINK_DEFINITION_RE, (match, prefix, _label, target, suffix) => {
+		const normalizedTarget = normalizeLinkTarget(target, options);
+		if (normalizedTarget !== target) {
+			changes.push({ from: target, to: normalizedTarget });
+		}
+		return `${prefix}${normalizedTarget}${suffix}`;
+	});
 
-	return { changes, markdown: normalized };
+	return { changes, markdown: withDefinitions };
 }
 
 function writeOutput(content, outPath) {
@@ -282,7 +313,10 @@ function extractReleaseNotes(options) {
 				"Refusing to emit the \"Release <version>\" placeholder in strict mode.",
 		);
 	}
-	const rawNotes = section ? `${section}\n` : `Release ${version}\n`;
+	const definitions = section ? referencedDefinitions(section, changelog) : [];
+	const rawNotes = section
+		? `${section}\n${definitions.length > 0 ? `\n${definitions.join("\n")}\n` : ""}`
+		: `Release ${version}\n`;
 	const { markdown } = normalizeReleaseNoteLinks(rawNotes, { basePath: options.basePath, repo: options.repo, tag });
 	writeOutput(markdown, options.out);
 }

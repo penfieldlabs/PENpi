@@ -29,3 +29,5 @@ Disable the upstream-pi version banner — remove the `checkForNewPiVersion` cal
 - One small, documented core change (the only behavioral edit to pi-core besides the
   compaction default, [ADR 0003]).
 - Revisit when PENpi cuts releases — then repurpose the banner to PENpi's own updates.
+
+[ADR 0003]: 0003-fifo-replaces-compaction.md
