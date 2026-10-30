@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import penpi, {
+	ERROR_TEXT_MAX,
 	encodeMemory,
 	FENCE_LABELS,
 	MAX_MEMORY_TEXT_CHARS,
@@ -1235,6 +1236,45 @@ describe("memory refresh outcomes (0.5.1)", () => {
 		await new Promise((resolve) => setTimeout(resolve, 0));
 		expect(t.logLines).toEqual([]);
 		expect(t.doctor()[0]).toMatch(/^memory refresh: none yet; 0 changed, 0 unchanged, 0 skipped, 0 failed$/);
+	});
+
+	it("a long multi-line error (a proxy's HTML page) is written as one line under the cap", async () => {
+		// The MCP SDK's transport error carries the whole HTTP response body.
+		const page = `Error POSTing to endpoint: <html>\n<head><title>502 Bad Gateway</title></head>\n${"<p>upstream unavailable</p>\n".repeat(400)}</html>`;
+		expect(page.length).toBeGreaterThan(10_000);
+		let read = 0;
+		const t = await started({
+			awaken: vi.fn(async () => {
+				if (read++ > 0) throw new Error(page);
+				return { isError: false, data: { briefing: "BRIEFING-1" }, text: "BRIEFING-1" };
+			}),
+		});
+		await t.runEnds();
+		const [line] = refreshLines(t.logLines);
+		const doctor = t.doctor()[0];
+		for (const text of [line, doctor]) expect(text).not.toMatch(/\n/);
+		const logged = line.match(/^memory refresh: failed \((.*)\)$/)?.[1] ?? "";
+		const lastError = doctor.match(/\(last error: (.*)\)$/)?.[1] ?? "";
+		for (const text of [logged, lastError]) {
+			expect(text.length).toBeLessThanOrEqual(ERROR_TEXT_MAX);
+			expect(text.startsWith("Error POSTing to endpoint: <html> <head><title>502 Bad Gateway</title></head>")).toBe(
+				true,
+			);
+		}
+
+		// And at orientation: the engine log line and the warning.
+		const o = withRefresh({
+			connect: vi.fn(async () => {
+				throw new Error(page);
+			}),
+		});
+		const { ctx, notifies } = makeCtx();
+		await o.handlers.session_start({ reason: "startup" }, ctx);
+		const warning = notifies.find((n) => n.msg.includes("orientation failed"))?.msg ?? "";
+		for (const text of [o.logLines[0], warning]) {
+			expect(text).not.toMatch(/\n/);
+			expect(text.length).toBeLessThan(ERROR_TEXT_MAX + 100);
+		}
 	});
 
 	it("no log line or doctor line carries memory text", async () => {

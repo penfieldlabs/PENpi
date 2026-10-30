@@ -62,6 +62,14 @@ Penfield tools and the context engine. Manually recalled memory in raw mode is o
 does not receive the automatic persistent-memory boundary. Raw mode is not a poisoned-memory
 remedy; correct or neutralize the record by ID and return to normal mode.
 
+## Small silent truncations
+
+A provider that silently drops part of a request is detected from the input usage it reports:
+the context engine compares the reported growth with what each request added. When only a few
+percent of a request is dropped, the reported usage hardly changes, and an honest request looks
+the same. Such a truncation goes unseen until a larger one follows. In E2 one was 374 of 16,441
+tokens (2.3%); the known failure research.glm.32k.silent-messages comes from it.
+
 ## Platform coverage
 
 The pre-release review exercised install and uninstall on Linux with Bash, Zsh, and Fish;
