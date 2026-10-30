@@ -216,18 +216,21 @@ export function installPlanner(core: EngineCore): void {
 		// The checkpoint keeps the first system message's time (Pi's estimate reads it), as without an override.
 		return merged && older[0] ? ({ ...merged, timestamp: timeOf(older[0]) } as AgentMessage) : merged;
 	};
-	core.stripOverridden = (items, override) => {
-		if (!override?.sections) return;
-		const at = override.at ?? Number.POSITIVE_INFINITY;
-		const names = Object.keys(override.sections);
+	core.checkpointFor = (before, items, cut) => {
+		const at = cut?.at ?? Number.POSITIVE_INFINITY;
+		const folded: AgentMessage[] = [];
 		for (const item of items) {
-			if (!item.system || timeOf(item.message) >= at) continue;
-			const sections = (item.message as { sections?: Record<string, string | null> }).sections;
-			if (!sections || !names.some((name) => name in sections)) continue;
-			const kept = Object.fromEntries(Object.entries(sections).filter(([name]) => !names.includes(name)));
-			item.out = { ...item.message, sections: kept } as AgentMessage;
-			item.tokens = core.sendTokens(item.out);
+			if (!item.system) continue;
+			if (timeOf(item.message) < at) {
+				item.folded = true;
+				item.tokens = 0;
+				folded.push(item.message);
+			} else if (item.folded) {
+				delete item.folded;
+				item.tokens = core.sendTokens(item.message);
+			}
 		}
+		return core.systemWith([...before, ...folded], cut);
 	};
 
 	/**
@@ -370,17 +373,11 @@ export function installPlanner(core: EngineCore): void {
 			}
 		}
 		const items = all.slice(start);
-		if (start > 0) core.stripOverridden(items, cut);
-		const checkpoint =
-			start > 0
-				? core.systemWith(
-						all
-							.slice(0, start)
-							.filter((i) => i.system)
-							.map((i) => i.message),
-						cut,
-					)
-				: undefined;
+		const before = all
+			.slice(0, start)
+			.filter((i) => i.system)
+			.map((i) => i.message);
+		const checkpoint = start > 0 ? core.checkpointFor(before, items, cut) : undefined;
 		const header = start > 0 && cut ? core.headerMessage(cut.header, cut.at) : undefined;
 		return {
 			leafId: ctx.sessionManager.getLeafId(),
@@ -388,6 +385,7 @@ export function installPlanner(core: EngineCore): void {
 			total: items.reduce((sum, item) => sum + item.tokens, 0),
 			cut: start > 0 ? cut : undefined,
 			checkpoint,
+			before,
 			checkpointTokens: checkpoint ? messageTokens(checkpoint) : 0,
 			header,
 			headerTokens: header ? messageTokens(header) : 0,
@@ -419,7 +417,8 @@ export function installPlanner(core: EngineCore): void {
 			if (entry.type === "context_edit") {
 				const at = st.index.items.findIndex((item) => item.entryId === entry.targetId);
 				if (at < 0) continue;
-				if (entry.replacement !== null) return rebuild();
+				// D23: a folded system message is in the checkpoint too; a rebuild makes the checkpoint without it.
+				if (entry.replacement !== null || st.index.items[at].folded) return rebuild();
 				st.index.total -= st.index.items[at].tokens;
 				st.index.items.splice(at, 1);
 				continue;
@@ -595,7 +594,7 @@ export function installPlanner(core: EngineCore): void {
 		const systemNow = () =>
 			getCurrentSystemMessage([
 				...(idx.checkpoint ? [idx.checkpoint] : []),
-				...idx.items.filter((i) => i.system).map((i) => i.out),
+				...idx.items.filter((i) => i.system && !i.folded).map((i) => i.out),
 			] as never) as AgentMessage | undefined;
 		// D25: a capped section over its cap for these limits (the window shrank) forces a cut at this request.
 		const recapReason = recapSections(limits, ratio, systemNow);
@@ -652,19 +651,19 @@ export function installPlanner(core: EngineCore): void {
 				core.logPin(header, seq);
 				// Strictly after every message that existed at the cut (same-millisecond messages included).
 				const at = Date.now() + 1;
-				const override = cutSections ? { sections: cutSections, at } : undefined;
-				const checkpoint = core.systemWith(
-					[
-						...(idx.checkpoint ? [idx.checkpoint] : []),
-						...idx.items
-							.slice(0, next)
-							.filter((i) => i.system)
-							.map((i) => i.out),
-					],
-					override,
-				);
+				// D23: from the recorded system messages, as a rebuild makes it (not from the last checkpoint).
+				idx.before = [
+					...idx.before,
+					...idx.items
+						.slice(0, next)
+						.filter((i) => i.system)
+						.map((i) => i.message),
+				];
 				idx.items = idx.items.slice(next);
-				core.stripOverridden(idx.items, override);
+				const checkpoint = core.checkpointFor(idx.before, idx.items, {
+					...(cutSections ? { sections: cutSections } : {}),
+					at,
+				});
 				idx.total = idx.items.reduce((sum, item) => sum + item.tokens, 0);
 				idx.cut = {
 					firstKeptEntryId,
@@ -730,7 +729,7 @@ export function installPlanner(core: EngineCore): void {
 		flushDecisions();
 		const capped = idx.items.some((item) => item.out !== item.message);
 		if (!idx.header && !capped && !notice) return { estimate: idx.total };
-		const body = idx.items.map((item) => item.out);
+		const body = idx.items.filter((item) => !item.folded).map((item) => item.out);
 		if (capped) stats.capped++;
 		const result = idx.header ? [...(idx.checkpoint ? [idx.checkpoint] : []), idx.header, ...body] : body;
 		if (notice) result.push(notice);
@@ -738,9 +737,10 @@ export function installPlanner(core: EngineCore): void {
 	}
 
 	/**
-	 * Pi's own messages with the latest cut's section override applied (unchanged without one). N0: as the
-	 * checkpoint does, the system messages older than the override are merged with it into one, in place of
-	 * Pi's leading system message (Pi's preamble first); newer system messages stay where they are and win.
+	 * Pi's own messages with the latest cut's section override applied (unchanged without a cut). N0: as the
+	 * checkpoint does, the system messages older than the cut are merged with its override into one, in place of
+	 * Pi's leading system message (Pi's preamble first); newer system messages stay where they are and win. D23:
+	 * also at a cut without an override, so the system messages are those of the in-session window, byte for byte.
 	 * With no system message older than the cut (a transcript that starts after it), the messages are sent
 	 * unchanged rather than with the section alone in front (round 4).
 	 */
@@ -748,11 +748,11 @@ export function installPlanner(core: EngineCore): void {
 		const cut = core.readCut(ctx.sessionManager.getBranch());
 		// D25 N2: sections re-capped for this request (a shrink on a request the engine cannot align) go on top.
 		const sections = recapped ? { ...(cut?.sections ?? {}), ...recapped } : cut?.sections;
-		if (!sections) return messages;
+		if (!sections && !cut) return messages;
 		const at = cut?.at ?? Number.POSITIVE_INFINITY;
 		const older = messages.filter((m) => m.role === "system" && timeOf(m) < at);
 		if (older.length === 0) return messages;
-		const merged = core.systemWith(older, { sections, at });
+		const merged = core.systemWith(older, { ...(sections ? { sections } : {}), at });
 		if (!merged) return messages;
 		const first = messages.indexOf(older[0]);
 		const out: AgentMessage[] = [];
@@ -792,7 +792,7 @@ export function installPlanner(core: EngineCore): void {
 		}
 		// Later 5: when the engine sends Pi's own messages (no cut yet, an alignment mismatch, an error above),
 		// a section changed at a cut stays changed: the latest cut's override, over the older system messages.
-		if (!result && (Object.keys(st.appliedSections).length > 0 || st.index?.cut?.sections || recapped)) {
+		if (!result && (Object.keys(st.appliedSections).length > 0 || st.index?.cut || recapped)) {
 			const kept = keepOverride(visible, ctx, recapped);
 			if (kept !== visible) {
 				result = kept;

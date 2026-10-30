@@ -139,6 +139,8 @@ export interface Item {
 	tokens: number;
 	startable: boolean;
 	system: boolean;
+	/** D23: a system message older than the cut, merged into the checkpoint and not sent. */
+	folded?: true;
 }
 
 /** Mode a: the window from the cut onward, kept up to date from the leaf (H7). */
@@ -148,6 +150,8 @@ export interface WindowIndex {
 	total: number;
 	cut?: CutState;
 	checkpoint?: AgentMessage;
+	/** D23: the system messages before the window, as recorded (the checkpoint is rebuilt from them at a cut). */
+	before: AgentMessage[];
 	checkpointTokens: number;
 	header?: AgentMessage;
 	headerTokens: number;
