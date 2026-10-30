@@ -41,6 +41,18 @@ describe("replay check verdict (review round 2, Later 1 and 2)", () => {
 		expect(replayVerdict([...repeat(0.97, 15), ...repeat(0.02, 5)])).toBeUndefined();
 	});
 
+	it("D22: no ignored while a tenth of the pairs, or 3, are at 0.3 or more (a 0/0.4 split)", () => {
+		expect(replayVerdict([...repeat(0.02, 12), ...repeat(0.4, 8)])).toBeUndefined();
+		expect(replayVerdict([...repeat(0.02, 18), ...repeat(0.4, 2)])).toBeUndefined();
+		expect(replayVerdict([...repeat(0.02, 37), ...repeat(0.3, 3)])).toBeUndefined();
+		expect(replayVerdict([...repeat(0.02, 19), ...repeat(0.4, 1)])).toBe("ignored");
+		expect(replayVerdict([...repeat(0.02, 38), ...repeat(0.4, 2)])).toBe("ignored");
+		expect(replayVerdict([...repeat(0.02, 17), ...repeat(0.29, 3)])).toBe("ignored");
+		// Without a verdict, the split recommends nothing either way: only pairs at 0.5 or more recommend counted.
+		expect(replayRecommendation([...repeat(0.02, 12), ...repeat(0.4, 8)], "counted")).toBeUndefined();
+		expect(replayRecommendation([...repeat(0.02, 12), ...repeat(0.4, 8)], "ignored")).toBeUndefined();
+	});
+
 	it("N1 (round 4): with ignored set, enough pairs that count the replay recommend counted, without a verdict", () => {
 		const mixed = [...repeat(0.02, 12), ...repeat(0.97, 8)];
 		expect(replayRecommendation(mixed, "ignored")).toBe("counted");

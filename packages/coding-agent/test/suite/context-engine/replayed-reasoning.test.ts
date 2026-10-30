@@ -5,11 +5,20 @@
  * same under both. Doctor names the setting when the ratio sits at the 0.8 floor with thinking on.
  */
 
-import { type AssistantMessage, fauxAssistantMessage } from "@earendil-works/pi-ai";
+import { readFileSync } from "node:fs";
+import { type AssistantMessage, fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
+import type { ExtensionFactory } from "../../../src/index.ts";
 import { createHarness, createTestUiContext, type Harness } from "../harness.ts";
 import { createContextEngine, type EngineOptions, newStats, textTokens } from "./engine.ts";
-import { finalTurn, installProviderSim, scriptedModel, workExtension } from "./helpers.ts";
+import {
+	anthropicImageTokens,
+	blobExtension,
+	finalTurn,
+	installProviderSim,
+	scriptedModel,
+	workExtension,
+} from "./helpers.ts";
 
 const KEY = "faux/glm-200k";
 const REASONING = "We count every event type in the file by hand, line by line, keeping a tally. ".repeat(200);
@@ -21,7 +30,7 @@ describe("replayedReasoning: counted or ignored, per model", () => {
 		while (harnesses.length > 0) harnesses.pop()?.cleanup();
 	});
 
-	async function setup(options: Partial<EngineOptions>, contextWindow = 200_000) {
+	async function setup(options: Partial<EngineOptions>, contextWindow = 200_000, extra: ExtensionFactory[] = []) {
 		const stats = newStats();
 		const notices: string[] = [];
 		const harness = await createHarness({
@@ -29,6 +38,7 @@ describe("replayedReasoning: counted or ignored, per model", () => {
 			settings: { compaction: { enabled: false } },
 			extensionFactories: [
 				workExtension,
+				...extra,
 				// The faux model stands for an OpenAI-compatible endpoint (GLM via OpenRouter), as in E2.
 				createContextEngine({ stats, serializeAs: { [KEY]: "openai-completions" }, ...options }),
 			],
@@ -45,6 +55,15 @@ describe("replayedReasoning: counted or ignored, per model", () => {
 			...message,
 			content: [{ type: "thinking", thinking: reasoning, thinkingSignature: "reasoning" }, ...message.content],
 		};
+	};
+
+	/** D22: a turn of `reasoning` (replayed through the reasoning field) that calls a tool. */
+	const thinkingCall = (reasoning: string, name: string, args: Parameters<typeof fauxToolCall>[1], id: string) => {
+		const message = fauxAssistantMessage([fauxToolCall(name, args, { id })], { stopReason: "toolUse" });
+		return {
+			...message,
+			content: [{ type: "thinking", thinking: reasoning, thinkingSignature: "reasoning" }, ...message.content],
+		} as AssistantMessage;
 	};
 
 	/** The doctor's replay-check line after `prompts` prompts, each answered with a thinking turn. */
@@ -230,6 +249,82 @@ describe("replayedReasoning: counted or ignored, per model", () => {
 			expect(stats.replayWarnings).toEqual([]);
 			expect(doctor).toContain("agrees with the setting");
 		}
+	});
+
+	it("D22: a pair that appends an image is not a replay pair (the provider counts the image; the appended text leaves it out)", async () => {
+		const screenshot = readFileSync(new URL("../../../docs/images/doom-extension.png", import.meta.url)).toString(
+			"base64",
+		);
+		const shot = { text: "a screenshot", images: [{ data: screenshot, mimeType: "image/png" }] };
+		const h = await setup({ replayedReasoning: { [KEY]: "ignored" } }, 1_000_000, [blobExtension({ shot })]);
+		installProviderSim(h.harness, { ignoreReplayedReasoning: true, imageTokens: anthropicImageTokens });
+		expect(anthropicImageTokens({ data: screenshot })).toBeGreaterThan(0.3 * textTokens(REASONING));
+		for (let i = 0; i < 22; i++) {
+			h.model.push(
+				() => thinkingCall(REASONING, "blob", { name: "shot" }, `shot-${i}`),
+				() => thinkingTurn(),
+			);
+			await h.harness.session.prompt(`Look at screenshot ${i}.`);
+		}
+		expect(h.stats.cuts).toHaveLength(0);
+		// Left: the 21 pairs that append no image (a final answer and the next prompt), each about 0 (ignored).
+		const check = h.stats.replayChecks[KEY];
+		expect(check.pairs).toBe(21);
+		expect(Math.max(...check.shares)).toBeLessThan(0.3);
+		expect(h.notices.filter((n) => n.includes("the reasoning Pi replays"))).toEqual([]);
+		expect(h.stats.replayWarnings).toEqual([]);
+	});
+
+	it("D22: the request that carries the pre-cut notice counts it in the appended text", async () => {
+		// About 250 tokens of reasoning per turn, small results: every pair qualifies, and a notice of about 100
+		// tokens, left out, would read as almost half the replay again.
+		const reasoning = REASONING.slice(0, 1_000);
+		const h = await setup({ notice: true, noticeFraction: 0.5 }, 32_000);
+		installProviderSim(h.harness, {});
+		let noticed = -1;
+		for (let i = 0; i < 40 && noticed < 0; i++) {
+			h.model.push(
+				() => thinkingCall(reasoning, "work", { size: 100, seed: i }, `work-${i}`),
+				() => thinkingTurn(reasoning),
+			);
+			await h.harness.session.prompt(`Batch ${i}.`);
+			if (h.stats.notices > 0) noticed = i;
+		}
+		expect(noticed, "a notice was given").toBeGreaterThanOrEqual(0);
+		// One more prompt: the request after the notice drops it (the previous request's notice).
+		h.model.push(() => thinkingTurn(reasoning));
+		await h.harness.session.prompt("One more batch.");
+		expect(h.stats.cuts).toHaveLength(0);
+		const { shares } = h.stats.replayChecks[KEY];
+		if (process.env.D22_SHOW) console.log(shares.map((x) => x.toFixed(2)).join(" "));
+		// The provider counts the replay: every pair about 1, the notice's included.
+		expect(Math.min(...shares)).toBeGreaterThan(0.8);
+		expect(Math.max(...shares)).toBeLessThan(1.2);
+	});
+
+	it("D22: no ignored while some pairs read about 0.4 (an over-counting estimator, a provider that counts in tool loops)", async () => {
+		// Shares of about 0.02 and 0.4: the median says "ignored", but the 0.4s withhold it (0.3 or more).
+		const split = (assistant: number) => (assistant % 5 === 1 || assistant % 5 === 3 ? 0.4 : 0.02);
+		const h = await setup({}, 1_000_000);
+		installProviderSim(h.harness, { replayedReasoningShare: split });
+		for (let i = 0; i < 27; i++) {
+			h.model.push(() => thinkingTurn());
+			await h.harness.session.prompt(`Count batch ${i}.`);
+		}
+		await h.harness.session.prompt("/penpi doctor");
+		const line =
+			h.notices
+				.join("\n")
+				.split("\n")
+				.find((l) => l.startsWith("replay check:")) ?? "";
+		const { median, shares } = h.stats.replayChecks[KEY];
+		expect(median).toBeLessThan(0.1);
+		// No pair clearly counts the replay (0.5 or more); at least 3 are at 0.3 or more.
+		expect(Math.max(...shares), shares.join(" ")).toBeLessThan(0.5);
+		expect(shares.filter((x) => x >= 0.3).length, shares.join(" ")).toBeGreaterThanOrEqual(3);
+		expect(h.notices.filter((n) => n.includes("the reasoning Pi replays"))).toEqual([]);
+		expect(h.stats.replayWarnings).toEqual([]);
+		expect(line).toMatch(/no verdict.*; no recommendation/);
 	});
 
 	it("doctor names replayedReasoning when the ratio sits at the 0.8 floor with thinking on", async () => {

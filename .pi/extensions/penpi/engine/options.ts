@@ -241,8 +241,8 @@ export interface EngineStats {
 	/** G2: answers produced from silently truncated input. */
 	plateauReports: Array<{ key: string; window: number; turns: TruncatedTurn[] }>;
 	/** The replay check's warnings: the setting disagreed with what the provider does. */
-	/** The replay check so far, per model: qualifying request pairs and their median share. */
-	replayChecks: Record<string, { pairs: number; median: number }>;
+	/** The replay check so far, per model: qualifying request pairs, their median share and the shares kept. */
+	replayChecks: Record<string, { pairs: number; median: number; shares: number[] }>;
 	replayWarnings: Array<{
 		key: string;
 		setting: "counted" | "ignored";

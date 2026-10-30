@@ -65,8 +65,16 @@ export interface EngineCore {
 		systems: AgentMessage[],
 		override: { sections?: SectionMap; at?: number } | undefined,
 	) => AgentMessage | undefined;
-	/** Window items with the overridden sections removed from system messages older than the override. */
-	stripOverridden: (items: Item[], override: { sections?: SectionMap; at?: number } | undefined) => void;
+	/**
+	 * D23: the checkpoint at a cut, built the same way in session and after a rebuild: the system messages before
+	 * the window and the window's system messages older than the cut, merged with the cut's override if any (as
+	 * keepOverride merges Pi's own messages). Those window messages are folded: kept in the index, never sent.
+	 */
+	checkpointFor: (
+		before: AgentMessage[],
+		items: Item[],
+		cut: { sections?: SectionMap; at?: number } | undefined,
+	) => AgentMessage | undefined;
 	perModel: Record<string, { contextWindow?: number; maxTokens?: number }>;
 	ceiling: number | undefined;
 	resolveLimits: (ctx: ExtensionContext) => Limits;

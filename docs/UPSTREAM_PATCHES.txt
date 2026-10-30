@@ -245,6 +245,7 @@ packages/coding-agent/test/suite/context-engine/d14-truncated-answers-named.test
 packages/coding-agent/test/suite/context-engine/d15-reasoning-only-continuation.test.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/context-engine/d16-search-tool-call-arguments.test.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/context-engine/d2-short-prompts.test.ts	PENpi: context engine behaviour suite (ADR 0032)
+packages/coding-agent/test/suite/context-engine/d23-system-bytes-rebuild.test.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/context-engine/d24-provider-switch.test.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/context-engine/d26-handled-pins.test.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/context-engine/d26-header-format.test.ts	PENpi: context engine behaviour suite (ADR 0032)
