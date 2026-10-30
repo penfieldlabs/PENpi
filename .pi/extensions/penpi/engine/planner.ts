@@ -173,9 +173,10 @@ export function installPlanner(core: EngineCore): void {
 	/**
 	 * A host changes a system prompt section only at a cut (EngineHandle.setSectionAtNextCut), so the prompt,
 	 * and the provider's cache, change only where the window does. The override is part of the cut: the
-	 * checkpoint carries it, older copies of the section in the window are removed, and the cut entry records
-	 * it (with the overrides already in effect this session), so a rebuilt window sends the same prompt. A
-	 * system message newer than the override (the host setting the section at a new session) wins.
+	 * checkpoint carries it, the system messages in the kept window older than the cut are merged into the
+	 * checkpoint and not sent (D23), and the cut entry records it (with the overrides already in effect this
+	 * session), so a rebuilt window sends the same prompt. A system message newer than the override (the host
+	 * setting the section at a new session) wins.
 	 */
 	core.sectionsAtCut = (take) => {
 		const pending = Object.entries(st.pendingSections).filter(([name, text]) => st.appliedSections[name] !== text);
@@ -417,8 +418,9 @@ export function installPlanner(core: EngineCore): void {
 			if (entry.type === "context_edit") {
 				const at = st.index.items.findIndex((item) => item.entryId === entry.targetId);
 				if (at < 0) continue;
-				// D23: a folded system message is in the checkpoint too; a rebuild makes the checkpoint without it.
-				if (entry.replacement !== null || st.index.items[at].folded) return rebuild();
+				// Only system messages are folded (D23), and Pi refuses a context edit of a system message
+				// (appendContextEdit), so an edit never reaches a folded item.
+				if (entry.replacement !== null) return rebuild();
 				st.index.total -= st.index.items[at].tokens;
 				st.index.items.splice(at, 1);
 				continue;

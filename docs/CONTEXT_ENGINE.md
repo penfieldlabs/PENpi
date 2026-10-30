@@ -14,6 +14,14 @@ made while porting it.
   (45%). The cut is saved as a session entry, so the window stays the same across requests, which
   keeps the provider's prompt cache. Messages before the cut leave the model's view, not the
   session.
+- **System messages fold into the leading prompt at a cut.** At every cut, the system messages
+  in the kept window that are older than the cut (a section update, a tool added or removed
+  mid-session) are merged into the leading system prompt and are no longer sent where they were
+  recorded. The merged prompt is the same. A provider that shows system messages mid-conversation
+  now sees those updates in the leading prompt instead of at their place. A window rebuilt after
+  a resume or `/reload` sends the same bytes as the session did (D23). A session cut under 0.5.x
+  whose kept window holds such a message is laid out this way at its first rebuild under 0.6.0:
+  one prompt-cache miss, once.
 - **A header after each cut.** The header says what left the window and how to get it back. It
   carries the user's earlier messages verbatim (the pin: only messages a person typed, capped at
   min(10% of the window, 20,000 tokens)). It also carries the model's working notes

@@ -14,12 +14,19 @@
  *   pair      two sections changed at one cut, one existing and one new;
  *   mixed     as one, with the older copy's system message also carrying a section the cut does not change;
  *   superseded  as one, then the host sets the section again and a later cut has no override.
+ *   tools     no section change: the host turns a second tool on for the run in which the session cuts (Pi records
+ *             a tool-change system message in the kept window, older than the cut), then off again (0.6.0, from
+ *             the independent review).
+ *
+ * Paths: the four rebuilds, and `delete`, a context edit that deletes a tool result (the in-session splice, not a
+ * rebuild). A system message with text content is not covered: Pi's own mid-session system messages carry only
+ * section and tool changes, with empty content.
  */
 
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getCurrentSystemMessage, getSystemMessageText, type Message } from "@earendil-works/pi-ai";
+import { getCurrentSystemMessage, getSystemMessageText, type Message, Type } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import type { EngineHandle } from "../../../../../.pi/extensions/penpi/engine/index.ts";
 import type { ExtensionAPI, ExtensionFactory } from "../../../src/index.ts";
@@ -35,7 +42,7 @@ import {
 	workExtension,
 } from "./helpers.ts";
 
-const host: { memo: string; note?: string } = { memo: "A" };
+const host: { memo: string; note?: string; probe?: boolean } = { memo: "A" };
 const injector = { on: false };
 
 async function session() {
@@ -44,9 +51,20 @@ async function session() {
 	const factories: ExtensionFactory[] = [
 		workExtension,
 		(pi: ExtensionAPI) => {
+			pi.registerTool({
+				name: "probe",
+				label: "probe",
+				description: "A second tool, turned on and off by the host.",
+				parameters: Type.Object({}),
+				execute: async () => ({ content: [{ type: "text", text: "probed" }], details: {} }),
+			});
 			pi.on("before_agent_start", (event) => {
 				event.systemPromptOptions.sections.memo = host.memo;
 				if (host.note) event.systemPromptOptions.sections.note = host.note;
+				// The "tools" scenario: the second tool is active only while the host says so (a tool change).
+				const active = pi.getActiveTools();
+				const want = host.probe ? [...new Set([...active, "probe"])] : active.filter((name) => name !== "probe");
+				if (want.length !== active.length) pi.setActiveTools(want);
 			});
 			pi.on("context_with_system", (event) =>
 				injector.on
@@ -144,6 +162,12 @@ async function scenario(s: S, name: string) {
 		s.handle().setSectionAtNextCut("extra", "E");
 		await run(s, "task 2: process the next batch.", 100, 2_500);
 		expect(s.handle().appliedSection("extra")).toBe("E");
+	} else if (name === "tools") {
+		host.probe = true;
+		const cuts = s.stats.cuts.length;
+		await run(s, "task 2: process the next batch.", 100, 2_500);
+		expect(s.stats.cuts.length, "a cut in the run that turned the tool on").toBeGreaterThan(cuts);
+		host.probe = false;
 	} else if (name === "pair") {
 		s.handle().setSectionAtNextCut("memo", "C");
 		s.handle().setSectionAtNextCut("extra", "E");
@@ -180,6 +204,13 @@ const paths: Record<string, (s: S) => Promise<void>> = {
 	align: async () => {
 		injector.on = true;
 	},
+	delete: async (s) => {
+		// A context edit that deletes a tool result in the kept window: the in-session splice path, not a rebuild.
+		const branch = s.harness.sessionManager.getBranch();
+		const result = [...branch].reverse().find((e) => e.type === "message" && e.message.role === "toolResult");
+		if (!result) throw new Error("no tool result");
+		s.harness.sessionManager.appendContextEdit(result.id, null);
+	},
 };
 
 describe("D23: the system prompt after a rebuild without a cut is byte-identical to the in-session one", () => {
@@ -188,10 +219,11 @@ describe("D23: the system prompt after a rebuild without a cut is byte-identical
 		injector.on = false;
 		host.memo = "A";
 		host.note = undefined;
+		host.probe = false;
 		while (harnesses.length > 0) harnesses.pop()?.cleanup();
 	});
 
-	for (const name of ["one", "two-cuts", "new", "pair", "mixed", "superseded"])
+	for (const name of ["one", "two-cuts", "new", "pair", "mixed", "superseded", "tools"])
 		for (const path of Object.keys(paths))
 			it(`${name}, ${path}`, async () => {
 				const s = await session();
@@ -206,7 +238,7 @@ describe("D23: the system prompt after a rebuild without a cut is byte-identical
 				const after = s.systems.at(-1)!;
 				expect(s.stats.cuts.length, "no cut between the two requests").toBe(cutsBefore);
 				// The path really took the rebuild (or, for align, Pi's own messages): otherwise a pass would be empty.
-				if (path !== "align")
+				if (path !== "align" && path !== "delete")
 					expect(s.stats.indexRebuilds, "the index was rebuilt").toBeGreaterThan(rebuildsBefore);
 				if (process.env.D23_SHOW) console.log(`${name}, ${path}\nBEFORE ${before.bytes}\nAFTER  ${after.bytes}`);
 				expect(after.merged, "merged system prompt text").toBe(before.merged);

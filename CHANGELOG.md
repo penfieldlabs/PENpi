@@ -27,6 +27,17 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
   caption; the estimate counts both.
 
 ### Fixed
+- **A rebuilt window sends the same system prompt as the session did** (D23). After a resume or
+  `/reload`, the system messages could be laid out differently from the in-session window, which
+  changed the bytes and missed the provider's prompt cache. At every cut, the system messages in
+  the kept window that are older than the cut are now merged into the leading prompt, with or
+  without a section change: the merged prompt is the same, but a provider that shows system
+  messages mid-conversation sees those updates in the leading prompt. A session cut under 0.5.x
+  whose kept window holds such a message gets the new layout at its first rebuild under 0.6.0,
+  with one prompt-cache miss, once.
+- **The replayed-reasoning check is more careful** (D22). It skips a request that appends an
+  image (the provider counts the image, the estimate of the appended text does not), counts the
+  pre-cut notice, and no longer reports "ignored" while some requests read around 0.4.
 - **An HTTP 413 with no token numbers no longer shrinks the window.** Pi 1.4.0 counts a request
   that is too large in bytes as a context overflow; the engine leaves it to Pi, as in 0.5.x,
   instead of learning a smaller window from it. A 413 that names a token overflow is still one.
