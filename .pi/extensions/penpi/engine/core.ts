@@ -89,6 +89,10 @@ export interface EngineCore {
 	pinUpperTokens: (branch: SessionEntry[]) => number;
 	/** D26: the header's current-request line at a cut ("" when the run has none); `longest` for a size bound. */
 	currentRequestLine: (branch: SessionEntry[], firstKeptEntryId: string, longest?: boolean) => string;
+	/** D26: the entry id of the current request (the first user message of the latest run), if any. */
+	currentRequestId: (branch: SessionEntry[]) => string | undefined;
+	/** D26 (C3): the UTC day of an entry, or undefined. */
+	dayOf: (entry: SessionEntry) => string | undefined;
 	makeHeader: (seq: number, firstKeptEntryId: string, branch: SessionEntry[], withPin?: boolean) => string;
 	headerMessage: (header: string, at?: number) => AgentMessage;
 	headerTokens: (branch: SessionEntry[]) => number;

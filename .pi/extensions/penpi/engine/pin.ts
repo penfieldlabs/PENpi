@@ -343,6 +343,8 @@ export function installPin(core: EngineCore): void {
 		return pinned ? pinnedForm : windowForm;
 	}
 	core.currentRequestLine = currentRequestLine;
+	core.currentRequestId = currentRequestId;
+	core.dayOf = dayOf;
 
 	// ---------------------------------------------------------------- input sources
 	/**

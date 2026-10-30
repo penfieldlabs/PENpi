@@ -18,10 +18,12 @@ export function installHeader(core: EngineCore): void {
 		latest: string;
 		explicit: boolean;
 		noteTask: string;
+		notesEntry?: SessionEntry;
 	} {
 		let task = "";
 		let noteTask = "";
 		let notes = "";
+		let notesEntry: SessionEntry | undefined;
 		let latest = "";
 		let lastUser = "";
 		for (const entry of branch) {
@@ -40,14 +42,33 @@ export function installHeader(core: EngineCore): void {
 			if (message.role === "user") lastUser = textOfContent(message.content).slice(0, opts.taskMaxChars);
 			if (message.role === "toolResult" && message.toolName === NOTES_TOOL && !message.isError) {
 				const details = message.details as { notes?: string; task?: string } | undefined;
-				if (details?.notes !== undefined) notes = details.notes;
+				if (details?.notes !== undefined) {
+					notes = details.notes;
+					notesEntry = entry;
+				}
 				if (details?.task) {
 					task = details.task;
 					noteTask = details.task;
 				}
 			}
 		}
-		return { task: task || lastUser, notes, latest, explicit: task !== "", noteTask };
+		return { task: task || lastUser, notes, latest, explicit: task !== "", noteTask, notesEntry };
+	}
+
+	/**
+	 * notesAge (prototype): the working notes' first line, the day they were written and whether that was
+	 * before the current request (D26's), so notes from an earlier task are told apart. "" without both.
+	 */
+	function notesAgeLine(branch: SessionEntry[], notesEntry: SessionEntry | undefined): string {
+		const currentId = core.currentRequestId(branch);
+		if (!notesEntry || !currentId) return "";
+		const current = branch.find((e) => e.id === currentId);
+		const written = core.dayOf(notesEntry);
+		if (!current || !written) return "";
+		if (branch.indexOf(notesEntry) > branch.indexOf(current))
+			return `[written ${written}, during the current request (user message ${currentId})]\n`;
+		const sent = core.dayOf(current);
+		return `[written ${written}, before the current request (user message ${currentId}${sent ? `, sent ${sent}` : ""}); may describe an earlier task]\n`;
 	}
 
 	/** Whether a tool is declared to the model (the header and notices name only those). */
@@ -73,7 +94,7 @@ export function installHeader(core: EngineCore): void {
 	}
 
 	function makeHeader(seq: number, firstKeptEntryId: string, branch: SessionEntry[], withPin = true): string {
-		const { task, notes, latest, noteTask } = pinned(branch);
+		const { task, notes, latest, noteTask, notesEntry } = pinned(branch);
 		let omitted = 0;
 		for (const entry of branch) {
 			if (entry.id === firstKeptEntryId) break;
@@ -102,7 +123,10 @@ export function installHeader(core: EngineCore): void {
 			if (task) lines.push(`<pinned-task>\n${task}\n</pinned-task>`);
 			if (latest) lines.push(`<latest-instruction>\n${latest}\n</latest-instruction>`);
 		}
-		if (notes) lines.push(`<working-notes>\n${notes}\n</working-notes>`);
+		if (notes) {
+			const age = opts.notesAge ? notesAgeLine(branch, notesEntry) : "";
+			lines.push(`<working-notes>\n${age}${notes}\n</working-notes>`);
+		}
 		const header = lines.join("\n");
 		if (report) {
 			if (st.pinReports.size > 16) st.pinReports.clear();

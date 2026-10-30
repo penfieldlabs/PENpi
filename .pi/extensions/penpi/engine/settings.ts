@@ -44,7 +44,7 @@ const NUMBERS: Array<[keyof EngineOptions, number, number]> = [
 	["notesMaxChars", 0, Number.POSITIVE_INFINITY],
 	["taskMaxChars", 0, Number.POSITIVE_INFINITY],
 ];
-const BOOLEANS: Array<keyof EngineOptions> = ["calibrate", "notice", "noticeRepeats"];
+const BOOLEANS: Array<keyof EngineOptions> = ["calibrate", "notice", "noticeRepeats", "notesAge"];
 const PIN_SOURCES: PinSource[] = ["interactive", "rpc", "extension"];
 /** PENpi 0.4 FIFO settings: no longer read (0.5.0 replaced FIFO with the context engine). */
 export const RETIRED_SETTINGS = ["contextFloor", "contextCeiling", "emergencyCompactionRuns"] as const;
