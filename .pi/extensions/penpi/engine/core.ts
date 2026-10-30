@@ -51,6 +51,8 @@ export interface EngineCore {
 	 * the cap, and how to compose the section's content for a cap.
 	 */
 	cappedSections: Map<string, CappedSection>;
+	/** Lines the host adds to `/penpi doctor` (EngineHandle.addDoctorLine), rendered when doctor runs. */
+	hostDoctorLines: Array<() => string>;
 	/** D19: what a new cut entry records of these sections (nothing, them, or that they are unchanged). */
 	cutSectionsRecord: (
 		branch: SessionEntry[],

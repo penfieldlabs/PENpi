@@ -21,7 +21,7 @@ import {
 	STATE_TYPE,
 	systemPromptSection,
 } from "./options.ts";
-import { repairToolCalls } from "./repair.ts";
+import { blank, repairToolCalls } from "./repair.ts";
 import type { Item, Limits, SectionMap, WindowIndex } from "./state.ts";
 
 export function isStartable(message: AgentMessage): boolean {
@@ -483,7 +483,7 @@ export function installPlanner(core: EngineCore): void {
 		for (const item of leaving) {
 			if (item.message.role !== "assistant") continue;
 			for (const block of (item.message as AssistantMessage).content) {
-				if (block.type !== "toolCall" || !block.name.trim()) continue;
+				if (block.type !== "toolCall" || blank(block.name)) continue;
 				tools.set(block.name, (tools.get(block.name) ?? 0) + 1);
 				const args = (block.arguments ?? {}) as Record<string, unknown>;
 				for (const key of ["path", "file_path", "filePath", "file", "filename"]) {

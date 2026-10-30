@@ -41,7 +41,7 @@ import {
 import { installPenpiEngine } from "./engine/entry.ts";
 import type { EngineHandle } from "./engine/index.ts";
 import { type AdapterConfig, buildAdapterConfig, ensurePenfieldMcpEntry, JWT_ENV } from "./mcp-config.ts";
-import { PenfieldClient, type PenfieldClientOptions } from "./penfield-client.ts";
+import { PenfieldClient, type PenfieldClientOptions, type ToolResult } from "./penfield-client.ts";
 import { searchTranscripts, sessionDirForCwd } from "./transcript-search.ts";
 
 const STATE_CUSTOM_TYPE = "penpi-state";
@@ -130,6 +130,23 @@ function fitEncoded(text: string, fullLength: number, limit = MAX_MEMORY_TEXT_CH
 }
 
 /** Lightweight per-instance status for the /penpi command. */
+/** 0.5.1: what one memory refresh did (the engine log and `/penpi doctor`). */
+type RefreshOutcome = "changed" | "unchanged" | "skipped" | "failed";
+
+/**
+ * Read the memory: awaken, then reflect. An `isError` result is a failed read, never composed as memory; the error
+ * names the tool only, since an error result's text can be anything.
+ */
+export async function readMemory(
+	c: Pick<PenfieldClient, "awaken" | "reflect">,
+): Promise<{ awoken: ToolResult; reflection: ToolResult }> {
+	const awoken = await c.awaken();
+	if (awoken.isError) throw new Error("awaken returned an error result");
+	const reflection = await c.reflect("recent");
+	if (reflection.isError) throw new Error("reflect returned an error result");
+	return { awoken, reflection };
+}
+
 type PenpiStatus = { penfieldEnv?: string; authMode?: string; orientedAt?: number; injecting?: boolean };
 
 /** Injectable dependencies (for testing the hooks in isolation). */
@@ -265,6 +282,30 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps): void | Promise<voi
 	engine?.capSection(BRIEFING_SECTION, MEMORY_SECTION_FRACTION, MEMORY_SECTION_MAX_TOKENS, (cap) =>
 		memoryRaw ? composeOrientation(memoryRaw.briefing, memoryRaw.reflection, cap).content : undefined,
 	);
+	/**
+	 * 0.5.1: what the refresh after each run did, for the engine log and `/penpi doctor`. A failed read (orient's or
+	 * a refresh's) makes the next refresh reconnect first, once per run, instead of skipping the session's memory
+	 * for good. Logged without memory text: an outcome, and for a failure the error.
+	 */
+	const refreshCounts: Record<RefreshOutcome, number> = { changed: 0, unchanged: 0, skipped: 0, failed: 0 };
+	let lastRefresh: { at: number; outcome: RefreshOutcome } | undefined;
+	let lastRefreshError: string | undefined;
+	let readFailed = false;
+	/** The session's orientation failed (connect, login or read): each refresh after it is logged as skipped. */
+	let orientFailed = false;
+	const recordRefresh = (outcome: RefreshOutcome, detail?: string, error?: string) => {
+		refreshCounts[outcome]++;
+		lastRefresh = { at: Date.now(), outcome };
+		if (error !== undefined) lastRefreshError = error;
+		engine?.log(`memory refresh: ${outcome}${detail ? ` (${detail})` : ""}`);
+	};
+	engine?.addDoctorLine(() => {
+		const last = lastRefresh ? `last ${new Date(lastRefresh.at).toISOString()} ${lastRefresh.outcome}` : "none yet";
+		const counts = (["changed", "unchanged", "skipped", "failed"] as const)
+			.map((outcome) => `${refreshCounts[outcome]} ${outcome}`)
+			.join(", ");
+		return `memory refresh: ${last}; ${counts}${lastRefreshError ? ` (last error: ${lastRefreshError})` : ""}`;
+	});
 	// Embedded adapter: problems found while building or installing it at load time,
 	// reported at session_start (there is no UI at load), and the Penfield URL it was
 	// given, which must match the session's.
@@ -325,7 +366,7 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps): void | Promise<voi
 					await ctx.reload();
 					return;
 				} catch (err) {
-					ctx.ui.notify(`PENpi: Penfield login failed — ${errMsg(err)}`, "error");
+					ctx.ui.notify(`PENpi: Penfield login failed — ${errLine(err)}`, "error");
 					await client.disconnect();
 				}
 				return;
@@ -409,22 +450,42 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps): void | Promise<voi
 
 	// E8.14: after each run, read the memory again for the engine's next cut (never mid-run, one read at a time).
 	pi.on("agent_end", (_event, ctx) => {
-		if (orientation === undefined || !engine || refreshing) return;
+		if (!engine || refreshing) return;
+		if (orientation === undefined) {
+			// After a failed orientation there is no briefing to refresh (and none is added mid-session). Raw mode
+			// orients nothing on purpose and logs nothing.
+			if (orientFailed) recordRefresh("skipped", "not oriented");
+			return;
+		}
 		const c = client;
-		if (!c?.connected) return;
+		if (!c) return;
 		const generation = refreshGeneration;
 		refreshing = (async () => {
+			let reconnected = false;
 			try {
-				const awoken = await c.awaken();
-				const reflection = await c.reflect("recent");
+				if (!c.connected) {
+					// Not connected after a failed read: reconnect, once per run. Otherwise there is nothing to read.
+					if (!readFailed) {
+						recordRefresh("skipped", "not connected");
+						return;
+					}
+					await c.connect();
+					reconnected = true;
+				}
+				const { awoken, reflection } = await readMemory(c);
 				if (generation !== refreshGeneration) return;
+				readFailed = false;
 				const rawBriefing = extractBriefing(awoken.data) ?? awoken.text;
 				const { content, briefing, reflectionText } = composeOrientation(
 					rawBriefing,
 					reflection.text,
 					engine.sectionCap(ctx, BRIEFING_SECTION, MEMORY_SECTION_FRACTION, MEMORY_SECTION_MAX_TOKENS),
 				);
-				if (content === queuedOrientation) return;
+				const how = reconnected ? "after a reconnect" : undefined;
+				if (content === queuedOrientation) {
+					recordRefresh("unchanged", how);
+					return;
+				}
 				queuedOrientation = content;
 				memoryRaw = { briefing: rawBriefing, reflection: reflection.text };
 				engine.setSectionAtNextCut(BRIEFING_SECTION, content);
@@ -433,7 +494,12 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps): void | Promise<voi
 					appliesAt: "next cut",
 					...memoryRecord(rawBriefing, briefing, reflection.text, reflectionText),
 				});
+				recordRefresh("changed", how ? `applies at the next cut; ${how}` : "applies at the next cut");
 			} catch (err) {
+				// D21: once the session changed or shutdown began, nothing more is written.
+				if (generation !== refreshGeneration) return;
+				readFailed = true;
+				recordRefresh("failed", errLine(err), errLine(err));
 				if (debug) console.error(`[PENpi] briefing refresh failed: ${errMsg(err)}`);
 			} finally {
 				refreshing = undefined;
@@ -490,13 +556,15 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps): void | Promise<voi
 				`PENpi: Penfield not authenticated (${cfg.env}). Run /penpi login. Memory idle until then.`,
 				"warning",
 			);
+			orientFailed = true;
+			engine?.log(`memory read at ${reason} failed (Penfield not authenticated)`);
 			return;
 		}
 
 		try {
 			await orient(ctx, cfg, reason, shouldInject());
 		} catch (err) {
-			ctx.ui.notify(`PENpi: Penfield orientation failed — ${errMsg(err)}. Continuing without memory.`, "warning");
+			ctx.ui.notify(`PENpi: Penfield orientation failed — ${errLine(err)}. Continuing without memory.`, "warning");
 			await client.disconnect();
 		}
 	});
@@ -591,6 +659,24 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps): void | Promise<voi
 	 * (callers handle + disconnect).
 	 */
 	async function orient(ctx: ExtensionContext, cfg: PenfieldConfig, reason: string, inject: boolean): Promise<void> {
+		// 0.5.1: every failure is logged, the connect's (an expired login, the network) as well as the read's.
+		try {
+			await orientSession(ctx, cfg, reason, inject);
+			orientFailed = false;
+		} catch (err) {
+			readFailed = true;
+			orientFailed = true;
+			engine?.log(`memory read at ${reason} failed (${errLine(err)})`);
+			throw err;
+		}
+	}
+
+	async function orientSession(
+		ctx: ExtensionContext,
+		cfg: PenfieldConfig,
+		reason: string,
+		inject: boolean,
+	): Promise<void> {
 		const c = client;
 		if (!c) return;
 		status.orientedAt = undefined;
@@ -608,7 +694,7 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps): void | Promise<voi
 			const mcpPath = await wireConsciousLayer(cfg, c);
 			if (debug) console.error(`[PENpi] conscious layer wired: ${mcpPath} (bearer via ${JWT_ENV})`);
 		} catch (e) {
-			ctx.ui.notify(`PENpi: could not wire conscious layer — ${errMsg(e)}`, "warning");
+			ctx.ui.notify(`PENpi: could not wire conscious layer — ${errLine(e)}`, "warning");
 		}
 
 		await c.connect();
@@ -626,8 +712,8 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps): void | Promise<voi
 			return;
 		}
 
-		const awoken = await c.awaken();
-		const reflection = await c.reflect("recent");
+		const { awoken, reflection } = await readMemory(c);
+		readFailed = false;
 
 		// Sanitize remote memory text BEFORE it is wrapped: a stored memory whose
 		// content contains e.g. "=== END PENFIELD PERSISTENT MEMORY ===" would
@@ -879,4 +965,16 @@ function normalizedLength(s: string): number {
 
 function errMsg(err: unknown): string {
 	return err instanceof Error ? err.message : String(err);
+}
+
+/** The longest error text PENpi writes to the engine log, the doctor line or a notice. */
+export const ERROR_TEXT_MAX = 200;
+
+/**
+ * 0.5.1: an error as one short line. A transport error can carry a whole HTTP response body (the MCP SDK puts it in
+ * the message), such as a proxy's multi-line HTML error page: whitespace is collapsed and the text is capped.
+ */
+export function errLine(err: unknown, max = ERROR_TEXT_MAX): string {
+	const text = errMsg(err).replace(/\s+/g, " ").trim();
+	return text.length > max ? `${text.slice(0, max - 3)}...` : text;
 }
