@@ -291,6 +291,8 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps): void | Promise<voi
 	let lastRefresh: { at: number; outcome: RefreshOutcome } | undefined;
 	let lastRefreshError: string | undefined;
 	let readFailed = false;
+	/** The session's orientation failed (connect, login or read): each refresh after it is logged as skipped. */
+	let orientFailed = false;
 	const recordRefresh = (outcome: RefreshOutcome, detail?: string, error?: string) => {
 		refreshCounts[outcome]++;
 		lastRefresh = { at: Date.now(), outcome };
@@ -448,7 +450,13 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps): void | Promise<voi
 
 	// E8.14: after each run, read the memory again for the engine's next cut (never mid-run, one read at a time).
 	pi.on("agent_end", (_event, ctx) => {
-		if (orientation === undefined || !engine || refreshing) return;
+		if (!engine || refreshing) return;
+		if (orientation === undefined) {
+			// After a failed orientation there is no briefing to refresh (and none is added mid-session). Raw mode
+			// orients nothing on purpose and logs nothing.
+			if (orientFailed) recordRefresh("skipped", "not oriented");
+			return;
+		}
 		const c = client;
 		if (!c) return;
 		const generation = refreshGeneration;
@@ -548,6 +556,8 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps): void | Promise<voi
 				`PENpi: Penfield not authenticated (${cfg.env}). Run /penpi login. Memory idle until then.`,
 				"warning",
 			);
+			orientFailed = true;
+			engine?.log(`memory read at ${reason} failed (Penfield not authenticated)`);
 			return;
 		}
 
@@ -649,6 +659,24 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps): void | Promise<voi
 	 * (callers handle + disconnect).
 	 */
 	async function orient(ctx: ExtensionContext, cfg: PenfieldConfig, reason: string, inject: boolean): Promise<void> {
+		// 0.5.1: every failure is logged, the connect's (an expired login, the network) as well as the read's.
+		try {
+			await orientSession(ctx, cfg, reason, inject);
+			orientFailed = false;
+		} catch (err) {
+			readFailed = true;
+			orientFailed = true;
+			engine?.log(`memory read at ${reason} failed (${errMsg(err)})`);
+			throw err;
+		}
+	}
+
+	async function orientSession(
+		ctx: ExtensionContext,
+		cfg: PenfieldConfig,
+		reason: string,
+		inject: boolean,
+	): Promise<void> {
 		const c = client;
 		if (!c) return;
 		status.orientedAt = undefined;
@@ -684,15 +712,7 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps): void | Promise<voi
 			return;
 		}
 
-		let awoken: ToolResult;
-		let reflection: ToolResult;
-		try {
-			({ awoken, reflection } = await readMemory(c));
-		} catch (err) {
-			readFailed = true;
-			engine?.log(`memory read at ${reason} failed (${errMsg(err)})`);
-			throw err;
-		}
+		const { awoken, reflection } = await readMemory(c);
 		readFailed = false;
 
 		// Sanitize remote memory text BEFORE it is wrapped: a stored memory whose

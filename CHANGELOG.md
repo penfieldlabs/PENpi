@@ -28,8 +28,9 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
 - **An error result from Penfield's `awaken` or `reflect` is a failed read**, at orientation and in
   the refresh. It was composed into the memory section as if it were memory.
 - **Every memory refresh is logged** to the engine log (`PENPI_ENGINE_LOG`), one line each and with
-  no memory text: changed, unchanged, skipped (not connected), or failed with the error. A failed
-  read at orientation is logged too.
+  no memory text: changed, unchanged, skipped (not connected, or not oriented), or failed with the
+  error. A failed orientation is logged too, a failed connect included (an expired login, for
+  instance), and each run after it logs the refresh as skipped (not oriented).
 - **A manual `/compact` is logged as a cut:** `cut #N (manual) at ...`, with the same numbers as
   any other cut.
 - **The pre-cut notice no longer fails on a stored tool call whose name is not a string.** The

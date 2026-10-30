@@ -99,8 +99,8 @@ function makeStubClient(over: Partial<Record<string, any>> = {}) {
 }
 
 /** PENpi with an engine stub (the refresh after a run needs one): its log lines and doctor lines, and the client. */
-function withRefresh(clientOver: Record<string, any>) {
-	const f = makeFakePi();
+function withRefresh(clientOver: Record<string, any>, flags: Record<string, boolean> = {}) {
+	const f = makeFakePi(flags);
 	const stub = makeStubClient({ auth: true, ...clientOver });
 	const setSectionAtNextCut = vi.fn();
 	const logLines: string[] = [];
@@ -1192,6 +1192,49 @@ describe("memory refresh outcomes (0.5.1)", () => {
 		}
 		expect(t.stub.client.connect).toHaveBeenCalledTimes(3); // orient's, then one per run
 		expect(t.doctor()[0]).toMatch(/ 0 changed, 0 unchanged, 0 skipped, 3 failed \(last error: connect timed out\)$/);
+	});
+
+	it("a failed connect at orientation is logged with its error (an expired login, for instance)", async () => {
+		const t = withRefresh({
+			connect: vi.fn(async () => {
+				throw new Error("Penfield device login required, run /penpi login");
+			}),
+		});
+		const { ctx, notifies } = makeCtx();
+		await t.handlers.session_start({ reason: "startup" }, ctx);
+		expect(notifies.some((n) => n.msg.includes("orientation failed"))).toBe(true);
+		expect(t.logLines).toEqual(["memory read at startup failed (Penfield device login required, run /penpi login)"]);
+		expect(t.stub.client.awaken).not.toHaveBeenCalled();
+	});
+
+	it("after a failed orientation each run logs the refresh as skipped (not oriented), and reads nothing", async () => {
+		const t = withRefresh({
+			connect: vi.fn(async () => {
+				throw new Error("fetch failed");
+			}),
+		});
+		const { ctx } = makeCtx();
+		await t.handlers.session_start({ reason: "startup" }, ctx);
+		t.logLines.length = 0;
+		for (let run = 0; run < 2; run++) {
+			t.handlers.agent_end({}, ctx);
+			await new Promise((resolve) => setTimeout(resolve, 0));
+		}
+		expect(t.logLines).toEqual(["memory refresh: skipped (not oriented)", "memory refresh: skipped (not oriented)"]);
+		expect(t.stub.client.connect).toHaveBeenCalledTimes(1); // orientation's only: no reconnect mid-session
+		expect(t.stub.client.awaken).not.toHaveBeenCalled();
+		expect(t.setSectionAtNextCut).not.toHaveBeenCalled();
+		expect(t.doctor()[0]).toMatch(/ skipped; 0 changed, 0 unchanged, 2 skipped, 0 failed$/);
+	});
+
+	it("raw mode orients nothing on purpose: no failure and no refresh line", async () => {
+		const t = withRefresh({}, { "penpi-raw": true });
+		const { ctx } = makeCtx();
+		await t.handlers.session_start({ reason: "startup" }, ctx);
+		t.handlers.agent_end({}, ctx);
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(t.logLines).toEqual([]);
+		expect(t.doctor()[0]).toMatch(/^memory refresh: none yet; 0 changed, 0 unchanged, 0 skipped, 0 failed$/);
 	});
 
 	it("no log line or doctor line carries memory text", async () => {
