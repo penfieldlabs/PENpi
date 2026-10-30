@@ -6,6 +6,45 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
 
 ## [Unreleased]
 
+## [0.5.1] — Unreleased
+
+### Security
+- **`zod` 4.6.6 replaces 3.25.76** (GHSA-mrhx-c7xc-m3w5, memory exhaustion when validating
+  oversized constrained collections; fixed in 4.6.6, with no 3.x fix). An override gives every
+  package zod 4.6.6: pi-mcp-adapter's own schemas, PENpi's Penfield client (MCP SDK 1.x) and
+  `@anthropic-ai/sandbox-runtime`, whose range is ^3.24.1 but whose schemas use only what zod 4
+  keeps. The sandbox example extension's own lockfile takes the same override, and the example
+  declares its config type itself, because sandbox-runtime's type is inferred with zod 3's types
+  (types only; the values it passes are unchanged).
+
+### Added
+- **`/penpi doctor` shows the memory refresh:** "memory refresh: last <time> <outcome>; N changed,
+  N unchanged, N skipped, N failed (last error: ...)".
+
+### Fixed
+- **The memory refresh no longer stops for the rest of a session after one failed read.** A failed
+  read left the Penfield client disconnected, and every later refresh did nothing, silently. The
+  next refresh now reconnects first, once per run.
+- **An error result from Penfield's `awaken` or `reflect` is a failed read**, at orientation and in
+  the refresh. It was composed into the memory section as if it were memory.
+- **Every memory refresh is logged** to the engine log (`PENPI_ENGINE_LOG`), one line each and with
+  no memory text: changed, unchanged, skipped (not connected), or failed with the error. A failed
+  read at orientation is logged too.
+- **A manual `/compact` is logged as a cut:** `cut #N (manual) at ...`, with the same numbers as
+  any other cut.
+- **The pre-cut notice no longer fails on a stored tool call whose name is not a string.** The
+  engine sent Pi's messages unplanned for that request instead.
+- **The ADR references in this changelog are links again**, on GitHub and in the release notes.
+
+### Known issues
+- **E2:** the known failure research.glm.32k.silent-messages (C6 detection lag 4 against the
+  limit 3) is renewed until 0.6.0. The upstream merge planned for 0.6.0 changes E2's corpus, and
+  on the upstream v1.4.0 corpus the run does not fail. The detector is unchanged.
+- **After a cut, an agent can pick up an earlier task that is already finished, or report it as
+  done.** It has been seen when the pinned request is open-ended, such as "pick a topic", and the
+  recent window holds no record of the current subtask. Restating the current task gets the agent
+  back on it. Work on this is planned for 0.6.0.
+
 ## [0.5.0] — 2026-10-27
 
 ### Breaking

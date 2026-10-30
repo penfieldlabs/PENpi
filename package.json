@@ -73,7 +73,7 @@
 	"engines": {
 		"node": ">=22.19.0"
 	},
-	"version": "0.5.0",
+	"version": "0.5.1",
 	"overrides": {
 		"protobufjs": "7.6.6",
 		"hono": "4.13.13",
