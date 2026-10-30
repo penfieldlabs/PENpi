@@ -20,29 +20,30 @@ function replayMedian(values: number[]): number {
  * The replay check's verdict from its shares, or none. "counted" from a median of 0.5; "ignored" only below
  * 0.3, since the estimator's error is systematic per model and an over-counting estimator pulls a counting
  * provider toward "ignored", the direction that under-counts. The rule is asymmetric. "ignored" is withheld
- * while a tenth of the pairs, or 3 of them, are at 0.5 or more: those count the replay (a provider that keeps
- * reasoning only inside a tool loop, an over-counted 0.6), and "ignored" would under-count them. "counted",
+ * while a tenth of the pairs, or 3 of them, are at 0.3 or more: those may count the replay (a provider that
+ * keeps reasoning only inside a tool loop, read as low as 0.4 by an over-counting estimator, D22), and
+ * "ignored" would under-count them. "counted",
  * the safe direction, is withheld only when a quarter of the pairs are below 0.3. In between, no verdict.
  */
 export function replayVerdict(shares: number[]): "counted" | "ignored" | undefined {
 	const low = shares.filter((share) => share < REPLAY_IGNORED_BELOW).length;
 	const median = replayMedian(shares);
 	if (median >= REPLAY_COUNTED_FROM) return low >= REPLAY_COUNTED_BLOCK * shares.length ? undefined : "counted";
-	if (median < REPLAY_IGNORED_BELOW) return someCountReplay(shares) ? undefined : "ignored";
+	if (median < REPLAY_IGNORED_BELOW) return enough(shares, REPLAY_IGNORED_BELOW) ? undefined : "ignored";
 	return undefined;
 }
 
-/** The pairs that withhold "ignored": a tenth of them, or 3 (whichever is fewer), at 0.5 or more. */
-function someCountReplay(shares: number[]): boolean {
-	const high = shares.filter((share) => share >= REPLAY_COUNTED_FROM).length;
+/** A tenth of the pairs, or 3 (whichever is fewer), at `from` or more. */
+function enough(shares: number[], from: number): boolean {
+	const high = shares.filter((share) => share >= from).length;
 	return high >= Math.min(REPLAY_IGNORED_BLOCK_PAIRS, REPLAY_IGNORED_BLOCK * shares.length);
 }
 
 /**
  * The value the replay check recommends for a setting, or none: the verdict when it disagrees with the
- * setting. Without a verdict, "counted" when the setting is "ignored" and enough pairs count the replay
- * (the pairs that withhold "ignored"): those requests are under-counted, the risky direction. A setting of
- * "counted" without a verdict gets no recommendation.
+ * setting. Without a verdict, "counted" when the setting is "ignored" and a tenth of the pairs, or 3, clearly
+ * count the replay (0.5 or more; a steady 0.4 stays silent): those requests are under-counted, the risky
+ * direction. A setting of "counted" without a verdict gets no recommendation.
  */
 export function replayRecommendation(
 	shares: number[],
@@ -50,13 +51,13 @@ export function replayRecommendation(
 ): "counted" | "ignored" | undefined {
 	const verdict = replayVerdict(shares);
 	if (verdict !== undefined) return verdict === setting ? undefined : verdict;
-	return setting === "ignored" && someCountReplay(shares) ? "counted" : undefined;
+	return setting === "ignored" && enough(shares, REPLAY_COUNTED_FROM) ? "counted" : undefined;
 }
 const REPLAY_COUNTED_FROM = 0.5;
 const REPLAY_IGNORED_BELOW = 0.3;
 /** "counted" is withheld when this share of the pairs is below 0.3. */
 const REPLAY_COUNTED_BLOCK = 0.25;
-/** "ignored" is withheld when this share of the pairs, or this many, are at 0.5 or more (whichever is fewer). */
+/** "ignored" is withheld when this share of the pairs, or this many, are at 0.3 or more (whichever is fewer). */
 const REPLAY_IGNORED_BLOCK = 0.1;
 const REPLAY_IGNORED_BLOCK_PAIRS = 3;
 
@@ -86,11 +87,14 @@ export function installDetector(core: EngineCore): void {
 		// 0.85-1.12 of real tokenizers; a pair counts only when the replay is at least half the text, so that
 		// error moves a share by at most about 0.3 (replayVerdict says how the shares decide).
 		const replay = sent.appendedReplay;
-		const text = sent.appendedText + sent.appendedAsText - sent.noticeDrop;
+		// D22: the provider counts this request's notice (the appended messages leave it out) and the images
+		// appended; those image estimates are too rough to subtract, so a pair that appends one is skipped.
+		const text = sent.appendedText + sent.appendedAsText - sent.noticeDrop + sent.noticeAdd;
+		if (sent.appendedImages > 0) return;
 		if (replay < REPLAY_MIN_TOKENS || replay < REPLAY_MIN_SHARE * text || delta <= 0) return;
 		const shares = [...(st.replayShares.get(key) ?? []).slice(-63), (delta - text) / replay];
 		st.replayShares.set(key, shares);
-		stats.replayChecks[key] = { pairs: shares.length, median: replayMedian(shares) };
+		stats.replayChecks[key] = { pairs: shares.length, median: replayMedian(shares), shares };
 		if (shares.length < REPLAY_CHECK_PAIRS || st.replayWarned.has(key)) return;
 		const median = replayMedian(shares);
 		const setting = opts.replayedReasoning?.[key] === "ignored" ? "ignored" : "counted";

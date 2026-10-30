@@ -831,12 +831,15 @@ export function installPlanner(core: EngineCore): void {
 		// sent as text, which every provider counts.
 		let appendedReplay = 0;
 		let appendedAsText = 0;
+		let appendedImages = 0;
 		let afterLengthStop = false;
 		if (appendOnly) {
 			for (const m of sentMessages.slice(st.sentShape!.keys.length, shape.keys.length)) {
 				// What Pi sends, without any replayed reasoning (providers differ in counting it) or images.
 				const sent = core.parts(m);
-				appendedText += sent.tokens === 0 ? 0 : sent.tokens - sent.reasoning - messageImageTokens(m);
+				const images = sent.tokens === 0 ? 0 : messageImageTokens(m);
+				appendedText += sent.tokens === 0 ? 0 : sent.tokens - sent.reasoning - images;
+				appendedImages += images;
 				if (sent.tokens > 0) {
 					appendedReplay += sent.reasoning - (sent.asText ?? 0);
 					appendedAsText += sent.asText ?? 0;
@@ -860,7 +863,9 @@ export function installPlanner(core: EngineCore): void {
 			appendedText,
 			appendedReplay,
 			appendedAsText,
+			appendedImages,
 			noticeDrop,
+			noticeAdd: shape.noticeTokens,
 			afterLengthStop,
 			chain: st.appendChain,
 			cum: st.appendCum,
