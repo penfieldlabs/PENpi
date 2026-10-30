@@ -3076,7 +3076,8 @@ export function createContextEngine(overrides: Partial<EngineOptions> = {}): Ext
 		// H5: remember the prompt that starts each run; the header pins it. D2: a short prompt keeps the
 		// pinned task and is carried as the latest instruction (with no task yet, it becomes the task).
 		pi.on("before_agent_start", (event, ctx) => {
-			if (!event.prompt) return;
+			// 0.6.0 (Pi 1.4): only a user's prompt starts a run here (types only; the same behaviour as before).
+			if (event.messageType !== "user" || !event.prompt) return;
 			const prompt = event.prompt.slice(0, opts.taskMaxChars);
 			const short = event.prompt.trim().length < opts.shortPromptChars;
 			const kind = short && pinned(ctx.sessionManager.getBranch()).explicit ? "latest" : "run";

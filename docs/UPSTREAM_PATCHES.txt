@@ -2,7 +2,7 @@
 # scripts/check-upstream-patches.mjs fails when `git diff --name-only <base>` (index) is not
 # exactly this set. Add a line when PENpi changes or adds a file; remove it when the file
 # matches upstream again. Update the base after each upstream merge.
-base: abe508e1b89912adde45528136c3221eb69acdd7 (upstream Pi v1.1.0)
+base: 4a080252f06caf63a525d7873c5d94d3c23887e0 (upstream Pi v1.4.0)
 .github/APPROVED_CONTRIBUTORS	deleted: upstream contributor gate
 .github/ISSUE_TEMPLATE/bug.yml	PENpi links and wording; no upstream auto-close gate
 .github/ISSUE_TEMPLATE/contribution.yml	PENpi links; no upstream contributor gate
@@ -166,7 +166,6 @@ packages/ai/src/providers/data/xiaomi.json	committed model-data snapshot (offlin
 packages/ai/src/providers/data/zai-coding-cn.json	committed model-data snapshot (offline builds)
 packages/ai/src/providers/data/zai.json	committed model-data snapshot (offline builds)
 packages/chord/package.json	vitest 4.1.12 security update (as upstream 2685de7a1)
-packages/client/package.json	vitest 4.1.12 security update (as upstream 2685de7a1)
 packages/codemode/package.json	vitest 4.1.12 security update (as upstream 2685de7a1)
 packages/coding-agent/README.md	upstream README plus a PENpi note
 packages/coding-agent/docs/settings.md	documents PENpi's compaction-off default
@@ -181,7 +180,7 @@ packages/coding-agent/src/cli/args.ts	core patch: hidden extension CLI flags
 packages/coding-agent/src/core/extensions/loader.ts	core patch: hidden extension CLI flags
 packages/coding-agent/src/core/extensions/types.ts	core patch: hidden extension CLI flags
 packages/coding-agent/src/core/package-manager.ts	core patch: exact pins for managed installs (ADR 0020)
-packages/coding-agent/src/core/settings-manager.ts	core patch: compaction off by default; the context engine replaces it (ADR 0032)
+packages/coding-agent/src/core/settings-defaults.ts	core patch: compaction off by default; the context engine replaces it (ADR 0032)
 packages/coding-agent/src/modes/interactive/interactive-mode.ts	core patch: no upstream update banner (ADR 0019)
 packages/coding-agent/src/modes/print-mode.ts	core patch: print every continuation part (ADR 0032)
 packages/coding-agent/src/utils/shell.ts	core patch: strip Penfield credentials from shell commands
@@ -193,7 +192,6 @@ packages/coding-agent/test/penpi-print-mode-continuation.test.ts	PENpi test agai
 packages/coding-agent/test/penpi-shell-env.test.ts	PENpi test against the real session
 packages/coding-agent/test/settings-manager-compaction.test.ts	upstream test adapted to PENpi's compaction-off default
 packages/coding-agent/test/suite/agent-session-boundaries.test.ts	upstream test adapted to PENpi's compaction-off default
-packages/coding-agent/test/suite/agent-session-compaction-model-overrides.test.ts	upstream test adapted to PENpi's compaction-off default
 packages/coding-agent/test/suite/agent-session-compaction.test.ts	upstream test adapted to PENpi's compaction-off default
 packages/coding-agent/test/suite/context-engine-e2/.gitignore	PENpi: E2, the context engine against real tokenizers (ADR 0032)
 packages/coding-agent/test/suite/context-engine-e2/README.md	PENpi: E2, the context engine against real tokenizers (ADR 0032)
@@ -303,6 +301,7 @@ packages/coding-agent/test/suite/context-engine/tokenizers.ts	PENpi: context eng
 packages/coding-agent/test/suite/context-engine/tsconfig.json	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/context-engine/v051-manual-cut-log.test.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/context-engine/v051-notice-tool-name.test.ts	PENpi: context engine behaviour suite (ADR 0032)
+packages/coding-agent/test/suite/context-engine/v060-custom-triggered-run.test.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/context-engine/vitest.config.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/virtual-models.test.ts	upstream test adapted to PENpi's compaction-off default
 packages/coding-agent/vitest.config.ts	the context engine suite runs with its own config (ADR 0032)
@@ -311,8 +310,6 @@ packages/env/package.json	vitest 4.1.12 security update (as upstream 2685de7a1)
 packages/env/vitest.config.ts	skip daemon tests when the pi-env daemon is not built
 packages/evals/package.json	vitest 4.1.12 security update (as upstream 2685de7a1)
 packages/mcp/package.json	vitest 4.1.12 security update (as upstream 2685de7a1)
-packages/protocol/package.json	vitest 4.1.12 security update (as upstream 2685de7a1)
-packages/server/package.json	vitest 4.1.12 security update (as upstream 2685de7a1)
 packages/telemetry/package.json	vitest 4.1.12 security update (as upstream 2685de7a1)
 scripts/check-lockfile-versions.mjs	PENpi version-surface check
 scripts/check-release-assets.mjs	PENpi release asset interlock

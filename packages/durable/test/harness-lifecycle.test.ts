@@ -2,6 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Context, JsonValue } from "@earendil-works/chord";
+import { withAbortSignal } from "@earendil-works/chord/context";
 import { createModels, fauxAssistantMessage, fauxText, fauxToolCall, Type } from "@earendil-works/pi-ai";
 import {
 	type Conversation,
@@ -55,7 +56,7 @@ function unloadDocuments(harness: Harness): Promise<void> {
 }
 
 function withSignal(signal: AbortSignal): Context {
-	return { ...context, abortSignal: signal };
+	return withAbortSignal(signal, context);
 }
 
 /** Whether a raw Storage read still succeeds, as code of a joined invocation relies on. */
@@ -102,7 +103,7 @@ describe("Harness open", () => {
 		expect(await storageOpen(storage)).toBe(false);
 	});
 
-	it("reports a failing close and still rethrows the open error", async () => {
+	it("rethrows the open error and reports it once, though closing then fails too", async () => {
 		class FailingClose extends ControlledStorage {
 			override async close(closeContext: Context): Promise<void> {
 				await super.close(closeContext);
@@ -119,7 +120,8 @@ describe("Harness open", () => {
 			context,
 		);
 		await expect(opening).rejects.toThrow("disk full");
-		expect(reports).toEqual([new Error("close failed")]);
+		// The storage failure that failed open is the cause; the close that fails after it adds no report.
+		expect(reports).toEqual([new Error("disk full")]);
 	});
 });
 
@@ -167,7 +169,7 @@ describe("Harness close", () => {
 					parameters: Type.Object({}),
 					execute: async () => {
 						if (where === "tool") await stubborn();
-						return { content: [] };
+						return { output: [] };
 					},
 				}),
 			);
@@ -274,6 +276,7 @@ describe("Harness close", () => {
 
 	it("publishes no frame to states and watches from a commit that settles during close", async () => {
 		const Notes = defineDoc<{ text: string }>({
+			checkpointWhen: () => false,
 			kind: "test.close-frames",
 			version: 1,
 			scope: "session",
@@ -335,6 +338,7 @@ describe("Harness close", () => {
 
 	it("leaves no subscription behind a watch acquisition cancelled on the line", async () => {
 		const Notes = defineDoc<{ text: string }>({
+			checkpointWhen: () => false,
 			kind: "test.cancelled-watch",
 			version: 1,
 			scope: "session",
@@ -449,12 +453,14 @@ describe("Harness close", () => {
 
 	it("completes reads queued at the seal and rejects queued waits and acquisitions that would follow commits", async () => {
 		const Notes = defineDoc<{ text: string }>({
+			checkpointWhen: () => false,
 			kind: "test.queued-at-seal",
 			version: 1,
 			scope: "session",
 			initial: () => ({ text: "" }),
 		});
 		const Absent = defineDoc<{ text: string }>({
+			checkpointWhen: () => false,
 			kind: "test.queued-absent",
 			version: 1,
 			scope: "session",
@@ -533,6 +539,7 @@ describe("scheduling on a paused Harness", () => {
 	it("never schedules from a read-only viewer", async () => {
 		const { harness, root, id, submissionId, ran } = await paused();
 		const Notes = defineDoc<{ text: string }>({
+			checkpointWhen: () => false,
 			kind: "test.viewer-notes",
 			version: 1,
 			scope: "session",

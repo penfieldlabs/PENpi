@@ -26,7 +26,7 @@ function tool(name: string, extra: Partial<AppTool> = {}): AppTool {
 		name,
 		description: `${name} tool`,
 		parameters: Type.Object({}),
-		execute: async () => ({ content: [] }),
+		execute: async () => ({ output: [] }),
 		...extra,
 	};
 }
@@ -285,8 +285,10 @@ describe("agent resolution", () => {
 			defineExtension<AppTool>({ name: "a", hooks: [hook(ToolTask, first), hook(GenerationTask, onYield)] }),
 		);
 		local.install(defineExtension<AppTool>({ name: "b", hooks: [hook(ToolTask, second)] }));
-		expect(agentHooks(resolve(undefined, local.snapshot()), "pi.tool")).toEqual([first, second]);
-		expect(agentHooks(resolve({ extensions: ["b", "a"] }, local.snapshot()), "pi.tool")).toEqual([second, first]);
+		const a = { extension: "a", handlers: first };
+		const b = { extension: "b", handlers: second };
+		expect(agentHooks(resolve(undefined, local.snapshot()), "pi.tool")).toEqual([a, b]);
+		expect(agentHooks(resolve({ extensions: ["b", "a"] }, local.snapshot()), "pi.tool")).toEqual([b, a]);
 		expect(agentHooks(resolve({ extensions: ["b"] }, local.snapshot()), "pi.generation")).toEqual([]);
 
 		const defaults = resolve(undefined, local.snapshot());

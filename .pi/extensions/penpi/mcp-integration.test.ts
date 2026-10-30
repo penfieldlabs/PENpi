@@ -431,7 +431,10 @@ describe("integration: Penfield direct tools across both startup paths", () => {
 				expect(session.appended).toContain("penpi-state");
 				// The briefing is a system prompt section on the next run, never a message (ADR 0032).
 				expect(session.injected.find((m) => m.customType === BRIEFING_CUSTOM_TYPE)).toBeUndefined();
-				const run = await session.runner.emitBeforeAgentStart("next task", undefined, { cwd: profile });
+				const run = await session.runner.emitBeforeAgentStart(
+					{ messageType: "user", prompt: "next task" },
+					{ cwd: profile },
+				);
 				const briefing = run.systemPromptOptions.sections[BRIEFING_SECTION];
 				expect(briefing, "PENpi must put the orientation briefing in the system prompt").toBeDefined();
 				expect(briefing).toContain(FIXTURE_BRIEFING);
