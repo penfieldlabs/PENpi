@@ -6,6 +6,37 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
 
 ## [Unreleased]
 
+## [0.6.0] — Unreleased
+
+### Changed
+- **PENpi is on upstream Pi v1.4.0** (from v1.1.0). See Pi's own changelog
+  (`packages/coding-agent/CHANGELOG.md`). What PENpi users notice:
+  - `pi -p` exits 1 when the final answer is still cut off at the output limit after the
+    engine's continuations, and says so on stderr. PENpi printed its own message for this
+    before; Pi's replaces it.
+  - The `kimi-coding` provider uses Chat Completions.
+  - Pi retries more transient provider errors before a run ends, and sends client identity
+    headers with each request.
+  - Upstream removed the experimental server stack and its client, protocol and server packages.
+- **The model data is v1.4.0's own**, as published in `@earendil-works/pi-ai` 1.4.0, with PENpi's
+  Claude Sonnet 5.5 cache-read price ($0.20). Context windows, output limits and prices change for
+  many models, and the engine plans against them.
+- **The engine's estimate follows Pi 1.4.0's converters.** Thinking from another model is no longer
+  sent (Pi 1.1.0 sent it as text), so the estimate drops it too. An error tool result with images
+  is sent to Anthropic, and to Claude on Bedrock, with a placeholder per run of images and a
+  caption; the estimate counts both.
+
+### Fixed
+- **An HTTP 413 with no token numbers no longer shrinks the window.** Pi 1.4.0 counts a request
+  that is too large in bytes as a context overflow; the engine leaves it to Pi, as in 0.5.x,
+  instead of learning a smaller window from it. A 413 that names a token overflow is still one.
+- **A run started by an extension's message** (`sendMessage` with `triggerTurn`) is not recorded as
+  the user's request.
+
+### Known issues
+- **After a cut, an agent can pick up an earlier task that is already finished, or report it as
+  done**, as in 0.5.1.
+
 ## [0.5.1] — Unreleased
 
 ### Security

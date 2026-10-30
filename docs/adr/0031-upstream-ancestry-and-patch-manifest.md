@@ -27,7 +27,8 @@ set of differing paths and the list are not identical.
 
 ## Consequences
 
-- Upstream merges are ordinary merges; conflicts appear only where PENpi changed a file.
+- Upstream merges are ordinary merges; conflicts appear only where PENpi changed a file. PENpi
+  0.6.0 merged upstream v1.4.0 (`4a080252f`) this way, and the manifest's base moved to it.
 - Adding or reverting a difference from upstream means editing the manifest in the same
   change; an upstream merge updates the base line.
 - Every upstream commit is an ancestor of `main`, so reachability no longer identifies a

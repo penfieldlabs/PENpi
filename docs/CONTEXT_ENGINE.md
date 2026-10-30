@@ -42,9 +42,14 @@ made while porting it.
   re-probed later, and are cleared with `/penpi reset-limits`. When the engine detects silent
   truncation, it names the answers that were produced from truncated input.
 - **Recovery without compaction.** An overflow is retried with a smaller window, at most 3 times
-  per run. A response cut off at the output limit gets up to 3 continuations per run. A response
-  that spent the whole output limit on reasoning, with no text and no tool call, is asked for the
-  answer directly (`reasoningOnlyContinuation`).
+  per run. An HTTP 413 that states no token numbers (a request too large in bytes, such as one
+  with large images) is not taken as a window to learn: it is left to Pi. A response cut off at the
+  output limit gets up to 3 continuations per run. A response that spent the whole output limit on
+  reasoning, with no text and no tool call, is asked for the answer directly
+  (`reasoningOnlyContinuation`). In print mode (`pi -p`) the answer is printed with its
+  continuations; if it is still cut off when they run out, Pi prints "Response was truncated: the
+  model reached its output token limit." and exits 1 (Pi 1.4.0). Scripts that run `pi -p`, the
+  release-gate benchmark included, see that exit code.
 - **Broken tool calls are repaired in the request.** Some providers return a tool call with no id
   or no name. Pi records it, and a provider that checks ids rejects every later request. The engine
   leaves a call with no name out of what it sends, with the note *[a tool call with no name was

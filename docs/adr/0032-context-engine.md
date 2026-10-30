@@ -322,8 +322,10 @@ file against its own. Test reports, E2 scratch and E2 results moved out of `/tmp
 - **Stock Pi** (`scripts/engine-suite-upstream.sh`, CI job `engine-on-upstream`): the suite runs
   against upstream Pi at the recorded base, without PENpi's core patches, apart from the two tests
   that load PENpi's extension. Upstream does not commit its model data (it hydrates it from live
-  catalogs, which drift from v1.1.0's types), so the build uses the fork's committed snapshot: data
-  only, every line of code is upstream's.
+  catalogs, which drift from the base's types), so the build uses the fork's committed snapshot: data
+  only, every line of code is upstream's. From 0.6.0 the snapshot is the base's own data, as
+  published in `@earendil-works/pi-ai` at the base's version (1.4.0), with PENpi's one price
+  correction, so the build is reproducible.
 
 ## Consequences
 
