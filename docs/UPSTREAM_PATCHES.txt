@@ -172,7 +172,9 @@ packages/coding-agent/README.md	upstream README plus a PENpi note
 packages/coding-agent/docs/settings.md	documents PENpi's compaction-off default
 packages/coding-agent/examples/extensions/gondolin/package-lock.json	gondolin 0.14.0 and undici 6.29.1 security update (as upstream 2685de7a1)
 packages/coding-agent/examples/extensions/gondolin/package.json	gondolin 0.14.0 security update, drops node-forge (as upstream 2685de7a1)
-packages/coding-agent/examples/extensions/sandbox/package-lock.json	shell-quote 1.12.0 security update
+packages/coding-agent/examples/extensions/sandbox/index.ts	declares its config type itself: types only, for zod 4 (GHSA-mrhx-c7xc-m3w5)
+packages/coding-agent/examples/extensions/sandbox/package-lock.json	shell-quote 1.12.0 security update; zod 4.6.6 (GHSA-mrhx-c7xc-m3w5)
+packages/coding-agent/examples/extensions/sandbox/package.json	zod 4.6.6 override (GHSA-mrhx-c7xc-m3w5); sandbox-runtime's range is ^3
 packages/coding-agent/install-lock/package-lock.json	generated from packages/coding-agent/package.json: undici 8.12.3 security update
 packages/coding-agent/package.json	vitest 4.1.12 security update (as upstream 2685de7a1); undici 8.12.3 security update, ahead of upstream (still 8.10.2)
 packages/coding-agent/src/cli/args.ts	core patch: hidden extension CLI flags
@@ -334,3 +336,4 @@ scripts/release-notes.mjs	accepts PENpi's changelog heading format; carries the 
 scripts/release-notes.test.mjs	tests a PENpi script
 scripts/release.mjs	bumps and tags PENpi's version, not upstream's
 scripts/release.test.mjs	tests a PENpi script
+scripts/zod-override.test.mjs	tests a PENpi dependency override
