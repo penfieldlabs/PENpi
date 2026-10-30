@@ -143,6 +143,12 @@ export const MENTIONS_INPUT = /context|input|prompt/i;
  * combined errors (output-caused when the input alone fits with room), context overflow (the
  * engine's patterns and Pi's), output limits stated without numbers, unknown.
  */
+/** An HTTP 413 or a request_too_large error type (the request's size, in bytes). */
+const REQUEST_SIZE_PATTERN = /request_too_large|\b413\b/i;
+/** Wording that names a token overflow; a 413 that says it (Vertex for Anthropic) is a context overflow. */
+const TOKEN_OVERFLOW_WORDING =
+	/prompt is too long|input is too long|context (?:length|window|size)|exceed(?:s|ed)? (?:the )?(?:maximum )?context|tokens?\b/i;
+
 export function classifyProviderError(errorMessage: string | undefined, provider?: string): ProviderErrorInfo {
 	if (!errorMessage) return { class: "unknown", rule: "no message" };
 	const text = errorMessage.replace(/[‘’]/g, "'");
@@ -168,6 +174,17 @@ export function classifyProviderError(errorMessage: string | undefined, provider
 		content: [],
 	} as unknown as AssistantMessage;
 	const { limit, requested } = parseOverflow(text);
+	// 0.6.0: Pi 1.4's isContextOverflow also matches an HTTP 413 request-size error. With no token numbers it states
+	// a byte limit (images, a large payload), not a token window: no window is learned from it, and it is left to Pi
+	// as in 0.5.x.
+	if (
+		REQUEST_SIZE_PATTERN.test(text) &&
+		!TOKEN_OVERFLOW_WORDING.test(text) &&
+		limit === undefined &&
+		requested === undefined
+	) {
+		return { class: "unknown", rule: "request size without token numbers" };
+	}
 	if (
 		isContextOverflow(probe) ||
 		/prompt is too long|input is too long|exceed(?:s|ed)? (?:the )?(?:maximum )?context/i.test(text)

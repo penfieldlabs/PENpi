@@ -420,4 +420,34 @@ export const ERROR_FIXTURES: ErrorFixture[] = [
 		verified: false,
 		note: "wording verified, attribution to GLM inferred",
 	},
+	// ------------------------------------------------------------------ 0.6.0: request size (HTTP 413), no token numbers
+	// Pi 1.4.0's isContextOverflow matches these (overflow.ts, 73f8de80b), but they state a byte limit, not a token
+	// window: the engine must not learn a window from them (as in 0.5.x, they are left to Pi).
+	{
+		id: "anthropic-413-request-too-large",
+		provider: "Anthropic direct",
+		api: "anthropic-messages",
+		text: '413 {"error":{"type":"request_too_large","message":"Request exceeds the maximum size"}}',
+		expected: { class: "unknown" },
+		source: "upstream Pi v1.4.0 packages/ai/src/utils/overflow.ts (comment)",
+		verified: false,
+	},
+	{
+		id: "copilot-413-failed-to-parse",
+		provider: "GitHub Copilot",
+		api: "openai-completions",
+		text: 'github-copilot API error (413): {"message":"failed to parse request","code":""}',
+		expected: { class: "unknown" },
+		source: "upstream Pi v1.4.0 packages/ai/src/utils/overflow.ts (comment)",
+		verified: false,
+	},
+	{
+		id: "cerebras-413-no-body",
+		provider: "Cerebras",
+		api: "openai-completions",
+		text: "413 status code (no body)",
+		expected: { class: "unknown" },
+		source: "upstream Pi v1.4.0 packages/ai/src/utils/overflow.ts (comment)",
+		verified: false,
+	},
 ];
