@@ -128,11 +128,6 @@ export interface EngineOptions {
 	noticeFraction: number;
 	/** False switches the pre-cut notice off entirely (nothing is sent or counted). Off by default. */
 	notice: boolean;
-	/**
-	 * Prototype (0.6.0 research, off by default): the header's working notes start with the day they were
-	 * written and whether that was before the current request (then they may describe an earlier task).
-	 */
-	notesAge: boolean;
 	/** context_search returns at most this many hits and this many characters. */
 	searchMaxResults: number;
 	searchMaxChars: number;
@@ -353,7 +348,6 @@ export const DEFAULTS: EngineOptions = {
 	imageShare: 0.5,
 	noticeFraction: 0.9,
 	notice: false,
-	notesAge: false,
 	searchMaxResults: 10,
 	searchMaxChars: 4_000,
 	onCompactionEnabled: "fail",

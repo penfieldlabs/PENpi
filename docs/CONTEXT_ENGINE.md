@@ -79,7 +79,6 @@ warning, and the default applies (ADR 0030).
 | `maxLengthContinuations` | `3` | continuations per run after a length stop |
 | `pinUserMessages` | on | `null` turns the pin off; an object (`capFraction`, `capMaxTokens`, `protectFirst`, `longMessageChars`, `sources`, `unrecordedSource`, `agentPrefixes`) changes it |
 | `notice` | `false` | `true` adds a request-only notice shortly before a cut, naming what will leave view |
-| `notesAge` | `false` | prototype (0.6.0 research): `true` starts the header's working notes with the day they were last written and whether that was before the current request (then they may describe an earlier task) |
 | `serializeAs` | — | per model or API name: which of Pi's converters its requests go through, for providers registered under their own API name |
 
 `engine/options.ts` lists every option with its documentation. The detector's thresholds and the

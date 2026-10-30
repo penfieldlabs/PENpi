@@ -276,7 +276,6 @@ packages/coding-agent/test/suite/context-engine/helpers.ts	PENpi: context engine
 packages/coding-agent/test/suite/context-engine/length.test.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/context-engine/limits.test.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/context-engine/long-session.test.ts	PENpi: context engine behaviour suite (ADR 0032)
-packages/coding-agent/test/suite/context-engine/notes-age-header.test.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/context-engine/notes.test.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/context-engine/oversized.test.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/context-engine/pin-user-messages.test.ts	PENpi: context engine behaviour suite (ADR 0032)
