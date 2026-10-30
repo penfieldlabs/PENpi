@@ -98,6 +98,31 @@ function makeStubClient(over: Partial<Record<string, any>> = {}) {
 	return { client, calls };
 }
 
+/** PENpi with an engine stub (the refresh after a run needs one): its log lines and doctor lines, and the client. */
+function withRefresh(clientOver: Record<string, any>) {
+	const f = makeFakePi();
+	const stub = makeStubClient({ auth: true, ...clientOver });
+	const setSectionAtNextCut = vi.fn();
+	const logLines: string[] = [];
+	const doctorLines: Array<() => string> = [];
+	penpiCore(f.pi as never, {
+		makeClient: () => stub.client,
+		ensureMcpEntry: () => "/tmp/penpi-test-mcp.json",
+		installEngine: () => ({
+			command: async () => {},
+			options: {} as never,
+			stats: {} as never,
+			setSectionAtNextCut,
+			appliedSection: () => undefined,
+			sectionCap: () => ({ cap: Number.POSITIVE_INFINITY, tokens: () => 0 }),
+			capSection: () => {},
+			log: (line: string) => logLines.push(line),
+			addDoctorLine: (render: () => string) => doctorLines.push(render),
+		}),
+	});
+	return { ...f, stub, setSectionAtNextCut, logLines, doctor: () => doctorLines.map((render) => render()) };
+}
+
 const _user = (t: string) => ({ role: "user", content: [{ type: "text", text: t }], timestamp: 0 });
 
 beforeEach(() => {
@@ -380,27 +405,6 @@ describe("session_shutdown", () => {
 		expect(stub.client.disconnect).toHaveBeenCalled();
 	});
 
-	/** PENpi with an engine stub (the refresh after a run needs one) and a client whose refresh read is held. */
-	function withRefresh(clientOver: Record<string, any>) {
-		const f = makeFakePi();
-		const stub = makeStubClient({ auth: true, ...clientOver });
-		const setSectionAtNextCut = vi.fn();
-		penpiCore(f.pi as never, {
-			makeClient: () => stub.client,
-			ensureMcpEntry: () => "/tmp/penpi-test-mcp.json",
-			installEngine: () => ({
-				command: async () => {},
-				options: {} as never,
-				stats: {} as never,
-				setSectionAtNextCut,
-				appliedSection: () => undefined,
-				sectionCap: () => ({ cap: Number.POSITIVE_INFINITY, tokens: () => 0 }),
-				capSection: () => {},
-			}),
-		});
-		return { ...f, stub, setSectionAtNextCut };
-	}
-
 	it("D21: a refresh that finishes during save_context writes nothing", async () => {
 		process.env.PENPI_SAVE_CONTEXT_ON_SHUTDOWN = "true";
 		let releaseRead: (() => void) | undefined;
@@ -537,6 +541,8 @@ describe("/penpi login command", () => {
 				appliedSection: () => undefined,
 				sectionCap: () => ({ cap: Number.POSITIVE_INFINITY, tokens: () => 0 }),
 				capSection: () => {},
+				log: () => {},
+				addDoctorLine: () => {},
 			}),
 		});
 		const { ctx } = makeCtx();
@@ -1034,5 +1040,164 @@ describe("stockAdapterSettingsPaths", () => {
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}
+	});
+});
+
+describe("memory refresh outcomes (0.5.1)", () => {
+	/** An awaken that answers each read with the next text (the last one repeats). */
+	const briefings = (...texts: string[]) => {
+		let read = 0;
+		return vi.fn(async () => {
+			const text = texts[Math.min(read++, texts.length - 1)];
+			return { isError: false, data: { briefing: text }, text };
+		});
+	};
+	const refreshLines = (lines: string[]) => lines.filter((l) => l.startsWith("memory "));
+
+	async function started(clientOver: Record<string, any>) {
+		const t = withRefresh(clientOver);
+		const { ctx, notifies } = makeCtx();
+		await t.handlers.session_start({ reason: "startup" }, ctx);
+		/** One run's end, and its refresh settled. */
+		const runEnds = async () => {
+			t.handlers.agent_end({}, ctx);
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			await vi.waitFor(() => expect(refreshLines(t.logLines).length).toBeGreaterThan(0));
+		};
+		return { ...t, ctx, notifies, runEnds };
+	}
+
+	it("changed: logs the outcome and counts it in the doctor line", async () => {
+		const t = await started({ awaken: briefings("BRIEFING-1", "BRIEFING-2") });
+		await t.runEnds();
+		expect(refreshLines(t.logLines)).toEqual(["memory refresh: changed (applies at the next cut)"]);
+		expect(t.setSectionAtNextCut).toHaveBeenCalledTimes(1);
+		expect(t.doctor()).toEqual([
+			expect.stringMatching(
+				/^memory refresh: last \d{4}-\d\d-\d\dT[\d:.]+Z changed; 1 changed, 0 unchanged, 0 skipped, 0 failed$/,
+			),
+		]);
+	});
+
+	it("unchanged: logs the outcome and hands nothing to the engine", async () => {
+		const t = await started({ awaken: briefings("BRIEFING-1") });
+		await t.runEnds();
+		expect(refreshLines(t.logLines)).toEqual(["memory refresh: unchanged"]);
+		expect(t.setSectionAtNextCut).not.toHaveBeenCalled();
+		expect(t.doctor()[0]).toMatch(/ unchanged; 0 changed, 1 unchanged, 0 skipped, 0 failed$/);
+	});
+
+	it("skipped: not connected with no failed read, so nothing is read", async () => {
+		const t = await started({ awaken: briefings("BRIEFING-1", "BRIEFING-2") });
+		t.stub.client.connected = false;
+		await t.runEnds();
+		expect(refreshLines(t.logLines)).toEqual(["memory refresh: skipped (not connected)"]);
+		expect(t.stub.client.awaken).toHaveBeenCalledTimes(1); // orient's read only
+		expect(t.stub.client.connect).toHaveBeenCalledTimes(1); // orient's connect only
+		expect(t.doctor()[0]).toMatch(/ skipped; 0 changed, 0 unchanged, 1 skipped, 0 failed$/);
+	});
+
+	it("failed: a read that throws is logged with its error, and the doctor line names it", async () => {
+		let read = 0;
+		const t = await started({
+			awaken: vi.fn(async () => {
+				if (read++ > 0) throw new Error("tool awaken timed out after 10000ms");
+				return { isError: false, data: { briefing: "BRIEFING-1" }, text: "BRIEFING-1" };
+			}),
+		});
+		await t.runEnds();
+		expect(refreshLines(t.logLines)).toEqual(["memory refresh: failed (tool awaken timed out after 10000ms)"]);
+		expect(t.setSectionAtNextCut).not.toHaveBeenCalled();
+		expect(t.doctor()[0]).toMatch(
+			/ failed; 0 changed, 0 unchanged, 0 skipped, 1 failed \(last error: tool awaken timed out after 10000ms\)$/,
+		);
+	});
+
+	it("isError from reflect in the refresh is a failed read, never composed as memory", async () => {
+		let read = 0;
+		const t = await started({
+			awaken: briefings("BRIEFING-1", "BRIEFING-2"),
+			reflect: vi.fn(async () =>
+				read++ > 0
+					? { isError: true, data: "x", text: "ERROR-RESULT-TEXT" }
+					: { isError: false, data: "r", text: "REFLECT-TEXT" },
+			),
+		});
+		await t.runEnds();
+		expect(refreshLines(t.logLines)).toEqual(["memory refresh: failed (reflect returned an error result)"]);
+		expect(t.setSectionAtNextCut).not.toHaveBeenCalled();
+		expect(JSON.stringify(t.entries)).not.toContain("ERROR-RESULT-TEXT");
+		expect(t.logLines.join("\n")).not.toContain("ERROR-RESULT-TEXT");
+	});
+
+	it("isError from awaken at orientation is a failed read: no briefing, a warning, a logged failure", async () => {
+		const t = withRefresh({ awaken: vi.fn(async () => ({ isError: true, data: "x", text: "ERROR-RESULT-TEXT" })) });
+		const { ctx, notifies } = makeCtx();
+		await t.handlers.session_start({ reason: "startup" }, ctx);
+		expect(briefingSection(t.handlers)).toBeUndefined();
+		expect(notifies.some((n) => n.msg.includes("orientation failed") && n.level === "warning")).toBe(true);
+		expect(t.logLines).toEqual(["memory read at startup failed (awaken returned an error result)"]);
+		expect(JSON.stringify(t.entries)).not.toContain("ERROR-RESULT-TEXT");
+		expect(t.stub.client.reflect).not.toHaveBeenCalled();
+	});
+
+	it("reconnect: after a failed read the next refresh reconnects once, then reads", async () => {
+		let read = 0;
+		const t = await started({
+			awaken: vi.fn(async () => {
+				read++;
+				if (read === 2) {
+					// As the real client does on a transport failure: the connection is dropped.
+					t.stub.client.connected = false;
+					throw new Error("fetch failed");
+				}
+				return { isError: false, data: { briefing: `BRIEFING-${read}` }, text: `BRIEFING-${read}` };
+			}),
+		});
+		t.stub.client.connect.mockImplementation(async () => {
+			t.stub.client.connected = true;
+		});
+		await t.runEnds();
+		expect(refreshLines(t.logLines)).toEqual(["memory refresh: failed (fetch failed)"]);
+		t.logLines.length = 0;
+		await t.runEnds();
+		expect(t.stub.client.connect).toHaveBeenCalledTimes(2); // orient's, and the one reconnect
+		expect(refreshLines(t.logLines)).toEqual([
+			"memory refresh: changed (applies at the next cut; after a reconnect)",
+		]);
+		expect(t.doctor()[0]).toMatch(
+			/ changed; 1 changed, 0 unchanged, 0 skipped, 1 failed \(last error: fetch failed\)$/,
+		);
+	});
+
+	it("reconnect: a reconnect that fails is tried again at the next run, once per run", async () => {
+		let read = 0;
+		const t = await started({
+			awaken: vi.fn(async () => {
+				if (read++ > 0) {
+					t.stub.client.connected = false;
+					throw new Error("fetch failed");
+				}
+				return { isError: false, data: { briefing: "BRIEFING-1" }, text: "BRIEFING-1" };
+			}),
+		});
+		await t.runEnds(); // the read fails and drops the connection
+		t.stub.client.connect.mockImplementation(async () => {
+			throw new Error("connect timed out");
+		});
+		for (let run = 0; run < 2; run++) {
+			t.logLines.length = 0;
+			await t.runEnds();
+			expect(refreshLines(t.logLines)).toEqual(["memory refresh: failed (connect timed out)"]);
+		}
+		expect(t.stub.client.connect).toHaveBeenCalledTimes(3); // orient's, then one per run
+		expect(t.doctor()[0]).toMatch(/ 0 changed, 0 unchanged, 0 skipped, 3 failed \(last error: connect timed out\)$/);
+	});
+
+	it("no log line or doctor line carries memory text", async () => {
+		const t = await started({ awaken: briefings("BRIEFING-1", "BRIEFING-2") });
+		await t.runEnds();
+		const out = [...t.logLines, ...t.doctor()].join("\n");
+		expect(out).not.toMatch(/BRIEFING|REFLECT/);
 	});
 });
