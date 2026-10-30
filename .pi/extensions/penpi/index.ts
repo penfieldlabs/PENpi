@@ -366,7 +366,7 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps): void | Promise<voi
 					await ctx.reload();
 					return;
 				} catch (err) {
-					ctx.ui.notify(`PENpi: Penfield login failed — ${errMsg(err)}`, "error");
+					ctx.ui.notify(`PENpi: Penfield login failed — ${errLine(err)}`, "error");
 					await client.disconnect();
 				}
 				return;
@@ -499,7 +499,7 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps): void | Promise<voi
 				// D21: once the session changed or shutdown began, nothing more is written.
 				if (generation !== refreshGeneration) return;
 				readFailed = true;
-				recordRefresh("failed", errMsg(err), errMsg(err));
+				recordRefresh("failed", errLine(err), errLine(err));
 				if (debug) console.error(`[PENpi] briefing refresh failed: ${errMsg(err)}`);
 			} finally {
 				refreshing = undefined;
@@ -564,7 +564,7 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps): void | Promise<voi
 		try {
 			await orient(ctx, cfg, reason, shouldInject());
 		} catch (err) {
-			ctx.ui.notify(`PENpi: Penfield orientation failed — ${errMsg(err)}. Continuing without memory.`, "warning");
+			ctx.ui.notify(`PENpi: Penfield orientation failed — ${errLine(err)}. Continuing without memory.`, "warning");
 			await client.disconnect();
 		}
 	});
@@ -666,7 +666,7 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps): void | Promise<voi
 		} catch (err) {
 			readFailed = true;
 			orientFailed = true;
-			engine?.log(`memory read at ${reason} failed (${errMsg(err)})`);
+			engine?.log(`memory read at ${reason} failed (${errLine(err)})`);
 			throw err;
 		}
 	}
@@ -694,7 +694,7 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps): void | Promise<voi
 			const mcpPath = await wireConsciousLayer(cfg, c);
 			if (debug) console.error(`[PENpi] conscious layer wired: ${mcpPath} (bearer via ${JWT_ENV})`);
 		} catch (e) {
-			ctx.ui.notify(`PENpi: could not wire conscious layer — ${errMsg(e)}`, "warning");
+			ctx.ui.notify(`PENpi: could not wire conscious layer — ${errLine(e)}`, "warning");
 		}
 
 		await c.connect();
@@ -965,4 +965,16 @@ function normalizedLength(s: string): number {
 
 function errMsg(err: unknown): string {
 	return err instanceof Error ? err.message : String(err);
+}
+
+/** The longest error text PENpi writes to the engine log, the doctor line or a notice. */
+export const ERROR_TEXT_MAX = 200;
+
+/**
+ * 0.5.1: an error as one short line. A transport error can carry a whole HTTP response body (the MCP SDK puts it in
+ * the message), such as a proxy's multi-line HTML error page: whitespace is collapsed and the text is capped.
+ */
+export function errLine(err: unknown, max = ERROR_TEXT_MAX): string {
+	const text = errMsg(err).replace(/\s+/g, " ").trim();
+	return text.length > max ? `${text.slice(0, max - 3)}...` : text;
 }
