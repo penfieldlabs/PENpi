@@ -67,10 +67,10 @@ export function isReasoningDetails(signature: string | undefined): boolean {
 
 /**
  * Estimated tokens of one message as Pi serializes it for `target`, and the part of them that is
- * replayed reasoning. Rules (packages/ai/src/api, Pi 1.1.0):
+ * replayed reasoning. Rules (packages/ai/src/api, Pi 1.4.0):
  *   every modelled API (transform-messages.ts): an assistant message that ended in error or was aborted
- *     is not sent; from another model, redacted thinking is dropped and other non-empty thinking is
- *     sent as plain text (counted, not reasoning); empty thinking without a same-model signature is
+ *     is not sent; thinking from another model is dropped, redacted or not (Pi 1.1.0 sent non-empty
+ *     thinking from another model as plain text); empty thinking without a same-model signature is
  *     dropped.
  *   openai-completions: blank text is dropped; thinking is sent only as reasoning_details (a signature
  *     holding them), as the reasoning field its signature names, or as text when
@@ -166,11 +166,12 @@ export function serializedParts(
 			tools += textTokens(`${b.name} ${JSON.stringify(b.arguments ?? {})}`) + 8;
 			kept++;
 		} else if (b.type === "thinking") {
+			// transformMessages (Pi 1.4.0): thinking from another model is dropped, redacted or not.
+			if (!sameModel) continue;
 			const thinking = b.thinking ?? "";
 			const signature = b.thinkingSignature;
 			const signed = !!signature && signature.trim().length > 0;
 			if (b.redacted) {
-				if (!sameModel) continue;
 				// openai-completions has no redacted form; the others replay the opaque payload.
 				if (api === "openai-completions") continue;
 				// D4: anthropic-messages sends the block even without a payload; count when unsure.
@@ -178,13 +179,6 @@ export function serializedParts(
 					reasoning += textTokens(signature ?? "");
 					kept++;
 				}
-				continue;
-			}
-			if (!sameModel) {
-				// transformMessages: non-empty thinking from another model becomes plain text.
-				if (thinking.trim().length === 0) continue;
-				text += textTokens(thinking);
-				kept++;
 				continue;
 			}
 			if (thinking.trim().length === 0) {
