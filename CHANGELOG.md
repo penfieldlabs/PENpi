@@ -45,6 +45,8 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
   the user's request.
 
 ### Known issues
+- **E2 has no known failures.** research.glm.32k.silent-messages, accepted in 0.5.0 and 0.5.1
+  (C6 detection lag 4), passes on the upstream v1.4.0 corpus (lag 2), and its entry is gone.
 - **After a cut, an agent can pick up an earlier task that is already finished, or report it as
   done**, as in 0.5.1.
 

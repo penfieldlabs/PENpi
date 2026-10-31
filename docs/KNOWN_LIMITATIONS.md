@@ -68,7 +68,9 @@ A provider that silently drops part of a request is detected from the input usag
 the context engine compares the reported growth with what each request added. When only a few
 percent of a request is dropped, the reported usage hardly changes, and an honest request looks
 the same. Such a truncation goes unseen until a larger one follows. In E2 one was 374 of 16,441
-tokens (2.3%); the known failure research.glm.32k.silent-messages comes from it.
+tokens (2.3%); on the 0.5.x corpus it made research.glm.32k.silent-messages fail C6 (lag 4). E2
+accepts such misses inside C8's band (0.02 plus the estimate error, at most 5%); outside the band,
+a truncated answer must be named.
 
 ## Platform coverage
 

@@ -101,16 +101,8 @@ describe("E2 known failures", () => {
 		expect(validateKnownFailures(loadKnownFailures())).toEqual([]);
 	});
 
-	it("the repository's entry for its run is KNOWN, not EXPIRED, at PENpi 0.5.1 and at this version", () => {
-		// 0.5.1: renewed until 0.6.0, whose upstream merge changes E2's corpus (C6 is unchanged).
-		const entries = loadKnownFailures();
-		const r = run(RUN, { failing: ["C6"], lag: 4 });
-		expect(knownFailure(r, entries, "0.5.1")?.status).toBe("known");
-		expect(knownFailure(r, entries, "0.6.0")?.status).toBe("expired");
-		const s = summary([r], entries);
-		expect(s.code).toBe(0);
-		expect(s.md).toContain(`KNOWN 1 (${RUN} C6 lag 4, until 0.6.0)`);
-		expect(s.md).not.toContain("EXPIRED");
+	it("the repository has no known failures (0.6.0: the entry's run passes on the upstream v1.4.0 corpus)", () => {
+		expect(loadKnownFailures()).toEqual([]);
 	});
 
 	it("covers its run failing C6 alone within the bound, below its version", () => {
