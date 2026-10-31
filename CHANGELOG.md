@@ -44,6 +44,10 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
 - **A run started by an extension's message** (`sendMessage` with `triggerTurn`) is not recorded as
   the user's request.
 
+- **The silent-truncation check counts the pre-cut notice of the request it judges.** It left it
+  out, so the request that carried the notice read about 100 tokens short of its real growth, which
+  could hide a small truncation or leave the sample unjudged. It matters only with the notice on.
+
 ### Known issues
 - **E2 has no known failures.** research.glm.32k.silent-messages, accepted in 0.5.0 and 0.5.1
   (C6 detection lag 4), passes on the upstream v1.4.0 corpus (lag 2), and its entry is gone.

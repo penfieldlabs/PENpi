@@ -852,10 +852,13 @@ export function installPlanner(core: EngineCore): void {
 		const noticeDrop = st.sentShape?.noticeTokens ?? 0;
 		// D24 R1: a request after a length stop starts a new chain too. What a provider counts of a cut answer is
 		// provider-specific, so no span used to judge a switch may contain one.
-		if (appendOnly && !afterLengthStop) st.appendCum += appendedText - noticeDrop;
+		// D24 notice gap (0.6.0): the chain sum counts this request's own notice, which the provider counts, so a span
+		// between two requests of the chain is what was appended plus the later notice minus the earlier one.
+		const noticeAdd = shape.noticeTokens;
+		if (appendOnly && !afterLengthStop) st.appendCum += appendedText - noticeDrop + noticeAdd;
 		else {
 			st.appendChain++;
-			st.appendCum = 0;
+			st.appendCum = noticeAdd;
 		}
 		st.lastSent = {
 			estimate,
@@ -867,7 +870,7 @@ export function installPlanner(core: EngineCore): void {
 			appendedAsText,
 			appendedImages,
 			noticeDrop,
-			noticeAdd: shape.noticeTokens,
+			noticeAdd,
 			afterLengthStop,
 			chain: st.appendChain,
 			cum: st.appendCum,

@@ -243,6 +243,12 @@ export interface EngineStats {
 	/** The replay check's warnings: the setting disagreed with what the provider does. */
 	/** The replay check so far, per model: qualifying request pairs, their median share and the shares kept. */
 	replayChecks: Record<string, { pairs: number; median: number; shares: number[] }>;
+	/**
+	 * Every sample the silent-truncation growth rule judged: the growth the engine expected (estimate units times the
+	 * ratio) and the growth the provider reported, and whether it compared with a D24 reference (another sample of
+	 * the same provider in the append chain).
+	 */
+	growthChecks: Array<{ seq: number; grow: number; delta: number; reference: boolean }>;
 	replayWarnings: Array<{
 		key: string;
 		setting: "counted" | "ignored";
@@ -307,6 +313,7 @@ export function newStats(): EngineStats {
 		faults: [],
 		plateauReports: [],
 		replayChecks: {},
+		growthChecks: [],
 		replayWarnings: [],
 		limitResets: 0,
 		pinTokens: [],

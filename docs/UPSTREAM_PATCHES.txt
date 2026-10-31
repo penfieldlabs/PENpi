@@ -305,6 +305,7 @@ packages/coding-agent/test/suite/context-engine/tsconfig.json	PENpi: context eng
 packages/coding-agent/test/suite/context-engine/v051-manual-cut-log.test.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/context-engine/v051-notice-tool-name.test.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/context-engine/v060-custom-triggered-run.test.ts	PENpi: context engine behaviour suite (ADR 0032)
+packages/coding-agent/test/suite/context-engine/v060-d24-notice.test.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/context-engine/v060-error-image-caption.test.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/context-engine/v060-request-size-413.test.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/context-engine/vitest.config.ts	PENpi: context engine behaviour suite (ADR 0032)

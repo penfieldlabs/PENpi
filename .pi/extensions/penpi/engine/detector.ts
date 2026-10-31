@@ -213,8 +213,11 @@ export function installDetector(core: EngineCore): void {
 			// The previous sample, or at a switch the new provider's own last sample in this append chain (D24):
 			// usage must have grown by about the text appended since.
 			const base = reference ?? (prev as { seq: number; reported: number });
-			const grow = (reference ? sent.cum - reference.cum : sent.appendedText - sent.noticeDrop) * ratioBefore;
+			// D24 notice gap (0.6.0): the request's own pre-cut notice is appended too, and the provider counts it.
+			const grow =
+				(reference ? sent.cum - reference.cum : sent.appendedText - sent.noticeDrop + sent.noticeAdd) * ratioBefore;
 			const delta = reported - base.reported;
+			stats.growthChecks.push({ seq: sent.seq, grow, delta, reference: reference !== undefined });
 			const shown = `${Math.round(grow)} tokens appended, reported usage ${delta >= 0 ? "+" : ""}${delta}`;
 			// An honest provider cannot report the same or less after text was appended, however little.
 			if (delta <= 0 && grow >= opts.silentZeroGrowthFloor) {
