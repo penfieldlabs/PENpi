@@ -11,9 +11,9 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
 ### Changed
 - **PENpi is on upstream Pi v1.4.0** (from v1.1.0). See Pi's own changelog
   (`packages/coding-agent/CHANGELOG.md`). What PENpi users notice:
-  - `pi -p` exits 1 when the final answer is still cut off at the output limit after the
-    engine's continuations, and says so on stderr. PENpi printed its own message for this
-    before; Pi's replaces it.
+  - When the final answer is still cut off at the output limit after the engine's continuations,
+    `pi -p` exits 1, as in 0.5.x, and the stderr message is now Pi's own ("Response was truncated:
+    the model reached its output token limit."). `--mode json` exits 0 in that case.
   - The `kimi-coding` provider uses Chat Completions.
   - Pi retries more transient provider errors before a run ends, and sends client identity
     headers with each request.

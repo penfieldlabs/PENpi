@@ -240,6 +240,8 @@ describe("D23: the system prompt after a rebuild without a cut is byte-identical
 				// The path really took the rebuild (or, for align, Pi's own messages): otherwise a pass would be empty.
 				if (path !== "align" && path !== "delete")
 					expect(s.stats.indexRebuilds, "the index was rebuilt").toBeGreaterThan(rebuildsBefore);
+				// The delete path is the in-session splice, not a rebuild.
+				if (path === "delete") expect(s.stats.indexRebuilds, "no rebuild for a deletion").toBe(rebuildsBefore);
 				if (process.env.D23_SHOW) console.log(`${name}, ${path}\nBEFORE ${before.bytes}\nAFTER  ${after.bytes}`);
 				expect(after.merged, "merged system prompt text").toBe(before.merged);
 				expect(after.bytes, "system messages as the provider receives them").toBe(before.bytes);

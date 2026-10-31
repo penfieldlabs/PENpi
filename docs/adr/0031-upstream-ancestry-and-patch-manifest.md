@@ -15,7 +15,7 @@ Nothing distinguished a deliberate PENpi change from an accident.
 
 Follow standard fork practice. `main` records upstream Pi v1.1.0 (`abe508e1b`) as merged
 through an `-s ours` merge commit that keeps PENpi's tree unchanged; later upstream releases
-are merged the same way. PENpi's own work stays one squashed commit per release, so a
+are then merged as ordinary merges (see Consequences). PENpi's own work stays one squashed commit per release, so a
 release commit is always on `main`'s first-parent history, and the release workflow accepts
 only such a tag.
 

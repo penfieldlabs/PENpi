@@ -118,7 +118,7 @@ docs/adr/0031-upstream-ancestry-and-patch-manifest.md	PENpi decision record
 docs/adr/0032-context-engine.md	PENpi decision record
 docs/adr/README.md	PENpi decision record
 package-lock.json	follows package.json (PENpi workspace and pins)
-package.json	PENpi version, workspace, checks and pins, context engine suite and tokenizer scripts; no npm publishing scripts
+package.json	PENpi version, workspace, checks and pins, context engine suite and tokenizer scripts; no npm publishing or model-catalog scripts
 packages/agent/package.json	vitest 4.1.12 security update (as upstream 2685de7a1)
 packages/ai/package.json	build uses the committed model-data snapshot (offline); vitest 4.1.12 security update (as upstream 2685de7a1)
 packages/ai/scripts/generate-models.ts	pin Claude Sonnet 5.5 cache-read price
@@ -176,6 +176,7 @@ packages/coding-agent/examples/extensions/sandbox/package-lock.json	shell-quote 
 packages/coding-agent/examples/extensions/sandbox/package.json	zod 4.6.6 override (GHSA-mrhx-c7xc-m3w5); sandbox-runtime's range is ^3
 packages/coding-agent/install-lock/package-lock.json	generated from packages/coding-agent/package.json: undici 8.12.3 security update
 packages/coding-agent/package.json	vitest 4.1.12 security update (as upstream 2685de7a1); undici 8.12.3 security update, ahead of upstream (still 8.10.2)
+packages/coding-agent/schemas/settings.schema.json	generated: compaction.enabled defaults to false (settings-defaults.ts)
 packages/coding-agent/src/cli/args.ts	core patch: hidden extension CLI flags
 packages/coding-agent/src/core/extensions/loader.ts	core patch: hidden extension CLI flags
 packages/coding-agent/src/core/extensions/types.ts	core patch: hidden extension CLI flags
@@ -192,6 +193,7 @@ packages/coding-agent/test/penpi-print-mode-continuation.test.ts	PENpi test agai
 packages/coding-agent/test/penpi-shell-env.test.ts	PENpi test against the real session
 packages/coding-agent/test/settings-manager-compaction.test.ts	upstream test adapted to PENpi's compaction-off default
 packages/coding-agent/test/suite/agent-session-boundaries.test.ts	upstream test adapted to PENpi's compaction-off default
+packages/coding-agent/test/suite/agent-session-compaction-model-overrides.test.ts	upstream test adapted to PENpi's compaction-off default
 packages/coding-agent/test/suite/agent-session-compaction.test.ts	upstream test adapted to PENpi's compaction-off default
 packages/coding-agent/test/suite/context-engine-e2/.gitignore	PENpi: E2, the context engine against real tokenizers (ADR 0032)
 packages/coding-agent/test/suite/context-engine-e2/README.md	PENpi: E2, the context engine against real tokenizers (ADR 0032)
@@ -306,6 +308,7 @@ packages/coding-agent/test/suite/context-engine/v060-custom-triggered-run.test.t
 packages/coding-agent/test/suite/context-engine/v060-error-image-caption.test.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/context-engine/v060-request-size-413.test.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/context-engine/vitest.config.ts	PENpi: context engine behaviour suite (ADR 0032)
+packages/coding-agent/test/suite/regressions/copilot-request-size-overflow.test.ts	upstream test adapted to PENpi's compaction-off default
 packages/coding-agent/test/suite/virtual-models.test.ts	upstream test adapted to PENpi's compaction-off default
 packages/coding-agent/vitest.config.ts	the context engine suite runs with its own config (ADR 0032)
 packages/durable/package.json	vitest 4.1.12 security update (as upstream 2685de7a1)

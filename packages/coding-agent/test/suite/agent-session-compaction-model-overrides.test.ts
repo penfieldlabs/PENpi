@@ -111,6 +111,8 @@ describe("AgentSession compaction model overrides", () => {
 			tools: [],
 			settings: {
 				compaction: {
+					// PENpi fork: compaction defaults to off (ADR 0032); enable it explicitly.
+					enabled: true,
 					reserveTokens: 10,
 					modelOverrides: { "faux/big": { reserveTokens: 8000, keepRecentTokens: 150 } },
 				},

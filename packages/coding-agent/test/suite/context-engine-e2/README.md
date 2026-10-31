@@ -1,6 +1,7 @@
 # E2: the context engine against real tokenizers
 
-E2 runs long, realistic agent sessions through stock Pi v1.1.0 (`AgentSession`, `test/suite/harness.ts`,
+E2 runs long, realistic agent sessions through stock Pi at the version the fork is on (v1.4.0 from 0.6.0:
+`AgentSession`, `test/suite/harness.ts`,
 the faux provider from `packages/ai/src/providers/faux.ts`) with a context engine installed as an
 extension, and puts a provider simulator in front of the faux model that counts every request with a
 **real tokenizer** (OpenAI o200k_base, GLM-5.3-Flash) the way a server would: chat template, tool

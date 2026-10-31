@@ -137,18 +137,19 @@ export const GENERIC_OUTPUT_LIMIT =
 
 export const MENTIONS_INPUT = /context|input|prompt/i;
 
-/**
- * G1: classify a provider error before relying on Pi's isContextOverflow, which reads several
- * combined (input + output) errors as overflow. Order: rate limits, explicit output limits,
- * combined errors (output-caused when the input alone fits with room), context overflow (the
- * engine's patterns and Pi's), output limits stated without numbers, unknown.
- */
 /** An HTTP 413 or a request_too_large error type (the request's size, in bytes). */
 const REQUEST_SIZE_PATTERN = /request_too_large|\b413\b/i;
 /** Wording that names a token overflow; a 413 that says it (Vertex for Anthropic) is a context overflow. */
 const TOKEN_OVERFLOW_WORDING =
 	/prompt is too long|input is too long|context (?:length|window|size)|exceed(?:s|ed)? (?:the )?(?:maximum )?context|tokens?\b/i;
 
+/**
+ * G1: classify a provider error before relying on Pi's isContextOverflow, which reads several
+ * combined (input + output) errors as overflow. Order: rate limits, explicit output limits,
+ * combined errors (output-caused when the input alone fits with room), a request-size error with
+ * no token numbers and no token wording (unknown, left to Pi; 0.6.0), context overflow (the
+ * engine's patterns and Pi's), output limits stated without numbers, unknown.
+ */
 export function classifyProviderError(errorMessage: string | undefined, provider?: string): ProviderErrorInfo {
 	if (!errorMessage) return { class: "unknown", rule: "no message" };
 	const text = errorMessage.replace(/[‘’]/g, "'");

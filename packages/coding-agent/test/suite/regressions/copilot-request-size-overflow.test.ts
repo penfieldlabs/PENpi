@@ -68,6 +68,8 @@ describe("Copilot request-size overflow recovery", () => {
 		const harness = await createHarness({
 			provider: "github-copilot",
 			models: [{ id: "faux-copilot", contextWindow: 1_000_000 }],
+			// PENpi fork: compaction defaults to off (ADR 0032); this test is about Pi's own overflow compaction.
+			settings: { compaction: { enabled: true } },
 		});
 		harnesses.push(harness);
 		// Synthetic base64 only; no image decoding or network calls are involved.

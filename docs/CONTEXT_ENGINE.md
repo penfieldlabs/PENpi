@@ -1,6 +1,6 @@
 # Context engine
 
-PENpi 0.5.0 manages the context window with the context engine
+Since 0.5.0, PENpi manages the context window with the context engine
 (`.pi/extensions/penpi/engine/`). It replaces FIFO (ADR 0003) and the compaction fallbacks
 around it (ADRs 0023, 0025, 0027 and 0028). Nothing is summarized and nothing is deleted. The
 session file keeps the whole transcript verbatim, and the engine only decides what the model sees
@@ -55,9 +55,10 @@ made while porting it.
   output limit gets up to 3 continuations per run. A response that spent the whole output limit on
   reasoning, with no text and no tool call, is asked for the answer directly
   (`reasoningOnlyContinuation`). In print mode (`pi -p`) the answer is printed with its
-  continuations; if it is still cut off when they run out, Pi prints "Response was truncated: the
-  model reached its output token limit." and exits 1 (Pi 1.4.0). Scripts that run `pi -p`, the
-  release-gate benchmark included, see that exit code.
+  continuations; if it is still cut off when they run out, pi exits 1 and says so on stderr (from
+  0.6.0 with Pi 1.4.0's message, "Response was truncated: the model reached its output token
+  limit."; 0.5.x exited 1 with its own). `--mode json` exits 0 in that case. The release-gate
+  benchmark runs pi in RPC mode (`--mode rpc`), which this does not affect.
 - **Broken tool calls are repaired in the request.** Some providers return a tool call with no id
   or no name. Pi records it, and a provider that checks ids rejects every later request. The engine
   leaves a call with no name out of what it sends, with the note *[a tool call with no name was
