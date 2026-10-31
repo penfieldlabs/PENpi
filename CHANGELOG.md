@@ -73,6 +73,9 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
   no memory text: changed, unchanged, skipped (not connected, or not oriented), or failed with the
   error. A failed orientation is logged too, a failed connect included (an expired login, for
   instance), and each run after it logs the refresh as skipped (not oriented).
+- **Error text in the engine log, the doctor line and PENpi's notices is one short line**, with
+  whitespace collapsed and capped at 200 characters. A transport error can carry a whole HTTP
+  response, such as a proxy's multi-line HTML error page.
 - **A manual `/compact` is logged as a cut:** `cut #N (manual) at ...`, with the same numbers as
   any other cut.
 - **The pre-cut notice no longer fails on a stored tool call whose name is not a string.** The
