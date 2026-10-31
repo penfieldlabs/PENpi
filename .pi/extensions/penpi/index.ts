@@ -291,8 +291,14 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps): void | Promise<voi
 	let lastRefresh: { at: number; outcome: RefreshOutcome } | undefined;
 	let lastRefreshError: string | undefined;
 	let readFailed = false;
-	/** The session's orientation failed (connect, login or read): each refresh after it is logged as skipped. */
+	/** The session's orientation failed (connect, login or read): each run after it tries the read once (0.5.2). */
 	let orientFailed = false;
+	/** The orientation failed for want of a login: no read can succeed until /penpi login, so none is tried. */
+	let noLogin = false;
+	/** A read after a failed orientation brought the briefing; from then on the refresh runs as usual. */
+	let healed = false;
+	/** The session has shown its one warning about a failed refresh (0.5.2). */
+	let warnedRefreshFailure = false;
 	const recordRefresh = (outcome: RefreshOutcome, detail?: string, error?: string) => {
 		refreshCounts[outcome]++;
 		lastRefresh = { at: Date.now(), outcome };
@@ -450,11 +456,19 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps): void | Promise<voi
 
 	// E8.14: after each run, read the memory again for the engine's next cut (never mid-run, one read at a time).
 	pi.on("agent_end", (_event, ctx) => {
-		if (!engine || refreshing) return;
-		if (orientation === undefined) {
-			// After a failed orientation there is no briefing to refresh (and none is added mid-session). Raw mode
-			// orients nothing on purpose and logs nothing.
-			if (orientFailed) recordRefresh("skipped", "not oriented");
+		if (!engine) return;
+		// 0.5.2: after a failed orientation, each run tries the read once; the briefing it brings is queued for the
+		// next cut, as a login's is (D20), so the prompt still changes only at a cut. Raw mode orients nothing on
+		// purpose: no read and no line.
+		const healing = orientation === undefined && !healed;
+		if (healing && !orientFailed) return;
+		if (refreshing) {
+			// One read at a time: the previous run's read is still going, so this run gets none of its own.
+			recordRefresh("skipped", "still running");
+			return;
+		}
+		if (healing && noLogin) {
+			recordRefresh("skipped", "not oriented");
 			return;
 		}
 		const c = client;
@@ -465,7 +479,7 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps): void | Promise<voi
 			try {
 				if (!c.connected) {
 					// Not connected after a failed read: reconnect, once per run. Otherwise there is nothing to read.
-					if (!readFailed) {
+					if (!readFailed && !healing) {
 						recordRefresh("skipped", "not connected");
 						return;
 					}
@@ -481,8 +495,8 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps): void | Promise<voi
 					reflection.text,
 					engine.sectionCap(ctx, BRIEFING_SECTION, MEMORY_SECTION_FRACTION, MEMORY_SECTION_MAX_TOKENS),
 				);
-				const how = reconnected ? "after a reconnect" : undefined;
-				if (content === queuedOrientation) {
+				const how = healing ? "after a failed orientation" : reconnected ? "after a reconnect" : undefined;
+				if (!healing && content === queuedOrientation) {
 					recordRefresh("unchanged", how);
 					return;
 				}
@@ -494,12 +508,24 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps): void | Promise<voi
 					appliesAt: "next cut",
 					...memoryRecord(rawBriefing, briefing, reflection.text, reflectionText),
 				});
+				if (healing) {
+					healed = true;
+					orientFailed = false;
+				}
 				recordRefresh("changed", how ? `applies at the next cut; ${how}` : "applies at the next cut");
 			} catch (err) {
 				// D21: once the session changed or shutdown began, nothing more is written.
 				if (generation !== refreshGeneration) return;
 				readFailed = true;
 				recordRefresh("failed", errLine(err), errLine(err));
+				// 0.5.2: the engine log is opt-in, and doctor helps only if someone looks: say it once per session.
+				if (!warnedRefreshFailure) {
+					warnedRefreshFailure = true;
+					ctx.ui.notify(
+						`PENpi: a memory refresh failed (${errLine(err)}); /penpi doctor shows the details.`,
+						"warning",
+					);
+				}
 				if (debug) console.error(`[PENpi] briefing refresh failed: ${errMsg(err)}`);
 			} finally {
 				refreshing = undefined;
@@ -512,6 +538,9 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps): void | Promise<voi
 		disarmDuplicateGuard();
 		const reason = (event as { reason?: string }).reason ?? "start";
 		if (debug) console.error(`[PENpi] loaded (session_start: ${reason})`);
+		noLogin = false;
+		healed = false;
+		warnedRefreshFailure = false;
 
 		const cfg = resolvePenfield();
 		status.penfieldEnv = cfg.env;
@@ -557,6 +586,7 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps): void | Promise<voi
 				"warning",
 			);
 			orientFailed = true;
+			noLogin = true;
 			engine?.log(`memory read at ${reason} failed (Penfield not authenticated)`);
 			return;
 		}
@@ -632,7 +662,7 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps): void | Promise<voi
 			adapterPenfieldUrl = cfg.mcpUrl;
 		} catch (err) {
 			adapterProblems.push(
-				`could not build the MCP adapter config (${errMsg(err)}); Penfield/web tools unavailable`,
+				`could not build the MCP adapter config (${errLine(err)}); Penfield/web tools unavailable`,
 			);
 			return;
 		}
@@ -645,7 +675,7 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps): void | Promise<voi
 			try {
 				await installAdapter(pi, built.config);
 			} catch (err) {
-				adapterProblems.push(`could not load pi-mcp-adapter (${errMsg(err)}); Penfield/web tools unavailable`);
+				adapterProblems.push(`could not load pi-mcp-adapter (${errLine(err)}); Penfield/web tools unavailable`);
 			}
 		})();
 	}
