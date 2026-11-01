@@ -54,6 +54,30 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
 - **After a cut, an agent can pick up an earlier task that is already finished, or report it as
   done**, as in 0.5.1.
 
+## [0.5.2] — Unreleased
+
+### Security
+- **`minimatch` 11.0.3 replaces 10.2.6** (GHSA-g3hv-75wg-m249, moderate: a crafted glob pattern can
+  make matching slow; fixed in 11.0.1, with no 10.x fix). Pi uses it to match package resource
+  filters and `--models` patterns, with the plain `minimatch(path, pattern, options)` call, which 11
+  keeps as it was. 11 adds one dependency, `@isaacs/nonrecursive-glob-match`, by the same author.
+  The build tools' own older copy (through `shx`, development only) is not part of PENpi's install.
+
+### Fixed
+- **A failed orientation heals itself.** When Penfield could not be read at session start (a
+  network blip, an error result), the session went without memory until it ended. Now each run
+  after it tries the read once, and the briefing it brings takes effect at the context engine's next
+  cut, as a login's does, so the system prompt still changes only at a cut. A session with no login
+  at all still waits for `/penpi login`.
+- **The first failed memory refresh in a session is shown once**, as a warning that points to
+  `/penpi doctor`. The engine log is opt-in, and doctor helps only if someone looks.
+- **A run that ends while the previous refresh is still reading logs it** as `memory refresh: skipped
+  (still running)`, so the doctor line's counts add up.
+- **A manual `/compact` records the window's real size after the cut** in the engine's statistics,
+  the number its log line prints (it recorded 0).
+- **The notices about the MCP adapter** (its config could not be built, or it did not load) show the
+  error as one short line, as PENpi's other notices do since 0.5.1.
+
 ## [0.5.1] — Unreleased
 
 ### Security
