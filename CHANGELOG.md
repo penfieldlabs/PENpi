@@ -8,6 +8,13 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
 
 ## [0.5.2] — Unreleased
 
+### Security
+- **`minimatch` 11.0.3 replaces 10.2.6** (GHSA-g3hv-75wg-m249, moderate: a crafted glob pattern can
+  make matching slow; fixed in 11.0.1, with no 10.x fix). Pi uses it to match package resource
+  filters and `--models` patterns, with the plain `minimatch(path, pattern, options)` call, which 11
+  keeps as it was. 11 adds one dependency, `@isaacs/nonrecursive-glob-match`, by the same author.
+  The build tools' own older copy (through `shx`, development only) is not part of PENpi's install.
+
 ### Fixed
 - **A failed orientation heals itself.** When Penfield could not be read at session start (a
   network blip, an error result), the session went without memory until it ended. Now each run
