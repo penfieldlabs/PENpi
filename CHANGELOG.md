@@ -71,7 +71,9 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
   make matching slow; fixed in 11.0.1, with no 10.x fix). Pi uses it to match package resource
   filters and `--models` patterns, with the plain `minimatch(path, pattern, options)` call, which 11
   keeps as it was. 11 adds one dependency, `@isaacs/nonrecursive-glob-match`, by the same author.
-  The build tools' own older copy (through `shx`, development only) is not part of PENpi's install.
+- **`shx` 0.4.0 replaces 0.3.4 in the build tools** (the same advisory, development only): 0.3.4 ran
+  on `shelljs` 0.8 and its `glob` 7, which carried `minimatch` 3.1.5; 0.4.0 runs on `shelljs` 0.9.2,
+  which uses `fast-glob`. `npm audit` reports no vulnerabilities.
 
 ### Fixed
 - **A failed orientation heals itself.** When Penfield could not be read at session start (a
@@ -83,6 +85,11 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
   `/penpi doctor`. The engine log is opt-in, and doctor helps only if someone looks.
 - **A run that ends while the previous refresh is still reading logs it** as `memory refresh: skipped
   (still running)`, so the doctor line's counts add up.
+- **A memory refresh no longer reports a change when only Penfield's scores moved.** Penfield's
+  `reflect` re-scores its top memories over time, so the same memories read a few minutes apart
+  differed in a score digit, and the refresh logged `changed`. The next cut then replaced the memory
+  section for nothing, which cost a prompt-cache miss. The refresh now leaves the scores out of its
+  comparison; a memory added, removed or reordered, or a changed briefing, still counts.
 - **A manual `/compact` records the window's real size after the cut** in the engine's statistics,
   the number its log line prints (it recorded 0).
 - **The notices about the MCP adapter** (its config could not be built, or it did not load) show the

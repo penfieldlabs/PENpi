@@ -269,10 +269,13 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps): void | Promise<voi
 	 * E8.14: the briefing is byte-stable within a session and refreshed only at a cut. After each run PENpi
 	 * reads awaken + reflect again in the background; a changed briefing is handed to the engine, which puts
 	 * it into the system prompt at its next cut (setSectionAtNextCut). `orientation` stays the session-start
-	 * text (what before_agent_start sets, so Pi records no change); `queuedOrientation` is the newest text
-	 * handed over. `refreshGeneration` invalidates a read still running when the session changes.
+	 * text (what before_agent_start sets, so Pi records no change). `queuedKey` identifies the newest memory
+	 * handed over (0.5.2): the briefing, the reflection without its drifting scores (refreshKey) and the section
+	 * cap. Penfield's reflect re-scores its top memories over time, so the same memories read minutes apart differ
+	 * in a score digit; that alone is not a change. `refreshGeneration` invalidates a read still running when the
+	 * session changes.
 	 */
-	let queuedOrientation: string | undefined;
+	let queuedKey: string | undefined;
 	let refreshGeneration = 0;
 	let refreshing: Promise<void> | undefined;
 	// The context engine manages the context window (ADR 0032).
@@ -490,17 +493,15 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps): void | Promise<voi
 				if (generation !== refreshGeneration) return;
 				readFailed = false;
 				const rawBriefing = extractBriefing(awoken.data) ?? awoken.text;
-				const { content, briefing, reflectionText } = composeOrientation(
-					rawBriefing,
-					reflection.text,
-					engine.sectionCap(ctx, BRIEFING_SECTION, MEMORY_SECTION_FRACTION, MEMORY_SECTION_MAX_TOKENS),
-				);
+				const cap = engine.sectionCap(ctx, BRIEFING_SECTION, MEMORY_SECTION_FRACTION, MEMORY_SECTION_MAX_TOKENS);
+				const key = refreshKey(rawBriefing, reflection.text, cap?.cap);
 				const how = healing ? "after a failed orientation" : reconnected ? "after a reconnect" : undefined;
-				if (!healing && content === queuedOrientation) {
+				if (!healing && key === queuedKey) {
 					recordRefresh("unchanged", how);
 					return;
 				}
-				queuedOrientation = content;
+				const { content, briefing, reflectionText } = composeOrientation(rawBriefing, reflection.text, cap);
+				queuedKey = key;
 				memoryRaw = { briefing: rawBriefing, reflection: reflection.text };
 				engine.setSectionAtNextCut(BRIEFING_SECTION, content);
 				pi.appendEntry(STATE_CUSTOM_TYPE, {
@@ -711,7 +712,7 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps): void | Promise<voi
 		if (!c) return;
 		status.orientedAt = undefined;
 		orientation = undefined;
-		queuedOrientation = undefined;
+		queuedKey = undefined;
 		refreshGeneration++;
 
 		// Share auth with the conscious layer (pi-mcp-adapter) — one token, one auth.
@@ -756,11 +757,8 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps): void | Promise<voi
 		const rawBriefing = extractBriefing(awoken.data) ?? awoken.text;
 		const rawReflection = reflection.text;
 		memoryRaw = { briefing: rawBriefing, reflection: rawReflection };
-		const { content, briefing, reflectionText } = composeOrientation(
-			rawBriefing,
-			rawReflection,
-			engine?.sectionCap(ctx, BRIEFING_SECTION, MEMORY_SECTION_FRACTION, MEMORY_SECTION_MAX_TOKENS),
-		);
+		const cap = engine?.sectionCap(ctx, BRIEFING_SECTION, MEMORY_SECTION_FRACTION, MEMORY_SECTION_MAX_TOKENS);
+		const { content, briefing, reflectionText } = composeOrientation(rawBriefing, rawReflection, cap);
 
 		// Record what was read in the session (state only, not sent to the LLM): D19, a hash and length of
 		// each text, not the text, so the session file does not grow by the memory at every refresh, and
@@ -783,7 +781,7 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps): void | Promise<voi
 		// section yet (a first login mid-session) gets it now.
 		const recorded = reason === "reload" && engine ? recordedSection(ctx) : undefined;
 		orientation = recorded ?? content;
-		queuedOrientation = content;
+		queuedKey = refreshKey(rawBriefing, rawReflection, cap?.cap);
 		if (recorded !== undefined) engine?.setSectionAtNextCut(BRIEFING_SECTION, content);
 		if (penpiCfg.displayBriefing) ctx.ui.notify(content, "info");
 
@@ -827,6 +825,30 @@ export function disarmDuplicateGuard(): void {
  */
 /** D21: the longest shutdown waits for a Penfield read still running (a refresh) before disconnecting. */
 const REFRESH_SHUTDOWN_WAIT_MS = 2_000;
+
+/**
+ * 0.5.2: the refresh's comparison key. Penfield's reflect result is JSON whose `top_memories` carry a `score` that
+ * drifts over time (a read four minutes later differs in one score digit, with the same memories in the same order).
+ * The key leaves those scores out, so score drift alone is not a change; any other difference (a memory added,
+ * removed or reordered, a changed briefing or section cap) is. A reflection that is not such JSON is compared whole.
+ */
+export function refreshKey(rawBriefing: string, rawReflection: string, cap: number | undefined): string {
+	let reflection = rawReflection;
+	try {
+		const parsed = JSON.parse(rawReflection) as { top_memories?: unknown };
+		if (parsed && typeof parsed === "object" && Array.isArray(parsed.top_memories)) {
+			parsed.top_memories = parsed.top_memories.map((m) => {
+				if (!m || typeof m !== "object") return m;
+				const { score: _score, ...rest } = m as Record<string, unknown>;
+				return rest;
+			});
+			reflection = JSON.stringify(parsed);
+		}
+	} catch {
+		// Not JSON: compared whole.
+	}
+	return JSON.stringify([rawBriefing, reflection, cap ?? null]);
+}
 
 const MEMORY_SECTION_FRACTION = 0.2;
 const MEMORY_SECTION_MAX_TOKENS = 24_000;

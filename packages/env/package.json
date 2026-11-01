@@ -49,7 +49,7 @@
 		"@earendil-works/pi-durable": "1.4.0"
 	},
 	"devDependencies": {
-		"shx": "0.3.4",
+		"shx": "0.4.0",
 		"vitest": "4.1.12"
 	}
 }
