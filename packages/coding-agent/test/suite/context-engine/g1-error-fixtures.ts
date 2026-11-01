@@ -21,6 +21,8 @@ export interface RenderValues {
 export interface ErrorFixture {
 	id: string;
 	provider: string;
+	/** Pi's provider id, when the classification depends on it (Cerebras' bodiless 413). */
+	piProvider?: string;
 	api: string;
 	text: string;
 	expected: { class: ProviderErrorClass; outputLimit?: number; input?: number; contextLimit?: number };
@@ -421,14 +423,16 @@ export const ERROR_FIXTURES: ErrorFixture[] = [
 		note: "wording verified, attribution to GLM inferred",
 	},
 	// ------------------------------------------------------------------ 0.6.0: request size (HTTP 413), no token numbers
-	// Pi 1.4.0's isContextOverflow matches these (overflow.ts, 73f8de80b), but they state a byte limit, not a token
-	// window: the engine must not learn a window from them (as in 0.5.x, they are left to Pi).
+	// Pi 1.4.0's isContextOverflow matches every HTTP 413 (overflow.ts, 73f8de80b). The new case, Copilot's, states a
+	// byte limit, not a token window: the engine does not learn a window from it (as in 0.5.x, it is left to Pi).
+	// Anthropic's request_too_large and Cerebras' bodiless 413 were overflows in Pi 1.1.0 already, and recover as in
+	// 0.5.x.
 	{
 		id: "anthropic-413-request-too-large",
 		provider: "Anthropic direct",
 		api: "anthropic-messages",
 		text: '413 {"error":{"type":"request_too_large","message":"Request exceeds the maximum size"}}',
-		expected: { class: "unknown" },
+		expected: { class: "context-overflow" },
 		source: "upstream Pi v1.4.0 packages/ai/src/utils/overflow.ts (comment)",
 		verified: false,
 	},
@@ -444,9 +448,10 @@ export const ERROR_FIXTURES: ErrorFixture[] = [
 	{
 		id: "cerebras-413-no-body",
 		provider: "Cerebras",
+		piProvider: "cerebras",
 		api: "openai-completions",
 		text: "413 status code (no body)",
-		expected: { class: "unknown" },
+		expected: { class: "context-overflow" },
 		source: "upstream Pi v1.4.0 packages/ai/src/utils/overflow.ts (comment)",
 		verified: false,
 	},

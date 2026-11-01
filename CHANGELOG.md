@@ -38,9 +38,12 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
 - **The replayed-reasoning check is more careful** (D22). It skips a request that appends an
   image (the provider counts the image, the estimate of the appended text does not), counts the
   pre-cut notice, and no longer reports "ignored" while some requests read around 0.4.
-- **An HTTP 413 with no token numbers no longer shrinks the window.** Pi 1.4.0 counts a request
-  that is too large in bytes as a context overflow; the engine leaves it to Pi, as in 0.5.x,
-  instead of learning a smaller window from it. A 413 that names a token overflow is still one.
+- **Copilot's HTTP 413 does not shrink the window.** Pi 1.4.0 counts every HTTP 413 as a context
+  overflow, including GitHub Copilot's "failed to parse request", a request too large in bytes
+  with no token numbers. The engine leaves that one to Pi, as 0.5.x did, instead of learning a
+  smaller window from it. The 413s that Pi 1.1.0 already counted as overflows, Anthropic's
+  `request_too_large` and Cerebras' 413 with no body, still recover as overflows, as in 0.5.x, and
+  so does a 413 that names a token overflow.
 - **A run started by an extension's message** (`sendMessage` with `triggerTurn`) is not recorded as
   the user's request.
 

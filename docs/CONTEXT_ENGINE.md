@@ -50,8 +50,10 @@ made while porting it.
   re-probed later, and are cleared with `/penpi reset-limits`. When the engine detects silent
   truncation, it names the answers that were produced from truncated input.
 - **Recovery without compaction.** An overflow is retried with a smaller window, at most 3 times
-  per run. An HTTP 413 that states no token numbers (a request too large in bytes, such as one
-  with large images) is not taken as a window to learn: it is left to Pi. A response cut off at the
+  per run. Pi 1.4.0 counts any HTTP 413 as an overflow; its new case, GitHub Copilot's 413 with no
+  token numbers (a request too large in bytes), is not taken as a window to learn: it is left to
+  Pi. Anthropic's `request_too_large` and Cerebras' 413 with no body, which Pi 1.1.0 already
+  counted, recover as overflows, as before. A response cut off at the
   output limit gets up to 3 continuations per run. A response that spent the whole output limit on
   reasoning, with no text and no tool call, is asked for the answer directly
   (`reasoningOnlyContinuation`). In print mode (`pi -p`) the answer is printed with its
