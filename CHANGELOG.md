@@ -48,6 +48,12 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
 - **A run started by an extension's message** (`sendMessage` with `triggerTurn`) is not recorded as
   the user's request.
 
+- **A truncating server's own limit no longer clears the evidence of a silent truncation.** A
+  clean sample above every earlier report cleared weak evidence, but a server that fills its
+  context reports its own limit, which can be above the earlier reports and still well under the
+  request. The sample must now also report at least about what was sent (within 7%: the reports'
+  2% flatness and the estimator's 5%). In E2 this let a truncating server go undetected for 7
+  requests on seed 7 of the 0.6.0 sweep.
 - **The silent-truncation check counts the pre-cut notice of the request it judges.** It left it
   out, so the request that carried the notice read about 100 tokens short of its real growth, which
   could hide a small truncation or leave the sample unjudged. It matters only with the notice on.

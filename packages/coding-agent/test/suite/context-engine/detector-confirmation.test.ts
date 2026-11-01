@@ -163,6 +163,47 @@ describe("detector confirmation and re-probes", () => {
 		expect(h.stats.lastLimits?.window).toBe(MODEL.contextWindow);
 	});
 
+	it("v060 a sample above the maximum but well under what was sent does not clear the evidence (E2 seed 7)", async () => {
+		const h = await setup();
+		// A server that keeps dropping more: call 8 grows by a fifth of its honest growth (weak evidence); call 9 loses
+		// what call 8 lost and 40% of its own growth, so it still grows clearly (60%, a clean sample) and reports above
+		// the running maximum, as a truncating server that fills its context does, yet well under what was sent (about
+		// 88%). It must not clear the evidence; call 10, weak again, completes it.
+		const honestAt: number[] = [];
+		let lost = 0;
+		const out = scriptUsage(h.harness, (call, honest, previous) => {
+			honestAt[call] = honest;
+			if (call === 8) {
+				const value = weak(honest, previous);
+				lost = honest - value;
+				return value;
+			}
+			if (call === 9) return honest - lost - Math.round(0.4 * (honest - honestAt[8]));
+			if (call === 10) return previous + Math.round(0.2 * (honest - honestAt[9]));
+			return undefined;
+		});
+		await turns(
+			h,
+			Array.from({ length: 14 }, () => 8_000),
+			350,
+		);
+		const ev = evidence(h.lines);
+		const check9 = h.stats.growthChecks.find((c) => c.seq === 10);
+		report("detector-confirmation", ENGINE_LABEL, "weak-above-max-under-sent", {
+			ev,
+			reported: out.reported.slice(6, 12),
+			honest: honestAt.slice(6, 12),
+		});
+		if (process.env.SEED7_SHOW)
+			console.log(JSON.stringify({ reported: out.reported.slice(6, 12), honest: honestAt.slice(6, 12), check9 }));
+		// The scripted call 9 is the case: above the maximum by more than plateauFlatness, under 93% of what was sent.
+		expect(out.reported[9]).toBeGreaterThan(out.reported[7] * 1.02);
+		expect(out.reported[9] / honestAt[9]).toBeLessThan(0.9);
+		expect(ev.some((l) => l.includes("evidence cleared"))).toBe(false);
+		expect(ev.some((l) => l.includes("evidence 2/2"))).toBe(true);
+		expect(h.lines.some((l) => l.includes("silent truncation:"))).toBe(true);
+	});
+
 	it("a small false-positive window (below 25% of the planning window) is re-probed and retired by honest usage", async () => {
 		const h = await setup();
 		// Calls 4 and 5 report no growth: call 4 is strong evidence and acts at once -> a window of about 10k (5%).
