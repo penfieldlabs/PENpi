@@ -6,6 +6,23 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
 
 ## [Unreleased]
 
+## [0.5.2] — Unreleased
+
+### Fixed
+- **A failed orientation heals itself.** When Penfield could not be read at session start (a
+  network blip, an error result), the session went without memory until it ended. Now each run
+  after it tries the read once, and the briefing it brings takes effect at the context engine's next
+  cut, as a login's does, so the system prompt still changes only at a cut. A session with no login
+  at all still waits for `/penpi login`.
+- **The first failed memory refresh in a session is shown once**, as a warning that points to
+  `/penpi doctor`. The engine log is opt-in, and doctor helps only if someone looks.
+- **A run that ends while the previous refresh is still reading logs it** as `memory refresh: skipped
+  (still running)`, so the doctor line's counts add up.
+- **A manual `/compact` records the window's real size after the cut** in the engine's statistics,
+  the number its log line prints (it recorded 0).
+- **The notices about the MCP adapter** (its config could not be built, or it did not load) show the
+  error as one short line, as PENpi's other notices do since 0.5.1.
+
 ## [0.5.1] — Unreleased
 
 ### Security
