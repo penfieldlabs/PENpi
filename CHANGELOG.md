@@ -27,6 +27,11 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
   `/penpi doctor`. The engine log is opt-in, and doctor helps only if someone looks.
 - **A run that ends while the previous refresh is still reading logs it** as `memory refresh: skipped
   (still running)`, so the doctor line's counts add up.
+- **A memory refresh no longer reports a change when only Penfield's scores moved.** Penfield's
+  `reflect` re-scores its top memories over time, so the same memories read a few minutes apart
+  differed in a score digit, and the refresh logged `changed`. The next cut then replaced the memory
+  section for nothing, which cost a prompt-cache miss. The refresh now leaves the scores out of its
+  comparison; a memory added, removed or reordered, or a changed briefing, still counts.
 - **A manual `/compact` records the window's real size after the cut** in the engine's statistics,
   the number its log line prints (it recorded 0).
 - **The notices about the MCP adapter** (its config could not be built, or it did not load) show the

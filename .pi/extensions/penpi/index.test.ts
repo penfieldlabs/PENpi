@@ -1098,6 +1098,63 @@ describe("memory refresh outcomes (0.5.1)", () => {
 		expect(t.doctor()[0]).toMatch(/ unchanged; 0 changed, 1 unchanged, 0 skipped, 0 failed$/);
 	});
 
+	/** A reflect that answers each read with the next result (the last one repeats), as Penfield's JSON. */
+	const reflections = (...results: Array<Array<{ content: string; score: number }>>) => {
+		let read = 0;
+		return vi.fn(async () => {
+			const top = results[Math.min(read++, results.length - 1)];
+			const text = JSON.stringify({ success: true, time_window: "recent", top_memories: top });
+			return { isError: false, data: "r", text };
+		});
+	};
+
+	it("0.5.2: a reflection whose top memories differ only in their scores is unchanged", async () => {
+		const t = await started({
+			awaken: briefings("BRIEFING-1"),
+			reflect: reflections(
+				[
+					{ content: "A", score: 0.53 },
+					{ content: "B", score: 0.331 },
+				],
+				[
+					{ content: "A", score: 0.52 },
+					{ content: "B", score: 0.331 },
+				],
+			),
+		});
+		await t.runEnds();
+		expect(refreshLines(t.logLines)).toEqual(["memory refresh: unchanged"]);
+		expect(t.setSectionAtNextCut).not.toHaveBeenCalled();
+	});
+
+	it("0.5.2: a reflection with a memory added or reordered is changed", async () => {
+		for (const next of [
+			[
+				{ content: "A", score: 0.53 },
+				{ content: "B", score: 0.331 },
+				{ content: "C", score: 0.3 },
+			],
+			[
+				{ content: "B", score: 0.331 },
+				{ content: "A", score: 0.53 },
+			],
+		]) {
+			const t = await started({
+				awaken: briefings("BRIEFING-1"),
+				reflect: reflections(
+					[
+						{ content: "A", score: 0.53 },
+						{ content: "B", score: 0.331 },
+					],
+					next,
+				),
+			});
+			await t.runEnds();
+			expect(refreshLines(t.logLines)).toEqual(["memory refresh: changed (applies at the next cut)"]);
+			expect(t.setSectionAtNextCut).toHaveBeenCalledTimes(1);
+		}
+	});
+
 	it("skipped: not connected with no failed read, so nothing is read", async () => {
 		const t = await started({ awaken: briefings("BRIEFING-1", "BRIEFING-2") });
 		t.stub.client.connected = false;
