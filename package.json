@@ -87,6 +87,9 @@
 		},
 		"@earendil-works/gondolin": {
 			"undici": "6.29.1"
+		},
+		"miniflare": {
+			"undici": "7.30.1"
 		}
 	}
 }
