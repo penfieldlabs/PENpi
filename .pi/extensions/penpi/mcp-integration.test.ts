@@ -155,7 +155,8 @@ interface Session {
 	errors: Array<{ extensionPath: string; event: string; error: string }>;
 	/** Run a registered tool the way the agent would. */
 	invoke(name: string, params: Record<string, unknown>): Promise<unknown>;
-	dispose(): void;
+	/** Shut the session down as Pi does at exit (session_shutdown, once); safe to call again. */
+	dispose(): Promise<void>;
 }
 
 /**
@@ -271,6 +272,9 @@ async function startSession(profile: string, entry: string = penpiEntry): Promis
 	refreshTools();
 
 	const boundRunner = runner;
+	// The runner's shutdown() only calls the mode's handler, a no-op here: emit session_shutdown so PENpi and the
+	// adapter stop for real, whether or not the test got as far as its own shutdown.
+	let closed = false;
 	return {
 		runner: boundRunner,
 		active,
@@ -290,7 +294,11 @@ async function startSession(profile: string, entry: string = penpiEntry): Promis
 				boundRunner.createToolContext(`call-${name}`, undefined),
 			);
 		},
-		dispose: () => boundRunner.shutdown(),
+		dispose: async () => {
+			if (closed) return;
+			closed = true;
+			await boundRunner.emit({ type: "session_shutdown", reason: "quit" }).catch(() => {});
+		},
 	};
 }
 
@@ -463,7 +471,7 @@ describe("integration: Penfield direct tools across both startup paths", () => {
 				await session.runner.emit({ type: "session_shutdown", reason: "quit" });
 				expect(session.errors).toEqual([]);
 			} finally {
-				session?.dispose();
+				await session?.dispose();
 				for (const restore of restoreEnv) restore();
 				setGlobalDispatcher(previousDispatcher);
 				await fixture.close();
@@ -501,8 +509,7 @@ describe("integration: Penfield direct tools across both startup paths", () => {
 				first = await startSession(profile);
 				await first.runner.emit({ type: "session_start", reason: "startup" });
 				await waitFor(() => first?.active.has("penfield_recall") === true);
-				await first.runner.emit({ type: "session_shutdown", reason: "quit" });
-				first.dispose();
+				await first.dispose();
 				first = undefined;
 
 				expect(existsSync(mcpPath), "run 1 must leave an mcp.json behind").toBe(true);
@@ -561,8 +568,8 @@ describe("integration: Penfield direct tools across both startup paths", () => {
 				await second.runner.emit({ type: "session_shutdown", reason: "quit" });
 				expect(second.errors).toEqual([]);
 			} finally {
-				first?.dispose();
-				second?.dispose();
+				await first?.dispose();
+				await second?.dispose();
 				for (const restore of restoreEnv) restore();
 				setGlobalDispatcher(previousDispatcher);
 				await fixture.close();
@@ -601,7 +608,7 @@ describe("integration: Penfield direct tools across both startup paths", () => {
 				expect([...session.active]).toEqual(expect.arrayContaining(["penfield_recall", "penfield_store"]));
 				await session.runner.emit({ type: "session_shutdown", reason: "quit" });
 			} finally {
-				session?.dispose();
+				await session?.dispose();
 				for (const restore of restoreEnv) restore();
 				setGlobalDispatcher(previousDispatcher);
 				await fixture.close();
@@ -664,8 +671,44 @@ describe("integration: Penfield direct tools across both startup paths", () => {
 
 				await session.runner.emit({ type: "session_shutdown", reason: "quit" });
 			} finally {
-				session?.dispose();
+				await session?.dispose();
 				process.chdir(previousCwd);
+				for (const restore of restoreEnv) restore();
+				setGlobalDispatcher(previousDispatcher);
+				await fixture.close();
+			}
+		},
+		90_000,
+	);
+
+	it.skipIf(!ready)(
+		"a disposed session is shut down: it reaches Penfield no more, even when a test throws before its own shutdown",
+		async () => {
+			// 0.5.1: dispose() used to call the runner's shutdown handler, which this harness binds to a no-op, so a
+			// test that threw before emitting session_shutdown left PENpi's client and the adapter running, and their
+			// later requests reached the next test's fixture. dispose() now emits session_shutdown (once).
+			const profile = cleanProfile();
+			const tokenStore = join(profile, "penfield-tokens-dev.json");
+			writeFileSync(tokenStore, JSON.stringify({ accessToken: SEEDED_TOKEN, expiresAt: Date.now() + 3_600_000 }), {
+				mode: 0o600,
+			});
+			const fixture = await startFixturePenfield(SEEDED_TOKEN);
+			const previousDispatcher = redirectTo(fixture);
+			const restoreEnv = sessionEnv(profile, tokenStore);
+			let session: Session | undefined;
+			try {
+				session = await startSession(profile);
+				await session.runner.emit({ type: "session_start", reason: "startup" });
+				expect(session.appended, "PENpi oriented against the fixture").toContain("penpi-state");
+				// As a test that throws here would: no session_shutdown of its own, only the cleanup.
+				await session.dispose();
+				const before = fixture.authorizations.length;
+				// A run ending after the cleanup would make a live session read its memory again (awaken + reflect).
+				await session.runner.emit({ type: "agent_end", messages: [] });
+				await new Promise((r) => setTimeout(r, 500));
+				expect(fixture.authorizations.length - before, "a disposed session must not contact Penfield").toBe(0);
+			} finally {
+				await session?.dispose();
 				for (const restore of restoreEnv) restore();
 				setGlobalDispatcher(previousDispatcher);
 				await fixture.close();

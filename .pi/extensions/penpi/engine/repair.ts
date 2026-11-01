@@ -17,7 +17,7 @@ export function noteNoId(name: string): string {
 /** no-name: rule 1. no-id: rule 2, paired. no-id-unpaired: rule 2's fallback. orphan-result: rule 3. */
 export type RepairKind = "no-name" | "no-id" | "no-id-unpaired" | "orphan-result";
 
-const blank = (value: unknown) => typeof value !== "string" || value.trim() === "";
+export const blank = (value: unknown) => typeof value !== "string" || value.trim() === "";
 
 /**
  * The id a call with a real name and no id gets: from the stored message's timestamp and the call's index among

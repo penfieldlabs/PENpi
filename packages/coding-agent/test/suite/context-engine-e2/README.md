@@ -243,8 +243,9 @@ and the lag is at most `maxLag`, and PENpi's version (the root `package.json`) i
   (`run-e2.sh` with no selection). In any other set, such as a selection or the misconfigured runs, an entry whose
   run is not there is reported as not run. Anything an entry does not cover fails as before.
 
-Today's entry: research.glm.32k.silent-messages, C6 lag 4 (limit 3), until 0.5.1. It is the same at this
-checkout's path length and at the GitHub runner's.
+Today's entry: research.glm.32k.silent-messages, C6 lag 4 (limit 3), until 0.6.0 (renewed in 0.5.1: the upstream
+merge planned for 0.6.0 changes E2's corpus). It is the same at this checkout's path length and at the GitHub
+runner's.
 
 ## C3 trend
 
