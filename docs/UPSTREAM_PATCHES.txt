@@ -121,7 +121,6 @@ package-lock.json	follows package.json (PENpi workspace and pins)
 package.json	PENpi version, workspace, checks and pins, context engine suite and tokenizer scripts; no npm publishing or model-catalog scripts
 packages/agent/package.json	vitest 4.1.12 security update (as upstream 2685de7a1)
 packages/ai/package.json	build uses the committed model-data snapshot (offline); vitest 4.1.12 security update (as upstream 2685de7a1)
-packages/ai/scripts/generate-models.ts	pin Claude Sonnet 5.5 cache-read price
 packages/ai/src/providers/data/.manifest.json	committed model-data snapshot (offline builds)
 packages/ai/src/providers/data/amazon-bedrock.json	committed model-data snapshot (offline builds)
 packages/ai/src/providers/data/ant-ling.json	committed model-data snapshot (offline builds)

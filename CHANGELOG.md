@@ -18,9 +18,10 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
   - Pi retries more transient provider errors before a run ends, and sends client identity
     headers with each request.
   - Upstream removed the experimental server stack and its client, protocol and server packages.
-- **The model data is v1.4.0's own**, as published in `@earendil-works/pi-ai` 1.4.0, with PENpi's
-  Claude Sonnet 5.5 cache-read price ($0.20). Context windows, output limits and prices change for
-  many models, and the engine plans against them.
+- **The model data is v1.4.0's own**, as published in `@earendil-works/pi-ai` 1.4.0, with no
+  changes. Context windows, output limits and prices change for many models, and the engine plans
+  against them. Claude Sonnet 5.5's cache reads cost $0.10 per million tokens, as Anthropic lists
+  them now; 0.5.x corrected them to $0.20, which is no longer the published price.
 - **The engine's estimate follows Pi 1.4.0's converters.** Thinking from another model is no longer
   sent (Pi 1.1.0 sent it as text), so the estimate drops it too. An error tool result with images
   is sent to Anthropic, and to Claude on Bedrock, with a placeholder per run of images and a

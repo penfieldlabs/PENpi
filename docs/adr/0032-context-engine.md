@@ -324,8 +324,9 @@ file against its own. Test reports, E2 scratch and E2 results moved out of `/tmp
   that load PENpi's extension. Upstream does not commit its model data (it hydrates it from live
   catalogs, which drift from the base's types), so the build uses the fork's committed snapshot: data
   only, every line of code is upstream's. From 0.6.0 the snapshot is the base's own data, as
-  published in `@earendil-works/pi-ai` at the base's version (1.4.0), with PENpi's one price
-  correction, so the build is reproducible.
+  published in `@earendil-works/pi-ai` at the base's version (1.4.0), unchanged, so the build is
+  reproducible. (0.5.x carried one price correction, Claude Sonnet 5.5's cache reads at $0.20;
+  Anthropic lists $0.10 now, as upstream does, so 0.6.0 drops it.)
 
 ## Consequences
 

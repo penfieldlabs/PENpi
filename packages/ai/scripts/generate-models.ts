@@ -2861,12 +2861,6 @@ async function generateModels() {
 			});
 		}
 
-		// PENpi fork: models.dev lists Claude Sonnet 5.5 cache reads at $0.10/MTok; Anthropic's published
-		// rate is $0.20 (the same value as the fallback entry above).
-		if (candidate.provider === "anthropic" && candidate.id === "claude-sonnet-5-5") {
-			candidate.cost.cacheRead = 0.2;
-		}
-
 		if (
 			(candidate.provider === "anthropic" ||
 				candidate.provider === "opencode" ||
