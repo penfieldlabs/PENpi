@@ -37,7 +37,7 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
 - **The notices about the MCP adapter** (its config could not be built, or it did not load) show the
   error as one short line, as PENpi's other notices do since 0.5.1.
 
-## [0.5.1] — Unreleased
+## [0.5.1] — 2026-11-01
 
 ### Security
 - **`zod` 4.6.6 replaces 3.25.76** (GHSA-mrhx-c7xc-m3w5, memory exhaustion when validating
@@ -79,6 +79,10 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
   done.** It has been seen when the pinned request is open-ended, such as "pick a topic", and the
   recent window holds no record of the current subtask. Restating the current task gets the agent
   back on it. Work on this is planned for 0.6.0.
+- **`minimatch` 10.2.6 has a moderate advisory** (GHSA-g3hv-75wg-m249: a crafted glob pattern can
+  make matching slow). The advisory was published after this release was reviewed, and the fix is
+  only in minimatch 11, a major version. Pi uses minimatch to match package resource filters and
+  `--models` patterns. 0.5.2 fixes it with minimatch 11.0.3.
 
 ## [0.5.0] — 2026-10-27
 
