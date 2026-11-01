@@ -13,7 +13,9 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
   make matching slow; fixed in 11.0.1, with no 10.x fix). Pi uses it to match package resource
   filters and `--models` patterns, with the plain `minimatch(path, pattern, options)` call, which 11
   keeps as it was. 11 adds one dependency, `@isaacs/nonrecursive-glob-match`, by the same author.
-  The build tools' own older copy (through `shx`, development only) is not part of PENpi's install.
+- **`shx` 0.4.0 replaces 0.3.4 in the build tools** (the same advisory, development only): 0.3.4 ran
+  on `shelljs` 0.8 and its `glob` 7, which carried `minimatch` 3.1.5; 0.4.0 runs on `shelljs` 0.9.2,
+  which uses `fast-glob`. `npm audit` reports no vulnerabilities.
 
 ### Fixed
 - **A failed orientation heals itself.** When Penfield could not be read at session start (a
