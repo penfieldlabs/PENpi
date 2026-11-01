@@ -174,6 +174,10 @@ export interface EngineHandle {
 		maxTokens: number,
 		recompose: (cap: { cap: number; tokens: (content: string) => number }) => string | undefined,
 	) => void;
+	/** A host line in the engine log (PENPI_ENGINE_LOG), prefixed like the engine's own; no-op without the log. */
+	log: (line: string) => void;
+	/** A line the host adds to `/penpi doctor`, rendered each time doctor runs. */
+	addDoctorLine: (render: () => string) => void;
 }
 
 export function createContextEngine(
@@ -221,6 +225,7 @@ export function createContextEngine(
 		const st = newEngineState(faults);
 		const core = { pi, opts, stats, log, pinOpts, st, faults, faultsRefused, wiring } as EngineCore;
 		core.cappedSections = new Map();
+		core.hostDoctorLines = [];
 		core.faultBanner = () => bannerFor(core.faults, core.faultsRefused);
 		installSerializer(core);
 		installState(core);
@@ -250,6 +255,10 @@ export function createContextEngine(
 				return wrapped?.startsWith(open) && wrapped.endsWith(close)
 					? wrapped.slice(open.length, wrapped.length - close.length)
 					: wrapped;
+			},
+			log,
+			addDoctorLine: (render) => {
+				core.hostDoctorLines.push(render);
 			},
 			capSection: (name, fraction, maxTokens, recompose) => {
 				core.cappedSections.set(name, { fraction, maxTokens, recompose });

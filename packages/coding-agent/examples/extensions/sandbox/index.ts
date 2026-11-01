@@ -44,12 +44,16 @@
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { SandboxManager, type SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
+import { SandboxManager } from "@anthropic-ai/sandbox-runtime";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { type BashOperations, CONFIG_DIR_NAME, createBashTool, getAgentDir } from "@earendil-works/pi-coding-agent";
 
-interface SandboxConfig extends SandboxRuntimeConfig {
+// PENpi: the config is declared here. sandbox-runtime derives its own type from its zod 3 schemas, and with
+// zod 4 installed (GHSA-mrhx-c7xc-m3w5) that inferred type loses its fields. The runtime values are unchanged.
+interface SandboxConfig {
 	enabled?: boolean;
+	network: { allowedDomains: string[]; deniedDomains: string[] };
+	filesystem: { denyRead: string[]; allowWrite: string[]; denyWrite: string[] };
 }
 
 const DEFAULT_CONFIG: SandboxConfig = {
@@ -266,7 +270,7 @@ export default function (pi: ExtensionAPI) {
 				filesystem: config.filesystem,
 				ignoreViolations: configExt.ignoreViolations,
 				enableWeakerNestedSandbox: configExt.enableWeakerNestedSandbox,
-			});
+			} as Parameters<typeof SandboxManager.initialize>[0]);
 
 			sandboxEnabled = true;
 			sandboxInitialized = true;
