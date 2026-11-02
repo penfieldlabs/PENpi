@@ -6,7 +6,7 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
 
 ## [Unreleased]
 
-## [0.5.2] — Unreleased
+## [0.5.2] — 2026-11-02
 
 ### Security
 - **`minimatch` 11.0.3 replaces 10.2.6** (GHSA-g3hv-75wg-m249, moderate: a crafted glob pattern can
