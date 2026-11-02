@@ -29,7 +29,6 @@ const NUMBERS: Array<[keyof EngineOptions, number, number]> = [
 	["silentReprobeBelow", 0, 1],
 	["silentReprobes", -1, Number.POSITIVE_INFINITY],
 	["plateauFlatness", 0, 1],
-	["silentClearEstimateError", 0, 1],
 	["probeAfterParsed", 0, Number.POSITIVE_INFINITY],
 	["probeAfterUnparsed", 0, Number.POSITIVE_INFINITY],
 	["probeConfirmations", 0, Number.POSITIVE_INFINITY],

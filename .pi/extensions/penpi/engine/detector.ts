@@ -281,16 +281,11 @@ export function installDetector(core: EngineCore): void {
 		}
 		// A clean sample above everything reported so far clears the evidence (the provider processed more
 		// than the suspected limit). A truncated request may report only what the server kept, so a value
-		// above that remainder proves nothing. 0.6.0 (R2, option C): it must also report about what was sent,
-		// within plateauFlatness and the estimator's error. A truncating server that fills its context reports
-		// its own limit, which can be above every earlier report and still well under the request (E2 seed 7:
-		// 16,058 reported of about 19,480 expected).
+		// above that remainder proves nothing.
 		if (
 			state.suspects.length > 0 &&
 			!marginal &&
-			reported >
-				Math.max(state.maxReported, ...state.suspects.map((e) => e.reported)) * (1 + opts.plateauFlatness) &&
-			reported >= expected * (1 - opts.plateauFlatness - opts.silentClearEstimateError)
+			reported > Math.max(state.maxReported, ...state.suspects.map((e) => e.reported)) * (1 + opts.plateauFlatness)
 		) {
 			log(`silent truncation evidence cleared: ${reported} reported`);
 			state.suspects = [];

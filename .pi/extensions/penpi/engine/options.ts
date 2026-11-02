@@ -95,11 +95,6 @@ export interface EngineOptions {
 	/** H1/G2: two reported counts within this fraction are "the same"; also the naming tolerance. */
 	plateauFlatness: number;
 	/**
-	 * 0.6.0: the estimator's error a clean sample may show and still clear silent-truncation evidence: it clears only
-	 * when it reports at least (1 - plateauFlatness - this) of its expected size. 0.05 is the band's cap (ADR 0032).
-	 */
-	silentClearEstimateError: number;
-	/**
 	 * Silent truncation: between two consecutive requests whose message list only grew, reported
 	 * usage must grow by at least this fraction of the appended text's expected tokens (images excluded).
 	 */
@@ -344,7 +339,6 @@ export const DEFAULTS: EngineOptions = {
 	ratioFloor: 0.8,
 	ratioCeiling: 6,
 	plateauFlatness: 0.02,
-	silentClearEstimateError: 0.05,
 	silentShortfall: 0.25,
 	silentMinGrowth: 256,
 	silentZeroGrowthFloor: 64,
