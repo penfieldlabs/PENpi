@@ -983,6 +983,16 @@ describe("embedded adapter (ADR 0026)", () => {
 		expect(f.stub.client.awaken).toHaveBeenCalledTimes(1);
 	});
 
+	it("an adapter that fails to load with a long multi-line error is reported in one short line", async () => {
+		const f = await loadEmbedded(() => {
+			throw new Error(`Cannot load:\n${"  at frame (node:internal/modules/cjs/loader:1234:15)\n".repeat(200)}`);
+		});
+		const notifies = await startSession(f);
+		const [warning] = adapterWarnings(notifies);
+		expect(warning).not.toMatch(/\n/);
+		expect(warning.length).toBeLessThan(ERROR_TEXT_MAX + 150);
+	});
+
 	it("reports an unreadable global mcp.json and keeps the penfield entry", async () => {
 		writeFileSync(join(profile, "mcp.json"), "{ not json");
 		const f = await loadEmbedded();
@@ -1086,6 +1096,63 @@ describe("memory refresh outcomes (0.5.1)", () => {
 		expect(refreshLines(t.logLines)).toEqual(["memory refresh: unchanged"]);
 		expect(t.setSectionAtNextCut).not.toHaveBeenCalled();
 		expect(t.doctor()[0]).toMatch(/ unchanged; 0 changed, 1 unchanged, 0 skipped, 0 failed$/);
+	});
+
+	/** A reflect that answers each read with the next result (the last one repeats), as Penfield's JSON. */
+	const reflections = (...results: Array<Array<{ content: string; score: number }>>) => {
+		let read = 0;
+		return vi.fn(async () => {
+			const top = results[Math.min(read++, results.length - 1)];
+			const text = JSON.stringify({ success: true, time_window: "recent", top_memories: top });
+			return { isError: false, data: "r", text };
+		});
+	};
+
+	it("0.5.2: a reflection whose top memories differ only in their scores is unchanged", async () => {
+		const t = await started({
+			awaken: briefings("BRIEFING-1"),
+			reflect: reflections(
+				[
+					{ content: "A", score: 0.53 },
+					{ content: "B", score: 0.331 },
+				],
+				[
+					{ content: "A", score: 0.52 },
+					{ content: "B", score: 0.331 },
+				],
+			),
+		});
+		await t.runEnds();
+		expect(refreshLines(t.logLines)).toEqual(["memory refresh: unchanged"]);
+		expect(t.setSectionAtNextCut).not.toHaveBeenCalled();
+	});
+
+	it("0.5.2: a reflection with a memory added or reordered is changed", async () => {
+		for (const next of [
+			[
+				{ content: "A", score: 0.53 },
+				{ content: "B", score: 0.331 },
+				{ content: "C", score: 0.3 },
+			],
+			[
+				{ content: "B", score: 0.331 },
+				{ content: "A", score: 0.53 },
+			],
+		]) {
+			const t = await started({
+				awaken: briefings("BRIEFING-1"),
+				reflect: reflections(
+					[
+						{ content: "A", score: 0.53 },
+						{ content: "B", score: 0.331 },
+					],
+					next,
+				),
+			});
+			await t.runEnds();
+			expect(refreshLines(t.logLines)).toEqual(["memory refresh: changed (applies at the next cut)"]);
+			expect(t.setSectionAtNextCut).toHaveBeenCalledTimes(1);
+		}
 	});
 
 	it("skipped: not connected with no failed read, so nothing is read", async () => {
@@ -1208,24 +1275,108 @@ describe("memory refresh outcomes (0.5.1)", () => {
 		expect(t.stub.client.awaken).not.toHaveBeenCalled();
 	});
 
-	it("after a failed orientation each run logs the refresh as skipped (not oriented), and reads nothing", async () => {
-		const t = withRefresh({
-			connect: vi.fn(async () => {
-				throw new Error("fetch failed");
-			}),
+	it("after a failed orientation each run tries the read once; a failed attempt is logged and warned about once", async () => {
+		// 0.5.2: a failed orientation heals itself (this one never can: the connect keeps failing).
+		const t = withRefresh({});
+		// As the real client: a failed connect leaves it disconnected.
+		t.stub.client.connected = false;
+		t.stub.client.connect.mockImplementation(async () => {
+			t.stub.client.connected = false;
+			throw new Error("fetch failed");
 		});
-		const { ctx } = makeCtx();
+		const { ctx, notifies } = makeCtx();
 		await t.handlers.session_start({ reason: "startup" }, ctx);
 		t.logLines.length = 0;
 		for (let run = 0; run < 2; run++) {
 			t.handlers.agent_end({}, ctx);
-			await new Promise((resolve) => setTimeout(resolve, 0));
+			await vi.waitFor(() => expect(t.logLines.length).toBe(run + 1));
 		}
-		expect(t.logLines).toEqual(["memory refresh: skipped (not oriented)", "memory refresh: skipped (not oriented)"]);
-		expect(t.stub.client.connect).toHaveBeenCalledTimes(1); // orientation's only: no reconnect mid-session
+		expect(t.logLines).toEqual(["memory refresh: failed (fetch failed)", "memory refresh: failed (fetch failed)"]);
+		expect(t.stub.client.connect).toHaveBeenCalledTimes(3); // orientation's, then one per run
 		expect(t.stub.client.awaken).not.toHaveBeenCalled();
 		expect(t.setSectionAtNextCut).not.toHaveBeenCalled();
-		expect(t.doctor()[0]).toMatch(/ skipped; 0 changed, 0 unchanged, 2 skipped, 0 failed$/);
+		expect(t.doctor()[0]).toMatch(
+			/ failed; 0 changed, 0 unchanged, 0 skipped, 2 failed \(last error: fetch failed\)$/,
+		);
+		const warnings = notifies.filter((n) => n.msg.includes("/penpi doctor"));
+		expect(warnings).toEqual([
+			{ msg: "PENpi: a memory refresh failed (fetch failed); /penpi doctor shows the details.", level: "warning" },
+		]);
+	});
+
+	it("a failed orientation heals at the next run: the briefing is queued for the next cut, the prompt is unchanged before it", async () => {
+		let connects = 0;
+		const t = withRefresh({ awaken: briefings("BRIEFING-1") });
+		t.stub.client.connect.mockImplementation(async () => {
+			if (connects++ === 0) {
+				t.stub.client.connected = false;
+				throw new Error("fetch failed");
+			}
+			t.stub.client.connected = true;
+		});
+		t.stub.client.connected = false;
+		const { ctx } = makeCtx();
+		await t.handlers.session_start({ reason: "startup" }, ctx);
+		expect(briefingSection(t.handlers)).toBeUndefined();
+		t.logLines.length = 0;
+		t.handlers.agent_end({}, ctx);
+		await vi.waitFor(() => expect(t.logLines.length).toBe(1));
+		expect(t.logLines).toEqual(["memory refresh: changed (applies at the next cut; after a failed orientation)"]);
+		expect(t.setSectionAtNextCut).toHaveBeenCalledTimes(1);
+		expect(briefingSection(t.handlers), "the prompt changes only at the cut").toBeUndefined();
+		expect(t.entries.filter((e) => e.d?.refreshedAt)).toHaveLength(1);
+		// From then on the refresh runs as usual.
+		t.handlers.agent_end({}, ctx);
+		await vi.waitFor(() => expect(t.logLines.length).toBe(2));
+		expect(t.logLines[1]).toBe("memory refresh: unchanged");
+		expect(t.setSectionAtNextCut).toHaveBeenCalledTimes(1);
+	});
+
+	it("with no login, a run after the failed orientation tries nothing: skipped (not oriented)", async () => {
+		const t = withRefresh({ auth: false });
+		const { ctx } = makeCtx();
+		await t.handlers.session_start({ reason: "startup" }, ctx);
+		expect(t.logLines).toEqual(["memory read at startup failed (Penfield not authenticated)"]);
+		t.handlers.agent_end({}, ctx);
+		await vi.waitFor(() => expect(t.logLines.length).toBe(2));
+		expect(t.logLines[1]).toBe("memory refresh: skipped (not oriented)");
+		expect(t.stub.client.connect).not.toHaveBeenCalled();
+	});
+
+	it("a run that ends while the previous read is still going logs skipped (still running)", async () => {
+		let release: (() => void) | undefined;
+		let read = 0;
+		const t = await started({
+			awaken: vi.fn(async () => {
+				if (read++ === 1)
+					await new Promise<void>((resolve) => {
+						release = resolve;
+					});
+				return { isError: false, data: { briefing: "BRIEFING-1" }, text: "BRIEFING-1" };
+			}),
+		});
+		t.handlers.agent_end({}, t.ctx); // its read is held
+		await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+		t.handlers.agent_end({}, t.ctx);
+		expect(refreshLines(t.logLines)).toEqual(["memory refresh: skipped (still running)"]);
+		release?.();
+		await vi.waitFor(() => expect(refreshLines(t.logLines)).toHaveLength(2));
+		expect(refreshLines(t.logLines)[1]).toBe("memory refresh: unchanged");
+		expect(t.doctor()[0]).toMatch(/; 0 changed, 1 unchanged, 1 skipped, 0 failed$/);
+	});
+
+	it("a refresh that fails twice in a session warns once", async () => {
+		let read = 0;
+		const t = await started({
+			awaken: vi.fn(async () => {
+				if (read++ > 0) throw new Error("tool awaken timed out after 10000ms");
+				return { isError: false, data: { briefing: "BRIEFING-1" }, text: "BRIEFING-1" };
+			}),
+		});
+		await t.runEnds();
+		t.logLines.length = 0;
+		await t.runEnds();
+		expect(t.notifies.filter((n) => n.msg.includes("/penpi doctor"))).toHaveLength(1);
 	});
 
 	it("raw mode orients nothing on purpose: no failure and no refresh line", async () => {

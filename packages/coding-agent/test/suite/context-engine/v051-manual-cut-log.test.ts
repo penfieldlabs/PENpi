@@ -61,5 +61,8 @@ describe("0.5.1: a manual cut is logged", () => {
 		const [, at, before, after] = cutLines[0].match(/ at (\d+) entry=\S+ (\d+) -> (\d+)/)!;
 		expect(Number(at)).toBe(stats.cuts[0].omitted);
 		expect(Number(after)).toBeLessThan(Number(before));
+		// 0.5.2: the cut's stats record the same numbers the log line prints.
+		expect(Math.round(stats.cuts[0].before)).toBe(Number(before));
+		expect(Math.round(stats.cuts[0].after)).toBe(Number(after));
 	});
 });

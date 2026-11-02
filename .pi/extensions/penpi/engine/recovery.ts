@@ -533,10 +533,10 @@ export function installRecovery(core: EngineCore): void {
 				...core.cutSectionsRecord(branch, sections),
 			});
 			core.logPin(header, seq);
-			stats.cuts.push({ seq, mode: opts.mode, where: "manual", omitted: next, before: current, after: 0 });
-			// Logged as a cut made at a request is: the window it starts at and its estimate before and after.
+			// Logged and recorded as a cut made at a request is: the window it starts at and its estimate before and after.
 			const after =
 				(systemTokens + messageTokens(core.headerMessage(header)) + core.suffixSums(slots)[next]) * ratio;
+			stats.cuts.push({ seq, mode: opts.mode, where: "manual", omitted: next, before: current, after });
 			log(
 				`cut #${seq} (manual) at ${next} entry=${slots[next].entryId} ${Math.round(current)} -> ${Math.round(after)} (budget ${limits.budget}, ratio ${ratio.toFixed(3)})`,
 			);

@@ -63,7 +63,7 @@
 		"hosted-git-info": "9.0.3",
 		"ignore": "7.0.8",
 		"jiti": "2.7.0",
-		"minimatch": "10.2.6",
+		"minimatch": "11.0.3",
 		"proper-lockfile": "4.1.2",
 		"quickjs-wasi": "3.6.2",
 		"semver": "7.8.5",
@@ -84,7 +84,7 @@
 		"@types/proper-lockfile": "4.1.4",
 		"@types/semver": "7.7.1",
 		"marked": "18.0.11",
-		"shx": "0.3.4",
+		"shx": "0.4.0",
 		"vitest": "4.1.12"
 	},
 	"keywords": [
