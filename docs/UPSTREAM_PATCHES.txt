@@ -117,7 +117,7 @@ docs/adr/0030-strict-config-values.md	PENpi decision record
 docs/adr/0031-upstream-ancestry-and-patch-manifest.md	PENpi decision record
 docs/adr/0032-context-engine.md	PENpi decision record
 docs/adr/README.md	PENpi decision record
-package-lock.json	follows package.json (PENpi workspace and pins)
+package-lock.json	follows package.json (PENpi workspace and pins); pi-mcp-adapter installed with --legacy-peer-deps (CONTRIBUTING.md)
 package.json	PENpi version, workspace, checks and pins, context engine suite and tokenizer scripts; no npm publishing or model-catalog scripts
 packages/agent/package.json	vitest 4.1.12 security update (as upstream 2685de7a1)
 packages/ai/package.json	build uses the committed model-data snapshot (offline); vitest 4.1.12 security update (as upstream 2685de7a1)
@@ -317,7 +317,8 @@ packages/env/vitest.config.ts	skip daemon tests when the pi-env daemon is not bu
 packages/evals/package.json	vitest 4.1.12 security update (as upstream 2685de7a1); shx 0.4.0 (drops glob 7 and its minimatch 3.1.5, GHSA-g3hv-75wg-m249)
 packages/mcp/package.json	vitest 4.1.12 security update (as upstream 2685de7a1); shx 0.4.0 (drops glob 7 and its minimatch 3.1.5, GHSA-g3hv-75wg-m249)
 packages/telemetry/package.json	vitest 4.1.12 security update (as upstream 2685de7a1)
-scripts/check-lockfile-versions.mjs	PENpi version-surface check
+scripts/check-lockfile-versions.mjs	PENpi version-surface check; fails on a registry pi-ai (pi-mcp-adapter 7.x peer range)
+scripts/check-lockfile-versions.test.mjs	PENpi: test of the registry pi-ai check
 scripts/check-release-assets.mjs	PENpi release asset interlock
 scripts/check-shell-script-modes.mjs	CI check: invoked shell scripts are executable
 scripts/check-shell-script-modes.test.mjs	tests a PENpi script

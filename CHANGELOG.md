@@ -27,6 +27,19 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
   is sent to Anthropic, and to Claude on Bedrock, with a placeholder per run of images and a
   caption; the estimate counts both.
 
+- **The embedded MCP adapter is pi-mcp-adapter 7.0.0** (from 2.12.1), on the MCP client 2.3.1.
+  Penfield's tools keep their names and stay direct. What changes:
+  - Pi 1.4.0's own MCP support stays off, as before: PENpi keeps `/mcp` with the adapter, so a
+    trusted project's `.pi/mcp.json` still adds no servers (ADR 0026). An MCP server another
+    extension registers is reported and not connected.
+  - The adapter gets PENpi's defaults for its settings: no `install` or `save-script` actions, no
+    semantic tool search (a model call outside the engine's accounting), and no sampling. The
+    global `mcp.json`'s own `settings` still override them.
+  - The `mcp` tool's description and parameters are longer, so every request's tool list grows a
+    little, and a session's cached prompt prefix changes once.
+  - The adapter now depends on `recheck` 4.6.0-beta.3, a pre-release, pinned exactly by the
+    adapter itself.
+
 ### Fixed
 - **A rebuilt window sends the same system prompt as the session did** (D23). After a resume or
   `/reload`, the system messages could be laid out differently from the in-session window, which

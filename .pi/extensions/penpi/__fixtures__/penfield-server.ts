@@ -75,6 +75,8 @@ export interface FixturePenfield {
 	authorizations: string[];
 	/** Every rejected `Authorization` header, so a test can assert none occurred. */
 	rejected: string[];
+	/** The `clientInfo.name` of every accepted `initialize` request: which MCP clients connected, and how often. */
+	initializations: string[];
 	close(): Promise<void>;
 }
 
@@ -91,6 +93,7 @@ export interface FixturePenfield {
 export async function startFixturePenfield(expectedToken: string): Promise<FixturePenfield> {
 	const authorizations: string[] = [];
 	const rejected: string[] = [];
+	const initializations: string[] = [];
 
 	const http: HttpServer = createServer(async (req: IncomingMessage, res: ServerResponse) => {
 		// Stateless Streamable HTTP: only POST carries JSON-RPC. Clients treat 405
@@ -113,6 +116,8 @@ export async function startFixturePenfield(expectedToken: string): Promise<Fixtu
 
 		try {
 			const body = await readBody(req);
+			const message = body as { method?: unknown; params?: { clientInfo?: { name?: unknown } } } | undefined;
+			if (message?.method === "initialize") initializations.push(String(message.params?.clientInfo?.name));
 			const server = makeServer();
 			const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
 			res.on("close", () => {
@@ -134,6 +139,7 @@ export async function startFixturePenfield(expectedToken: string): Promise<Fixtu
 		port,
 		authorizations,
 		rejected,
+		initializations,
 		close: () =>
 			new Promise<void>((resolve, reject) => {
 				http.closeAllConnections();

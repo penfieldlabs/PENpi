@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { PenfieldConfig } from "./config.ts";
-import { buildAdapterConfig, ensurePenfieldMcpEntry, JWT_ENV } from "./mcp-config.ts";
+import { buildAdapterConfig, ensurePenfieldMcpEntry, JWT_ENV, PENPI_ADAPTER_SETTINGS } from "./mcp-config.ts";
 
 const cfg: PenfieldConfig = {
 	env: "dev",
@@ -224,13 +224,16 @@ describe("buildAdapterConfig — global-only adapter config (ADR 0026)", () => {
 		expect(warning).toBeUndefined();
 		expect(config).toEqual({
 			mcpServers: { search: { command: "ddg" }, penfield },
-			settings: { toolPrefix: "short" },
+			settings: { ...PENPI_ADAPTER_SETTINGS, toolPrefix: "short" },
 		});
 	});
 
 	it("defines the penfield entry even when no global file exists yet (clean profile)", () => {
 		const path = join(mkdtempSync(join(tmpdir(), "penpi-mcp-")), "missing", "mcp.json");
-		expect(buildAdapterConfig(cfg, { path })).toEqual({ config: { mcpServers: { penfield } }, path });
+		expect(buildAdapterConfig(cfg, { path })).toEqual({
+			config: { mcpServers: { penfield }, settings: PENPI_ADAPTER_SETTINGS },
+			path,
+		});
 	});
 
 	it("replaces a penfield entry in the global file with PENpi's own", () => {
@@ -252,7 +255,10 @@ describe("buildAdapterConfig — global-only adapter config (ADR 0026)", () => {
 	it("drops imports, which would pull in other hosts' MCP configs", () => {
 		const path = tmpPath();
 		writeFileSync(path, JSON.stringify({ imports: ["cursor", "claude-code"], mcpServers: {} }));
-		expect(buildAdapterConfig(cfg, { path }).config).toEqual({ mcpServers: { penfield } });
+		expect(buildAdapterConfig(cfg, { path }).config).toEqual({
+			mcpServers: { penfield },
+			settings: PENPI_ADAPTER_SETTINGS,
+		});
 	});
 
 	it("never reads the working repository's .mcp.json or .pi/mcp.json", () => {
@@ -276,7 +282,10 @@ describe("buildAdapterConfig — global-only adapter config (ADR 0026)", () => {
 		try {
 			const { config, path } = buildAdapterConfig(cfg);
 			expect(path).toBe(join(agentDir, "mcp.json"));
-			expect(config).toEqual({ mcpServers: { search: { command: "ddg" }, penfield } });
+			expect(config).toEqual({
+				mcpServers: { search: { command: "ddg" }, penfield },
+				settings: PENPI_ADAPTER_SETTINGS,
+			});
 		} finally {
 			process.chdir(previousCwd);
 			if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
@@ -284,6 +293,26 @@ describe("buildAdapterConfig — global-only adapter config (ADR 0026)", () => {
 			if (previousMcpPath === undefined) delete process.env.PENPI_MCP_CONFIG_PATH;
 			else process.env.PENPI_MCP_CONFIG_PATH = previousMcpPath;
 		}
+	});
+
+	it("gives the adapter PENpi's settings, which the global file's own settings override key by key", () => {
+		const path = tmpPath();
+		expect(PENPI_ADAPTER_SETTINGS).toEqual({
+			allowInstall: false,
+			allowScriptToolSave: false,
+			semanticSearch: false,
+			sampling: false,
+		});
+		writeFileSync(path, JSON.stringify({ mcpServers: {}, settings: { sampling: true, freezeDirectTools: true } }));
+		expect(buildAdapterConfig(cfg, { path }).config.settings).toEqual({
+			...PENPI_ADAPTER_SETTINGS,
+			sampling: true,
+			freezeDirectTools: true,
+		});
+		writeFileSync(path, JSON.stringify({ mcpServers: {}, settings: ["sampling"] }));
+		const result = buildAdapterConfig(cfg, { path });
+		expect(result.warning).toMatch(/settings must be an object/);
+		expect(result.config.settings).toEqual(PENPI_ADAPTER_SETTINGS);
 	});
 
 	it("never throws on a bad global file: warns and configures only penfield", () => {
@@ -307,7 +336,7 @@ describe("buildAdapterConfig — global-only adapter config (ADR 0026)", () => {
 			setup(path);
 			const result = buildAdapterConfig(cfg, { path });
 			expect(result.warning, name).toMatch(pattern);
-			expect(result.config, name).toEqual({ mcpServers: { penfield } });
+			expect(result.config, name).toEqual({ mcpServers: { penfield }, settings: PENPI_ADAPTER_SETTINGS });
 		}
 	});
 });

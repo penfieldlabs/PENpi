@@ -212,7 +212,27 @@ async function installEmbeddedAdapter(pi: ExtensionAPI, config: AdapterConfig): 
 	const adapter = (await import(entry)) as {
 		createMcpAdapter: (options: { config: AdapterConfig }) => (pi: ExtensionAPI) => void | Promise<void>;
 	};
-	await adapter.createMcpAdapter({ config })(pi);
+	await adapter.createMcpAdapter({ config })(withoutPiMcpServers(pi));
+}
+
+/** The ExtensionAPI members for MCP servers that other extensions register (Pi 0.99+). */
+const PI_MCP_SERVER_MEMBERS = new Set<PropertyKey>(["registerMcpServer", "unregisterMcpServer", "getMcpServers"]);
+
+/**
+ * PENpi's ExtensionAPI as the embedded adapter sees it: without the MCP-server members, as on a Pi
+ * that has no MCP of its own (ADR 0026). pi-mcp-adapter 7.x checks for `pi.registerMcpServer`, and
+ * where it finds it under a host-supplied config it leaves `/mcp` to Pi and connects the servers
+ * other extensions register. Pi then keeps its built-in MCP loaded, which starts the servers in a
+ * trusted project's `.pi/mcp.json` and reads the global mcp.json (Pi 1.4 rejects the penfield
+ * entry's auth form; a Pi that accepted it would connect to Penfield twice). Without these members the
+ * adapter registers `/mcp`, which makes Pi leave its built-in MCP out, and does not connect servers
+ * from other extensions; Pi reports each of those as registered but not connected.
+ */
+export function withoutPiMcpServers(pi: ExtensionAPI): ExtensionAPI {
+	return new Proxy(pi, {
+		get: (target, key, receiver) => (PI_MCP_SERVER_MEMBERS.has(key) ? undefined : Reflect.get(target, key, receiver)),
+		has: (target, key) => !PI_MCP_SERVER_MEMBERS.has(key) && Reflect.has(target, key),
+	});
 }
 
 /**

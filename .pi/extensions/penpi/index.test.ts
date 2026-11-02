@@ -12,7 +12,9 @@ import penpi, {
 	penpiCore,
 	sanitizeMemoryText,
 	stockAdapterSettingsPaths,
+	withoutPiMcpServers,
 } from "./index.ts";
+import { PENPI_ADAPTER_SETTINGS } from "./mcp-config.ts";
 
 // --- Fakes -----------------------------------------------------------------
 
@@ -963,7 +965,23 @@ describe("embedded adapter (ADR 0026)", () => {
 					lifecycle: "lazy",
 				},
 			},
+			settings: PENPI_ADAPTER_SETTINGS,
 		});
+	});
+
+	it("hides Pi's MCP-server members from the adapter and keeps the rest of the API (0.6.0)", () => {
+		const f = makeFakePi();
+		const registerMcpServer = vi.fn();
+		const api = Object.assign(f.pi, { registerMcpServer, unregisterMcpServer: vi.fn(), getMcpServers: vi.fn() });
+		const seen = withoutPiMcpServers(api as never) as unknown as Record<string, unknown>;
+		// pi-mcp-adapter 7.x checks exactly this to decide whether Pi has MCP of its own.
+		expect(typeof seen.registerMcpServer).toBe("undefined");
+		expect(seen.unregisterMcpServer).toBeUndefined();
+		expect(seen.getMcpServers).toBeUndefined();
+		expect("registerMcpServer" in seen).toBe(false);
+		expect(seen.registerFlag).toBe(api.registerFlag);
+		expect(seen.on).toBe(api.on);
+		expect(registerMcpServer).not.toHaveBeenCalled();
 	});
 
 	it("reads --penpi-dev from argv, because pi applies flag values only after loading", async () => {

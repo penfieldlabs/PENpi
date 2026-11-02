@@ -1,15 +1,28 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	realpathSync,
+	rmSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
 	createExtensionRuntime,
+	DefaultResourceLoader,
 	type ExtensionActions,
 	type ExtensionContextActions,
 	ExtensionRunner,
+	initTheme,
+	type LoadExtensionsResult,
 	type ModelRegistry,
 	SessionManager,
+	SettingsManager,
 	type ToolInfo,
 } from "@earendil-works/pi-coding-agent";
 import { Agent, type Dispatcher, getGlobalDispatcher, setGlobalDispatcher } from "undici";
@@ -70,6 +83,8 @@ import { BRIEFING_CUSTOM_TYPE, BRIEFING_SECTION } from "./config.ts";
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, "..", "..", "..");
 const loaderPath = join(repoRoot, "packages", "coding-agent", "dist", "core", "extensions", "loader.js");
+/** Pi's built-in extensions (MCP among them), as its startup passes them to the resource loader. */
+const builtinExtensionsPath = join(repoRoot, "packages", "coding-agent", "dist", "extensions", "index.js");
 const adapterRoot = join(repoRoot, "node_modules", "pi-mcp-adapter");
 const adapterEntry = join(adapterRoot, "index.ts");
 const penpiEntry = join(here, "index.ts");
@@ -170,19 +185,32 @@ interface Session {
  * failure mode these tests exist to rule out, so the binding has to be present
  * and faithful.
  */
-async function startSession(profile: string, entry: string = penpiEntry): Promise<Session> {
+async function startSession(
+	profile: string,
+	entry: string = penpiEntry,
+	load?: () => Promise<LoadExtensionsResult>,
+): Promise<Session> {
 	// PENpi's duplicate-load guard lives on globalThis and is disarmed by
 	// session_start. Clear it so an earlier load in this worker cannot make PENpi
 	// skip registration here.
 	(globalThis as { __PENPI_LOADED__?: boolean }).__PENPI_LOADED__ = false;
+	// Pi's main.ts initializes the theme for every mode before extensions run; pi-mcp-adapter 7.x reads it in its
+	// session_start (footer status), and the theme throws "Theme not initialized" until then.
+	initTheme(undefined, false);
 
-	const { loadExtensions } = await import(loaderPath);
-	const runtime = createExtensionRuntime();
-	// PENpi ALONE: it embeds the adapter (ADR 0026), installing it after its own
-	// handlers so PENpi's session_start runs before the adapter's.
-	const result = await loadExtensions([entry], profile, undefined, runtime);
+	let result: LoadExtensionsResult;
+	if (load) {
+		// The caller loads the extensions, as Pi's resource loader does at startup (built-in extensions included).
+		result = await load();
+	} else {
+		const { loadExtensions } = await import(loaderPath);
+		// PENpi ALONE: it embeds the adapter (ADR 0026), installing it after its own
+		// handlers so PENpi's session_start runs before the adapter's.
+		result = await loadExtensions([entry], profile, undefined, createExtensionRuntime());
+		expect(result.extensions.map((e: { path: string }) => e.path)).toEqual([entry]);
+	}
 	expect(result.errors, "PENpi must load cleanly through Pi's loader").toEqual([]);
-	expect(result.extensions.map((e: { path: string }) => e.path)).toEqual([entry]);
+	const runtime = result.runtime;
 
 	let runner: ExtensionRunner | undefined;
 	const active = new Set<string>();
@@ -440,7 +468,7 @@ describe("integration: Penfield direct tools across both startup paths", () => {
 				expect(briefing).toContain(FIXTURE_BRIEFING);
 
 				// --- the adapter's discovery hot-registers the direct tools ------------
-				// No metadata cache exists, so 2.12.1 bootstraps every server here.
+				// No metadata cache exists, so the adapter bootstraps every server here.
 				await waitFor(() => session?.active.has("penfield_recall") === true);
 
 				expect(session.errors).toEqual([]);
@@ -454,6 +482,14 @@ describe("integration: Penfield direct tools across both startup paths", () => {
 				);
 				expect([...session.active]).toContain("mcp");
 				expect(session.runner.getActiveTools()).toEqual([...session.active]);
+				// The tool surface, exactly (0.6.0, adapter 7.x): Penfield's tools stay direct and keep their names, with
+				// no deferred `mcp__penfield__*` copies, next to the `mcp` proxy and PENpi's own tools.
+				const fixtureTools = ["awaken", "recall", "reflect", "save_context", "store"].map((t) => `penfield_${t}`);
+				expect([...session.active].sort()).toEqual(["mcp", ...own, ...fixtureTools].sort());
+				expect(session.registered().filter((n) => n.startsWith("mcp__"))).toEqual([]);
+				// PENpi's adapter settings reached the adapter: the proxy no longer offers save-script.
+				const proxy = session.runner.getAllRegisteredTools().find((t) => t.definition.name === "mcp");
+				expect(JSON.stringify(proxy?.definition)).not.toContain("save-script");
 
 				// Every request the fixture served carried the token PENpi published, and
 				// nothing was turned away. Recording alone would not show this — PENpi's
@@ -682,6 +718,127 @@ describe("integration: Penfield direct tools across both startup paths", () => {
 			}
 		},
 		90_000,
+	);
+
+	it.skipIf(!ready)(
+		"Pi's built-in MCP stays out: no second Penfield client, nothing from a trusted project, other extensions' servers not connected",
+		async () => {
+			// pi-mcp-adapter 7.x leaves `/mcp` to Pi when it sees `pi.registerMcpServer` under a host-supplied config,
+			// and Pi then keeps its built-in MCP, which reads the global mcp.json (PENpi's penfield entry: Pi 1.4
+			// rejects its auth form, a Pi that accepted it would be a second Penfield client) and a trusted project's
+			// .pi/mcp.json. PENpi hands the adapter an ExtensionAPI without
+			// those members (withoutPiMcpServers), so the adapter registers `/mcp` and Pi leaves its built-in MCP out.
+			// Loaded here the way Pi's startup loads extensions: the resource loader with the built-in extensions, in a
+			// trusted project, on a warm profile (the global mcp.json already holds the penfield entry).
+			const profile = cleanProfile();
+			const project = cleanProfile();
+			const tokenStore = join(profile, "penfield-tokens-dev.json");
+			writeFileSync(tokenStore, JSON.stringify({ accessToken: SEEDED_TOKEN, expiresAt: Date.now() + 3_600_000 }), {
+				mode: 0o600,
+			});
+			writeFileSync(join(profile, "trust.json"), JSON.stringify({ [realpathSync(project)]: true }));
+			const markers = {
+				project: join(project, "ran-project-mcp-json"),
+				extension: join(project, "ran-extension-server"),
+			};
+			const markerCommand = (marker: string) => ({
+				command: process.execPath,
+				args: ["-e", `require("fs").writeFileSync(${JSON.stringify(marker)}, "ran")`],
+			});
+			mkdirSync(join(project, ".pi"));
+			writeFileSync(
+				join(project, ".pi", "mcp.json"),
+				JSON.stringify({
+					mcpServers: { projectserver: { ...markerCommand(markers.project), exposure: "direct" } },
+				}),
+			);
+			// Another extension registers an MCP server with Pi.
+			const registrar = join(project, "registrar.ts");
+			writeFileSync(
+				registrar,
+				`export default function (pi) { pi.registerMcpServer("extserver", ${JSON.stringify(markerCommand(markers.extension))}); }\n`,
+			);
+
+			const fixture = await startFixturePenfield(SEEDED_TOKEN);
+			const previousDispatcher = redirectTo(fixture);
+			const restoreEnv = sessionEnv(profile, tokenStore);
+			const previousCwd = process.cwd();
+			process.chdir(project);
+			let first: Session | undefined;
+			let session: Session | undefined;
+			try {
+				// A first session writes the penfield entry to the global mcp.json, as on any machine after the first run.
+				first = await startSession(profile);
+				await first.runner.emit({ type: "session_start", reason: "startup" });
+				await first.dispose();
+				expect(readFileSync(join(profile, "mcp.json"), "utf8")).toContain("penfield");
+				fixture.initializations.length = 0;
+
+				const { builtInExtensions } = await import(builtinExtensionsPath);
+				let warnings: Array<{ path: string; warning: string }> = [];
+				session = await startSession(profile, penpiEntry, async () => {
+					const loader = new DefaultResourceLoader({
+						cwd: project,
+						agentDir: profile,
+						settingsManager: SettingsManager.create(project, profile, { projectTrusted: true }),
+						additionalExtensionPaths: [penpiEntry, registrar],
+						extensionFactories: builtInExtensions,
+						noSkills: true,
+						noPromptTemplates: true,
+						noThemes: true,
+						noContextFiles: true,
+					});
+					await loader.reload();
+					const loaded = loader.getExtensions();
+					warnings = loaded.warnings ?? [];
+					return loaded;
+				});
+				const loadedPaths = session.runner.getExtensionPaths();
+				expect(loadedPaths, "the built-in MCP extension was loaded next to the adapter").not.toContain(
+					"builtin:mcp",
+				);
+				expect(loadedPaths).toEqual(expect.arrayContaining([penpiEntry, registrar]));
+				expect(warnings.map((w) => w.path)).toContain("builtin:mcp");
+
+				await session.runner.emit({ type: "session_start", reason: "startup" });
+				session.runner.reportUnhandledMcpServers();
+				await waitFor(() => session?.active.has("penfield_recall") === true);
+				expect([...session.active]).toEqual(expect.arrayContaining(["penfield_recall", "penfield_store"]));
+				// Give a spawned command and a background connection ample time.
+				await new Promise((r) => setTimeout(r, 1_500));
+
+				// Penfield: PENpi's own memory client (`penpi`) and at most the adapter's, each once. Pi's built-in MCP
+				// client names itself `pi` (extensions/mcp/runtime.ts).
+				const clients = [...fixture.initializations].sort();
+				expect(clients, "Pi's built-in MCP connected to Penfield").not.toContain("pi");
+				expect(clients).toContain("penpi");
+				expect(new Set(clients).size, `clients: ${clients.join(", ")}`).toBe(clients.length);
+				// The trusted project's .pi/mcp.json adds nothing.
+				expect(existsSync(markers.project), "a server from the trusted project's .pi/mcp.json ran").toBe(false);
+				expect(session.registered().filter((n) => n.includes("projectserver"))).toEqual([]);
+				// Another extension's server is reported, not connected.
+				expect(existsSync(markers.extension), "a server registered by another extension ran").toBe(false);
+				expect(session.registered().filter((n) => n.includes("extserver"))).toEqual([]);
+				expect(session.errors).toEqual([
+					expect.objectContaining({
+						extensionPath: registrar,
+						event: "register_mcp_server",
+						error: expect.stringContaining(
+							'MCP server "extserver" is registered, but no loaded extension connects',
+						),
+					}),
+				]);
+				await session.runner.emit({ type: "session_shutdown", reason: "quit" });
+			} finally {
+				await first?.dispose();
+				await session?.dispose();
+				process.chdir(previousCwd);
+				for (const restore of restoreEnv) restore();
+				setGlobalDispatcher(previousDispatcher);
+				await fixture.close();
+			}
+		},
+		120_000,
 	);
 
 	it.skipIf(!ready)(

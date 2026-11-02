@@ -44,6 +44,15 @@ for (const [lockPath, entry] of Object.entries(lock.packages ?? {})) {
 	expect(`workspace ${lockPath}`, join(lockPath, "package.json"), entry.version);
 }
 
+// The workspace packages must stay links. pi-mcp-adapter 7.x declares a peer range for pi-ai that makes a plain
+// `npm install` replace the workspace link with registry copies (see CONTRIBUTING.md, Dependencies), and a build
+// that still passed would ship two pi-ai copies.
+for (const [lockPath, entry] of Object.entries(lock.packages ?? {})) {
+	if (/(^|\/)node_modules\/@earendil-works\/pi-ai$/.test(lockPath) && !entry.link) {
+		failures.push(`${lockPath}: a registry @earendil-works/pi-ai ${entry.version}; the workspace link must be the only one`);
+	}
+}
+
 // The MCP handshake version is a hand-maintained literal in source, not a
 // manifest field, so no install step can ever reconcile it. It is pinned by a
 // unit test too; asserted here as well so one command covers every surface a
