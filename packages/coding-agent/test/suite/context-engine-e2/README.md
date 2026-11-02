@@ -244,8 +244,9 @@ and the lag is at most `maxLag`, and PENpi's version (the root `package.json`) i
   (`run-e2.sh` with no selection). In any other set, such as a selection or the misconfigured runs, an entry whose
   run is not there is reported as not run. Anything an entry does not cover fails as before.
 
-No entries today. The last one, research.glm.32k.silent-messages (C6 lag 4 against the limit 3, from 0.5.0), was
-deleted in 0.6.0, whose upstream v1.4.0 corpus no longer makes the run fail (R1 of the 0.6.0 gate).
+Today's entry: data.o200k.1m.silent-messages, C6 lag 4 (limit 3), until 0.7.0. It is new with the upstream v1.4.0
+corpus: 0.6.0's engine on the v1.1.0 corpus passes the run at lag 2, as 0.5.1 does. The earlier entry,
+research.glm.32k.silent-messages (C6 lag 4, from 0.5.0), was deleted in 0.6.0, whose corpus no longer makes it fail.
 
 ## C3 trend
 

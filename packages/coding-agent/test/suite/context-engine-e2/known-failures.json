@@ -1,1 +1,9 @@
-[]
+[
+	{
+		"run": "data.o200k.1m.silent-messages",
+		"criterion": "C6 detection-lag",
+		"maxLag": 4,
+		"until": "0.7.0",
+		"reason": "New with the upstream v1.4.0 corpus (0.6.0): the run's truncations at calls 30, 31, 45 and 46 are too small for any usage rule to see, and detection comes at call 47, from one strong sample (lag 4 against the limit 3). The code is not the cause: 0.6.0's engine on the v1.1.0 corpus (E2_CORPUS_REV=abe508e1b) passes this run at lag 2, exactly as 0.5.1 does (the 0.6.0 gate's decomposition). Accepted for 0.6.0 by decision; F1 targets slow detection after weak evidence, which this run does not have (its first evidence is strong)."
+	}
+]

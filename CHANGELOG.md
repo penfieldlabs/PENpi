@@ -53,8 +53,11 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
   could hide a small truncation or leave the sample unjudged. It matters only with the notice on.
 
 ### Known issues
-- **E2 has no known failures.** research.glm.32k.silent-messages, accepted in 0.5.0 and 0.5.1
-  (C6 detection lag 4), passes on the upstream v1.4.0 corpus (lag 2), and its entry is gone.
+- **E2 has one known failure, new with the upstream v1.4.0 corpus:** data.o200k.1m.silent-messages
+  (C6 detection lag 4 against the limit 3), accepted until 0.7.0. Its first truncations are too
+  small for any usage rule to see. The code is not the cause: on the v1.1.0 corpus, 0.6.0 passes
+  this run at lag 2, as 0.5.1 does. The earlier entry, research.glm.32k.silent-messages (accepted
+  in 0.5.0 and 0.5.1), passes on the new corpus, and it is gone.
 - **After a cut, an agent can pick up an earlier task that is already finished, or report it as
   done**, as in 0.5.1.
 
