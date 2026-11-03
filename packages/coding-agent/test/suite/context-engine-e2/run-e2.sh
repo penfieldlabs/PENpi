@@ -12,10 +12,22 @@
 # Selection and knobs (see matrix.ts): E2_MIXES E2_TOKENIZERS E2_WINDOWS E2_MODES E2_TURNS E2_SEED
 # E2_SILENT_LIMIT E2_ENGINE_OPTIONS E2_PROBE_CONFIRMATIONS; E2_WORKERS (parallel vitest workers, default 2);
 # E2_OUT (results directory); E2_SKIP_SETUP=1 (tokenizers already installed); E2_SKIP_SELFTEST=1.
+# E2_SCRATCH (temp files and the sessions' working directory; default /tmp/penpi-e2-scratch, see below).
 set -uo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 pkg="$(cd "$here/../../.." && pwd)" # packages/coding-agent
 started=$(date +%s)
+
+# The sessions' working directory is under the scratch path, and Pi puts it in the system prompt, so request sizes
+# depend on the path's length (README, Determinism). One fixed path, whatever the checkout's location, keeps runs
+# comparable between CI, the gate and any machine. E2_SCRATCH overrides it; keep the same length to compare runs.
+# One run at a time per path: the run directories are named after the run, not made unique.
+export E2_SCRATCH="${E2_SCRATCH:-/tmp/penpi-e2-scratch}"
+mkdir -p "$E2_SCRATCH" || { echo "E2: cannot create $E2_SCRATCH" >&2; exit 3; }
+if command -v flock >/dev/null; then
+	exec 9>"$E2_SCRATCH/.lock"
+	flock -n 9 || { echo "E2: another run is using $E2_SCRATCH; wait, or set E2_SCRATCH to another path" >&2; exit 3; }
+fi
 
 if [ "${E2_SKIP_SETUP:-0}" != 1 ]; then
 	"$here/setup-tokenizers.sh" || { echo "E2: tokenizer setup failed" >&2; exit 3; }
@@ -39,7 +51,7 @@ out="${E2_OUT:-${E2_OUT_ROOT:-$here/.cache/results}/$label-${sha:0:12}}"
 export E2_OUT="$out"
 mkdir -p "$out"
 rm -f "$out"/*.json "$out"/*.engine.log "$out"/*.dropped.jsonl "$out"/summary.md "$out"/vitest.log
-echo "E2: engine $label sha256 $sha ($nfiles files, from $src); results in $out"
+echo "E2: engine $label sha256 $sha ($nfiles files, from $src); results in $out; scratch $E2_SCRATCH"
 
 # Expected number of runs for the summary check.
 count() { local v="$1" d="$2"; [ -n "$v" ] && echo "$v" | tr ',' '\n' | grep -c . || echo "$d"; }

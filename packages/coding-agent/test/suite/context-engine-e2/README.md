@@ -287,11 +287,14 @@ differ by a few tokens between repetitions. Re-running four 32k configurations w
 (CJK and data, GLM, reject and silent) reproduced every verdict, cut count, truncation count and rejection
 count; per-request sizes differed by at most 63 tokens.
 
-The checkout's path is part of every request: the sessions' working directory is under the checkout
-(`.cache/scratch`), and Pi puts it in the system prompt. A checkout at another path length gives other request
-sizes. RC5's matrix from a 91-character scratch path and from the GitHub runner's 99 characters gave the same
-verdict, failing criteria and silent-truncation record in all 96 runs; the largest request per run differed by
--287 to +69 tokens.
+The scratch path is part of every request: the sessions' working directory is under it, and Pi puts it in the
+system prompt, so another path length gives other request sizes. RC5's matrix from a 91-character scratch path and
+from the GitHub runner's 99 characters gave the same verdict, failing criteria and silent-truncation record in all
+96 runs; the largest request per run differed by -287 to +69 tokens. In 0.6.0 a run near a limit did differ:
+`data.o200k.1m.silent-messages` failed at the gate's 86-character scratch path and passed on a reviewer's checkout
+with a longer path. So `run-e2.sh` uses one fixed scratch path, `/tmp/penpi-e2-scratch`, wherever the checkout is;
+CI and the gate use it too. `E2_SCRATCH` overrides it (one run at a time per path). Running the `.e2.ts` files with
+vitest directly still uses `.cache/scratch` under the checkout.
 
 The default matrix uses seed 1. Other seeds give other sessions (other tasks, sizes and content), which
 is a cheap robustness check of borderline behaviour, for example the silent modes on the fast mixes
@@ -325,4 +328,4 @@ so 88 of 90 pass today).
 | `summarize.mjs` | summary tables and comparison; exit code |
 | `known-failures.json`, `known-failures.ts` | accepted known failures and the rule that applies them (see Known failures) |
 | `known-failures.test.ts` | unit test of the rule and the summary's counting (runs in `npm test`) |
-| `vitest.config.ts`, `tsconfig.json` | config (temp files and Vite cache under `.cache/scratch`) |
+| `vitest.config.ts`, `tsconfig.json` | config (temp files and Vite cache under `E2_SCRATCH`, else `.cache/scratch`) |
