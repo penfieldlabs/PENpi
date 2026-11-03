@@ -114,4 +114,29 @@ in mcp-config.ts), which the global `mcp.json`'s `settings` override key by key:
 `allowInstall` and `allowScriptToolSave` off (the adapter refuses both actions under a
 supplied config, and this stops the `mcp` tool offering them), `semanticSearch` off (a
 classifier model call outside the context engine's and the bench's accounting), and
-`sampling` off.
+`sampling` off. Elicitation is left to the adapter: on with a UI, off without one.
+
+Three more points from the external review of PR #42 (0.6.0):
+
+- **Server defaults.** Adapter 7.x answers a server's `roots/list` with the session's
+  working directory, and runs MCP Tasks, unless a server sets `roots: false` or
+  `tasks: false`. PENpi sets both on the `penfield` entry and, as defaults, on every server
+  in the global `mcp.json` (`PENPI_SERVER_DEFAULTS`); the file may set either per server,
+  except for `penfield`.
+- **The adapter's event bus.** Adapter 7.x also answers requests from any extension on
+  `pi.events`: register a server and connect it on use, read one back, call any MCP tool
+  (Penfield's included), and open a raw MCP session to a configured server. PENpi uses
+  none of them. The `ExtensionAPI` view the adapter gets subscribes nothing on those four
+  channels (`BLOCKED_ADAPTER_EVENTS`), so such a request gets no answer; the adapter's
+  status and tool-approval events pass. So no MCP server from another extension is
+  connected, whether it comes through `pi.registerMcpServer()` or the adapter's bus, and
+  no extension calls Penfield's tools through the adapter. A probe extension in the
+  integration suite sends all four and gets no answer, no server and no tool call.
+- **A failed adapter.** Pi leaves its built-in MCP out only because an extension registers
+  `/mcp`. If the adapter does not load, or its config cannot be built, PENpi registers a
+  `/mcp` of its own that says what failed, so the built-in stays out and a trusted
+  project's `.pi/mcp.json` still starts nothing. It writes no settings. The integration
+  suite forces the adapter import to fail in a trusted project and checks both.
+
+`pi mcp list` and Pi's other `mcp` subcommands are a separate path: Pi runs its built-in
+MCP handler for them before any extension loads (KNOWN_LIMITATIONS.md).

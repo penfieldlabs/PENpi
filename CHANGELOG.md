@@ -29,15 +29,25 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
 - **The embedded MCP adapter is pi-mcp-adapter 7.0.0** (from 2.12.1), on the MCP client 2.3.1.
   Penfield's tools keep their names and stay direct. What changes:
   - Pi 1.4.0's own MCP support stays off, as before: PENpi keeps `/mcp` with the adapter, so a
-    trusted project's `.pi/mcp.json` still adds no servers (ADR 0026). An MCP server another
-    extension registers is reported and not connected.
+    trusted project's `.pi/mcp.json` still adds no servers (ADR 0026). If the adapter fails to
+    load, PENpi registers a `/mcp` of its own that says what failed, so this still holds.
+  - Other extensions cannot add MCP servers or reach Penfield through the adapter. A server one
+    registers with `pi.registerMcpServer()` is reported and not connected. The adapter's own
+    requests on Pi's event bus (register a server, call an MCP tool, open a raw MCP session) get
+    no answer.
+  - No MCP server learns local paths: `roots`, which 7.x answers with the working directory, is
+    off for every server. MCP Tasks are off too, since a task's result would arrive after its
+    call, as a message the context engine has not planned for. A server in the global `mcp.json`
+    may turn either on, except Penfield.
   - The adapter gets PENpi's defaults for its settings: no `install` or `save-script` actions, no
     semantic tool search (a model call outside the engine's accounting), and no sampling. The
-    global `mcp.json`'s own `settings` still override them.
+    global `mcp.json`'s own `settings` still override them. Elicitation (a server asking the
+    user a question) is the adapter's default: on with a UI, off without one.
   - The `mcp` tool's description and parameters are longer, so every request's tool list grows a
     little, and a session's cached prompt prefix changes once.
   - The adapter now depends on `recheck` 4.6.0-beta.3, a pre-release, pinned exactly by the
-    adapter itself.
+    adapter itself. Stable 4.6.0 to 4.6.2 shipped on 25 and 26 October; the pin moves with an
+    adapter update (0.6.1).
 
 ### Fixed
 - **A rebuilt window sends the same system prompt as the session did** (D23). After a resume or

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import penpi, {
+	BLOCKED_ADAPTER_EVENTS,
 	ERROR_TEXT_MAX,
 	encodeMemory,
 	FENCE_LABELS,
@@ -14,7 +15,7 @@ import penpi, {
 	stockAdapterSettingsPaths,
 	withoutPiMcpServers,
 } from "./index.ts";
-import { PENPI_ADAPTER_SETTINGS } from "./mcp-config.ts";
+import { PENPI_ADAPTER_SETTINGS, PENPI_SERVER_DEFAULTS } from "./mcp-config.ts";
 
 // --- Fakes -----------------------------------------------------------------
 
@@ -915,16 +916,16 @@ describe("embedded adapter (ADR 0026)", () => {
 	type Installed = { handlers: string[]; config: any };
 
 	/** penpiCore with a recording adapter installer; mcp.json writes stay off disk. */
-	async function loadEmbedded(install?: (config: unknown) => void | Promise<void>) {
+	async function loadEmbedded(install?: (config: unknown, pi: any) => void | Promise<void>) {
 		const f = makeFakePi();
 		const stub = makeStubClient({ auth: true });
 		const installed: Installed[] = [];
 		await penpiCore(f.pi as never, {
 			makeClient: () => stub.client,
 			ensureMcpEntry: () => "/tmp/penpi-test-mcp.json",
-			installAdapter: async (_pi, config) => {
+			installAdapter: async (adapterPi, config) => {
 				installed.push({ handlers: Object.keys(f.handlers).sort(), config });
-				await install?.(config);
+				await install?.(config, adapterPi);
 			},
 		});
 		return { ...f, stub, installed };
@@ -955,7 +956,7 @@ describe("embedded adapter (ADR 0026)", () => {
 		const { installed } = await loadEmbedded();
 		expect(installed[0].config).toEqual({
 			mcpServers: {
-				search: { command: "ddg" },
+				search: { ...PENPI_SERVER_DEFAULTS, command: "ddg" },
 				penfield: {
 					url: "https://mcp.penfield.app/",
 					auth: "bearer",
@@ -963,6 +964,8 @@ describe("embedded adapter (ADR 0026)", () => {
 					directTools: true,
 					idleTimeout: 5,
 					lifecycle: "lazy",
+					roots: false,
+					tasks: false,
 				},
 			},
 			settings: PENPI_ADAPTER_SETTINGS,
@@ -984,6 +987,33 @@ describe("embedded adapter (ADR 0026)", () => {
 		expect(registerMcpServer).not.toHaveBeenCalled();
 	});
 
+	it("keeps the adapter off its event-bus requests from other extensions, and passes its other events (0.6.0)", () => {
+		const subscribed: string[] = [];
+		const emitted: string[] = [];
+		const f = makeFakePi();
+		const api = Object.assign(f.pi, {
+			events: {
+				on: (channel: string) => {
+					subscribed.push(channel);
+					return () => {};
+				},
+				emit: (channel: string) => emitted.push(channel),
+			},
+		});
+		const seen = withoutPiMcpServers(api as never);
+		for (const channel of BLOCKED_ADAPTER_EVENTS) expect(seen.events.on(channel, () => {})).toBeTypeOf("function");
+		seen.events.on("pi-mcp-adapter:status:v1", () => {});
+		seen.events.emit("pi-mcp-adapter:status:v1", {});
+		expect(subscribed).toEqual(["pi-mcp-adapter:status:v1"]);
+		expect(emitted).toEqual(["pi-mcp-adapter:status:v1"]);
+		expect([...BLOCKED_ADAPTER_EVENTS].sort()).toEqual([
+			"pi-mcp-adapter:protocol:v1",
+			"pi-mcp-adapter:runtime-register:v1",
+			"pi-mcp-adapter:runtime-snapshot:v1",
+			"pi-mcp-adapter:runtime-tool-call:v1",
+		]);
+	});
+
 	it("reads --penpi-dev from argv, because pi applies flag values only after loading", async () => {
 		process.argv = [...previousArgv, "--penpi-dev"];
 		const { installed } = await loadEmbedded();
@@ -994,11 +1024,44 @@ describe("embedded adapter (ADR 0026)", () => {
 		const f = await loadEmbedded(() => {
 			throw new Error("Cannot find module 'pi-mcp-adapter'");
 		});
+		// 0.6.0: a `/mcp` of PENpi's own keeps Pi's built-in MCP out, and says what failed.
+		expect(f.commands.mcp).toBeTypeOf("function");
 		const notifies = await startSession(f);
 		expect(adapterWarnings(notifies)).toEqual([
-			expect.stringMatching(/could not load pi-mcp-adapter.*Cannot find module/),
+			expect.stringMatching(
+				/could not load pi-mcp-adapter.*Cannot find module.*; no MCP server runs, Penfield's included/,
+			),
 		]);
 		expect(f.stub.client.awaken).toHaveBeenCalledTimes(1);
+		const { ctx, notifies: mcpNotes } = makeCtx();
+		await f.commands.mcp("", ctx);
+		expect(mcpNotes.map((n) => n.msg)).toEqual([
+			expect.stringMatching(
+				/MCP is unavailable in this session: could not load pi-mcp-adapter.*built-in MCP stays off/,
+			),
+		]);
+	});
+
+	it("keeps the adapter's own /mcp when the adapter fails after registering it", async () => {
+		const f = await loadEmbedded((_config, adapterPi) => {
+			adapterPi.registerCommand("mcp", { description: "the adapter's", handler: async () => {} });
+			throw new Error("failed later");
+		});
+		const { ctx, notifies } = makeCtx();
+		await f.commands.mcp("", ctx);
+		expect(notifies, "the adapter's own /mcp, not PENpi's stub").toEqual([]);
+	});
+
+	it("registers the stub /mcp when the adapter config cannot be built", async () => {
+		// A non-string mcpLifecycle in the global settings makes the config build throw.
+		writeFileSync(join(profile, "settings.json"), JSON.stringify({ penpi: { mcpLifecycle: 5 } }));
+		const f = await loadEmbedded();
+		expect(f.installed).toEqual([]);
+		const { ctx, notifies } = makeCtx();
+		await f.commands.mcp("", ctx);
+		expect(notifies.map((n) => n.msg)).toEqual([
+			expect.stringMatching(/MCP is unavailable in this session: could not build the MCP adapter config/),
+		]);
 	});
 
 	it("an adapter that fails to load with a long multi-line error is reported in one short line", async () => {

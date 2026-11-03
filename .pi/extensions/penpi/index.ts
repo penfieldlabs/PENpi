@@ -199,7 +199,8 @@ export function defaultDeps(): PenpiDeps {
  * Load the real adapter and install it on PENpi's own ExtensionAPI.
  * `createMcpAdapter({ config })` makes the adapter skip every config file it would
  * otherwise read, project files included. Imported lazily so that unit tests, which
- * load index.ts without Pi's loader, never evaluate the adapter.
+ * load index.ts without Pi's loader, never evaluate the adapter. `pi` is the API as
+ * withoutPiMcpServers gives it (penpiCore wraps it).
  */
 async function installEmbeddedAdapter(pi: ExtensionAPI, config: AdapterConfig): Promise<void> {
 	// Resolved from this file's REAL path. penpi-global.sh installs PENpi as a symlink
@@ -212,11 +213,42 @@ async function installEmbeddedAdapter(pi: ExtensionAPI, config: AdapterConfig): 
 	const adapter = (await import(entry)) as {
 		createMcpAdapter: (options: { config: AdapterConfig }) => (pi: ExtensionAPI) => void | Promise<void>;
 	};
-	await adapter.createMcpAdapter({ config })(withoutPiMcpServers(pi));
+	await adapter.createMcpAdapter({ config })(pi);
+}
+
+/**
+ * `/mcp` when the embedded adapter did not load (0.6.0). Pi 1.4 leaves its built-in MCP out only because an extension
+ * registers `/mcp`; without one it loads it, and the built-in starts the servers in a trusted project's `.pi/mcp.json`
+ * (ADR 0026). This command keeps the built-in out and tells the user what failed. It writes no settings.
+ */
+function registerUnavailableMcp(pi: ExtensionAPI, problem: string): void {
+	pi.registerCommand("mcp", {
+		description: "MCP is unavailable in this session: PENpi's MCP adapter did not load",
+		handler: async (_args, ctx) => {
+			ctx.ui.notify(
+				`PENpi: MCP is unavailable in this session: ${problem}. No MCP server runs, Penfield's tools included; ` +
+					"Pi's built-in MCP stays off so a project's .pi/mcp.json starts nothing. Reinstall PENpi's " +
+					"dependencies (npm ci in the PENpi checkout) and restart pi.",
+				"warning",
+			);
+		},
+	});
 }
 
 /** The ExtensionAPI members for MCP servers that other extensions register (Pi 0.99+). */
 const PI_MCP_SERVER_MEMBERS = new Set<PropertyKey>(["registerMcpServer", "unregisterMcpServer", "getMcpServers"]);
+
+/**
+ * pi-mcp-adapter 7.x's requests from other extensions on `pi.events`: register a server and connect it on use, read
+ * one back, call any MCP tool (Penfield's included), and open a raw MCP session to a configured server. PENpi uses
+ * none of them, and the adapter only answers them, so it is never subscribed to these channels.
+ */
+export const BLOCKED_ADAPTER_EVENTS: ReadonlySet<string> = new Set([
+	"pi-mcp-adapter:runtime-register:v1",
+	"pi-mcp-adapter:runtime-snapshot:v1",
+	"pi-mcp-adapter:runtime-tool-call:v1",
+	"pi-mcp-adapter:protocol:v1",
+]);
 
 /**
  * PENpi's ExtensionAPI as the embedded adapter sees it: without the MCP-server members, as on a Pi
@@ -227,10 +259,27 @@ const PI_MCP_SERVER_MEMBERS = new Set<PropertyKey>(["registerMcpServer", "unregi
  * entry's auth form; a Pi that accepted it would connect to Penfield twice). Without these members the
  * adapter registers `/mcp`, which makes Pi leave its built-in MCP out, and does not connect servers
  * from other extensions; Pi reports each of those as registered but not connected.
+ *
+ * The same holds for the adapter's own event-bus requests (BLOCKED_ADAPTER_EVENTS): its `pi.events.on` for those
+ * channels subscribes nothing, so a request another extension emits gets no answer. Its other events (status,
+ * tool approval) pass. `onCommand` sees each command the adapter registers, so PENpi knows whether `/mcp` exists.
  */
-export function withoutPiMcpServers(pi: ExtensionAPI): ExtensionAPI {
+export function withoutPiMcpServers(pi: ExtensionAPI, onCommand?: (name: string) => void): ExtensionAPI {
+	const events: ExtensionAPI["events"] = {
+		emit: (channel, data) => pi.events.emit(channel, data),
+		on: (channel, handler) => (BLOCKED_ADAPTER_EVENTS.has(channel) ? () => {} : pi.events.on(channel, handler)),
+	};
+	const registerCommand: ExtensionAPI["registerCommand"] = (name, options) => {
+		onCommand?.(name);
+		return pi.registerCommand(name, options);
+	};
 	return new Proxy(pi, {
-		get: (target, key, receiver) => (PI_MCP_SERVER_MEMBERS.has(key) ? undefined : Reflect.get(target, key, receiver)),
+		get: (target, key, receiver) => {
+			if (PI_MCP_SERVER_MEMBERS.has(key)) return undefined;
+			if (key === "events") return events;
+			if (key === "registerCommand") return registerCommand;
+			return Reflect.get(target, key, receiver);
+		},
 		has: (target, key) => !PI_MCP_SERVER_MEMBERS.has(key) && Reflect.has(target, key),
 	});
 }
@@ -675,6 +724,15 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps): void | Promise<voi
 	// own orientation and the context engine do not depend on the adapter.
 	if (deps.installAdapter) {
 		const installAdapter = deps.installAdapter;
+		let adapterRegisteredMcp = false;
+		const adapterPi = withoutPiMcpServers(pi, (name) => {
+			if (name === "mcp") adapterRegisteredMcp = true;
+		});
+		// 0.6.0: without the adapter's `/mcp`, Pi 1.4 would load its built-in MCP (a trusted project's .pi/mcp.json).
+		const unavailable = (problem: string): void => {
+			adapterProblems.push(`${problem}; no MCP server runs, Penfield's included`);
+			if (!adapterRegisteredMcp) registerUnavailableMcp(pi, problem);
+		};
 		let built: ReturnType<typeof buildAdapterConfig>;
 		try {
 			const lifecycle = resolveMcpLifecycle();
@@ -682,9 +740,7 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps): void | Promise<voi
 			built = buildAdapterConfig(cfg, lifecycle ? { lifecycle } : {});
 			adapterPenfieldUrl = cfg.mcpUrl;
 		} catch (err) {
-			adapterProblems.push(
-				`could not build the MCP adapter config (${errLine(err)}); Penfield/web tools unavailable`,
-			);
+			unavailable(`could not build the MCP adapter config (${errLine(err)})`);
 			return;
 		}
 		if (built.warning) {
@@ -694,9 +750,9 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps): void | Promise<voi
 		}
 		return (async () => {
 			try {
-				await installAdapter(pi, built.config);
+				await installAdapter(adapterPi, built.config);
 			} catch (err) {
-				adapterProblems.push(`could not load pi-mcp-adapter (${errLine(err)}); Penfield/web tools unavailable`);
+				unavailable(`could not load pi-mcp-adapter (${errLine(err)})`);
 			}
 		})();
 	}

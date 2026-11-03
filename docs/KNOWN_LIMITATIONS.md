@@ -72,6 +72,16 @@ tokens (2.3%); on the 0.5.x corpus it made research.glm.32k.silent-messages fail
 accepts such misses inside C8's band (0.02 plus the estimate error, at most 5%); outside the band,
 a truncated answer must be named.
 
+## `pi mcp list` and a trusted project's MCP servers
+
+`pi mcp list`, and Pi's other `mcp` subcommands, run Pi's own MCP handler before any
+extension loads, so PENpi's protections do not apply there (ADR 0026). It reads the global
+`mcp.json` and, in a trusted project, the project's `.pi/mcp.json`, and connects to each
+server to show its state and tools: a command such a file defines runs. It reports the
+`penfield` entry as a config error, because Pi rejects that entry's `auth` form. This was the
+same in 0.5.x. A normal `pi` session, which loads PENpi, starts nothing from a project's MCP
+files. Run `pi mcp` only in projects whose `.pi/mcp.json` you trust, or use `/mcp` in a session.
+
 ## Platform coverage
 
 The pre-release review exercised install and uninstall on Linux with Bash, Zsh, and Fish;

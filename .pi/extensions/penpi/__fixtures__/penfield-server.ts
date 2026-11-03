@@ -77,6 +77,10 @@ export interface FixturePenfield {
 	rejected: string[];
 	/** The `clientInfo.name` of every accepted `initialize` request: which MCP clients connected, and how often. */
 	initializations: string[];
+	/** The client capabilities each accepted `initialize` offered, by `clientInfo.name`, in order. */
+	capabilities: Array<{ client: string; capabilities: Record<string, unknown> }>;
+	/** Every accepted request body that carries a `file://` URI (a root, or any local path): none is expected. */
+	fileUris: string[];
 	close(): Promise<void>;
 }
 
@@ -94,6 +98,8 @@ export async function startFixturePenfield(expectedToken: string): Promise<Fixtu
 	const authorizations: string[] = [];
 	const rejected: string[] = [];
 	const initializations: string[] = [];
+	const capabilities: Array<{ client: string; capabilities: Record<string, unknown> }> = [];
+	const fileUris: string[] = [];
 
 	const http: HttpServer = createServer(async (req: IncomingMessage, res: ServerResponse) => {
 		// Stateless Streamable HTTP: only POST carries JSON-RPC. Clients treat 405
@@ -116,8 +122,18 @@ export async function startFixturePenfield(expectedToken: string): Promise<Fixtu
 
 		try {
 			const body = await readBody(req);
-			const message = body as { method?: unknown; params?: { clientInfo?: { name?: unknown } } } | undefined;
-			if (message?.method === "initialize") initializations.push(String(message.params?.clientInfo?.name));
+			const message = body as
+				| { method?: unknown; params?: { clientInfo?: { name?: unknown }; capabilities?: Record<string, unknown> } }
+				| undefined;
+			if (message?.method === "initialize") {
+				initializations.push(String(message.params?.clientInfo?.name));
+				capabilities.push({
+					client: String(message.params?.clientInfo?.name),
+					capabilities: message.params?.capabilities ?? {},
+				});
+			}
+			const raw = JSON.stringify(body ?? null);
+			if (raw.includes("file://")) fileUris.push(raw);
 			const server = makeServer();
 			const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
 			res.on("close", () => {
@@ -140,6 +156,8 @@ export async function startFixturePenfield(expectedToken: string): Promise<Fixtu
 		authorizations,
 		rejected,
 		initializations,
+		capabilities,
+		fileUris,
 		close: () =>
 			new Promise<void>((resolve, reject) => {
 				http.closeAllConnections();

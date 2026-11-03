@@ -330,6 +330,38 @@ async function startSession(
 	};
 }
 
+/** The fixture's tools as the adapter registers them: direct, under `penfield_<name>`. */
+const PENFIELD_TOOLS = ["awaken", "recall", "reflect", "save_context", "store"].map((t) => `penfield_${t}`);
+
+/**
+ * Every PENpi default for the adapter, as far as the running adapter shows it (0.6.0):
+ * - the adapter's MCP client offers Penfield no roots (`roots: false`), no sampling and no elicitation; no request
+ *   carries a local path. The adapter offers sampling and elicitation only with a UI, which this session has not, so
+ *   `sampling: false` itself is held by mcp-config.test.ts;
+ * - the proxy offers no save-script (`allowScriptToolSave: false`), and a semantic search is turned off
+ *   (`semanticSearch: false`);
+ * - an install is refused. Under a host-supplied config the adapter refuses it before reading `allowInstall`, so this
+ *   shows the refusal, not the setting.
+ * MCP Tasks (`tasks: false`) needs a 2026-07-28 connection, which the fixture does not offer; mcp-config.test.ts
+ * covers the config.
+ */
+async function expectPenpiAdapterDefaults(session: Session, fixture: FixturePenfield): Promise<void> {
+	const adapterClients = fixture.capabilities.filter((c) => c.client !== "penpi");
+	expect(adapterClients.length, "the adapter connected to Penfield").toBeGreaterThan(0);
+	for (const { client, capabilities } of adapterClients) {
+		expect(capabilities, `${client} offered roots`).not.toHaveProperty("roots");
+		expect(capabilities, `${client} offered sampling`).not.toHaveProperty("sampling");
+		expect(capabilities, `${client} offered elicitation without a UI`).not.toHaveProperty("elicitation");
+	}
+	expect(fixture.fileUris, "a request to Penfield carried a local path").toEqual([]);
+	const proxy = session.runner.getAllRegisteredTools().find((t) => t.definition.name === "mcp");
+	expect(JSON.stringify(proxy?.definition)).not.toContain("save-script");
+	const semantic = JSON.stringify(await session.invoke("mcp", { search: "recall", searchMode: "semantic" }));
+	expect(semantic).toContain("Semantic search is turned off by settings.semanticSearch");
+	const install = JSON.stringify(await session.invoke("mcp", { action: "install", url: "https://example.invalid/" }));
+	expect(install).toContain("programmatic_config");
+}
+
 /** Wait until `predicate` holds, or give up. Returns whether it held. */
 async function waitFor(predicate: () => boolean, timeoutMs = 20_000): Promise<boolean> {
 	const deadline = Date.now() + timeoutMs;
@@ -483,13 +515,12 @@ describe("integration: Penfield direct tools across both startup paths", () => {
 				expect([...session.active]).toContain("mcp");
 				expect(session.runner.getActiveTools()).toEqual([...session.active]);
 				// The tool surface, exactly (0.6.0, adapter 7.x): Penfield's tools stay direct and keep their names, with
-				// no deferred `mcp__penfield__*` copies, next to the `mcp` proxy and PENpi's own tools.
-				const fixtureTools = ["awaken", "recall", "reflect", "save_context", "store"].map((t) => `penfield_${t}`);
-				expect([...session.active].sort()).toEqual(["mcp", ...own, ...fixtureTools].sort());
-				expect(session.registered().filter((n) => n.startsWith("mcp__"))).toEqual([]);
-				// PENpi's adapter settings reached the adapter: the proxy no longer offers save-script.
-				const proxy = session.runner.getAllRegisteredTools().find((t) => t.definition.name === "mcp");
-				expect(JSON.stringify(proxy?.definition)).not.toContain("save-script");
+				// no deferred `mcp__penfield__*` copies, next to the `mcp` proxy and PENpi's own tools. Registered and
+				// active alike.
+				const surface = ["mcp", ...own, ...PENFIELD_TOOLS].sort();
+				expect([...session.registered()].sort()).toEqual(surface);
+				expect([...session.active].sort()).toEqual(surface);
+				await expectPenpiAdapterDefaults(session, fixture);
 
 				// Every request the fixture served carried the token PENpi published, and
 				// nothing was turned away. Recording alone would not show this — PENpi's
@@ -589,6 +620,17 @@ describe("integration: Penfield direct tools across both startup paths", () => {
 				expect([...second.active], "direct tools must be active on a warm start too").toEqual(
 					expect.arrayContaining(["penfield_recall", "penfield_store"]),
 				);
+				// The tool surface on a warm start, exactly: the same as on a clean one (0.6.0).
+				const surface = [
+					"mcp",
+					"context_notes",
+					"context_recall",
+					"context_search",
+					"search_transcript",
+					...PENFIELD_TOOLS,
+				].sort();
+				expect([...second.registered()].sort()).toEqual(surface);
+				expect([...second.active].sort()).toEqual(surface);
 
 				// --- and only now does invoking a direct tool connect ------------------
 				const result = (await second.invoke("penfield_recall", { query: "anything" })) as {
@@ -833,6 +875,187 @@ describe("integration: Penfield direct tools across both startup paths", () => {
 				await first?.dispose();
 				await session?.dispose();
 				process.chdir(previousCwd);
+				for (const restore of restoreEnv) restore();
+				setGlobalDispatcher(previousDispatcher);
+				await fixture.close();
+			}
+		},
+		120_000,
+	);
+
+	it.skipIf(!ready)(
+		"the adapter fails to load: PENpi's own /mcp keeps Pi's built-in MCP out, and a trusted project's server never runs",
+		async () => {
+			// 0.6.0. Pi 1.4 leaves its built-in MCP out only because an extension registers `/mcp`. If the adapter did not
+			// load, the built-in would run a trusted project's .pi/mcp.json. PENpi registers a `/mcp` of its own instead.
+			// The adapter import is forced to fail: PENpi's core with an installer that imports a missing adapter.
+			const profile = cleanProfile();
+			const project = cleanProfile();
+			const tokenStore = join(profile, "penfield-tokens-dev.json");
+			writeFileSync(tokenStore, JSON.stringify({ accessToken: SEEDED_TOKEN, expiresAt: Date.now() + 3_600_000 }), {
+				mode: 0o600,
+			});
+			writeFileSync(join(profile, "trust.json"), JSON.stringify({ [realpathSync(project)]: true }));
+			const marker = join(project, "ran-project-mcp-json");
+			mkdirSync(join(project, ".pi"));
+			writeFileSync(
+				join(project, ".pi", "mcp.json"),
+				JSON.stringify({
+					mcpServers: {
+						projectserver: {
+							command: process.execPath,
+							args: ["-e", `require("fs").writeFileSync(${JSON.stringify(marker)}, "ran")`],
+							exposure: "direct",
+						},
+					},
+				}),
+			);
+			const broken = join(project, "penpi-broken-adapter.ts");
+			const missingAdapter = join(project, "missing", "pi-mcp-adapter", "index.ts");
+			writeFileSync(
+				broken,
+				[
+					`import { defaultDeps, penpiCore } from ${JSON.stringify(penpiEntry)};`,
+					"export default async function (pi) {",
+					"\tawait penpiCore(pi, {",
+					"\t\t...defaultDeps(),",
+					`\t\tinstallAdapter: async () => { await import(${JSON.stringify(missingAdapter)}); },`,
+					"\t});",
+					"}",
+					"",
+				].join("\n"),
+			);
+
+			const fixture = await startFixturePenfield(SEEDED_TOKEN);
+			const previousDispatcher = redirectTo(fixture);
+			const restoreEnv = sessionEnv(profile, tokenStore);
+			const previousCwd = process.cwd();
+			process.chdir(project);
+			let session: Session | undefined;
+			try {
+				const { builtInExtensions } = await import(builtinExtensionsPath);
+				let warnings: Array<{ path: string; warning: string }> = [];
+				session = await startSession(profile, broken, async () => {
+					const loader = new DefaultResourceLoader({
+						cwd: project,
+						agentDir: profile,
+						settingsManager: SettingsManager.create(project, profile, { projectTrusted: true }),
+						additionalExtensionPaths: [broken],
+						extensionFactories: builtInExtensions,
+						noSkills: true,
+						noPromptTemplates: true,
+						noThemes: true,
+						noContextFiles: true,
+					});
+					await loader.reload();
+					const loaded = loader.getExtensions();
+					warnings = loaded.warnings ?? [];
+					return loaded;
+				});
+				expect(session.runner.getExtensionPaths(), "Pi loaded its built-in MCP").not.toContain("builtin:mcp");
+				expect(warnings.map((w) => w.path)).toContain("builtin:mcp");
+				expect(session.runner.getCommand("mcp")?.description).toMatch(/PENpi's MCP adapter did not load/);
+				// No adapter: PENpi's own tools and those of Pi's other built-in extensions, no MCP tool.
+				expect([...session.registered()].sort()).toEqual(
+					[
+						"codemode",
+						"context_notes",
+						"context_recall",
+						"context_search",
+						"search_transcript",
+						"tool_search",
+					].sort(),
+				);
+
+				await session.runner.emit({ type: "session_start", reason: "startup" });
+				await new Promise((r) => setTimeout(r, 1_500));
+				expect(existsSync(marker), "a server from the trusted project's .pi/mcp.json ran").toBe(false);
+				expect(session.registered().filter((n) => n.includes("projectserver"))).toEqual([]);
+				// PENpi itself still oriented against Penfield.
+				expect(session.appended).toContain("penpi-state");
+				await session.runner.emit({ type: "session_shutdown", reason: "quit" });
+			} finally {
+				await session?.dispose();
+				process.chdir(previousCwd);
+				for (const restore of restoreEnv) restore();
+				setGlobalDispatcher(previousDispatcher);
+				await fixture.close();
+			}
+		},
+		120_000,
+	);
+
+	it.skipIf(!ready)(
+		"another extension's requests on the adapter's event bus get no answer: no server connected, no tool call through",
+		async () => {
+			// 0.6.0. pi-mcp-adapter 7.x answers requests on pi.events from any extension: register a server and connect it
+			// on use, call any MCP tool (Penfield's included), open a raw MCP session. PENpi keeps the adapter off them.
+			const profile = cleanProfile();
+			const project = cleanProfile();
+			const tokenStore = join(profile, "penfield-tokens-dev.json");
+			writeFileSync(tokenStore, JSON.stringify({ accessToken: SEEDED_TOKEN, expiresAt: Date.now() + 3_600_000 }), {
+				mode: 0o600,
+			});
+			const marker = join(project, "ran-runtime-registered-server");
+			const probe = join(project, "probe.ts");
+			writeFileSync(probe, "export default function (pi) { globalThis.__penpiEventProbe = pi; }\n");
+
+			const fixture = await startFixturePenfield(SEEDED_TOKEN);
+			const previousDispatcher = redirectTo(fixture);
+			const restoreEnv = sessionEnv(profile, tokenStore);
+			let session: Session | undefined;
+			try {
+				session = await startSession(profile, penpiEntry, async () => {
+					const { loadExtensions } = await import(loaderPath);
+					return loadExtensions([penpiEntry, probe], profile, undefined, createExtensionRuntime());
+				});
+				await session.runner.emit({ type: "session_start", reason: "startup" });
+				expect(session.errors).toEqual([]);
+				await waitFor(() => session?.active.has("penfield_recall") === true);
+				const api = (globalThis as { __penpiEventProbe?: { events: { emit(c: string, d: unknown): void } } })
+					.__penpiEventProbe;
+				expect(api, "the probe extension loaded").toBeDefined();
+
+				const register: { result?: unknown } & Record<string, unknown> = {
+					version: 1,
+					name: "probeserver",
+					definition: {
+						command: process.execPath,
+						args: ["-e", `require("fs").writeFileSync(${JSON.stringify(marker)}, "ran")`],
+						lifecycle: "eager",
+					},
+				};
+				api?.events.emit("pi-mcp-adapter:runtime-register:v1", register);
+				const snapshot: { result?: unknown } & Record<string, unknown> = { version: 1, name: "penfield" };
+				api?.events.emit("pi-mcp-adapter:runtime-snapshot:v1", snapshot);
+				const requestsBefore = fixture.authorizations.length;
+				const call: { result?: unknown } & Record<string, unknown> = {
+					version: 1,
+					tool: "penfield_recall",
+					args: { query: "probe" },
+				};
+				api?.events.emit("pi-mcp-adapter:runtime-tool-call:v1", call);
+				const protocol: { result?: unknown; error?: unknown } & Record<string, unknown> = {
+					version: 1,
+					definition: { namespace: "probe", requests: ["probe/ask"], streams: [], notifications: [] },
+				};
+				api?.events.emit("pi-mcp-adapter:protocol:v1", protocol);
+
+				expect(register.result, "the adapter answered a runtime registration").toBeUndefined();
+				expect(snapshot.result, "the adapter answered a runtime snapshot").toBeUndefined();
+				expect(call.result, "the adapter answered a runtime tool call").toBeUndefined();
+				expect(protocol.result ?? protocol.error, "the adapter answered a protocol registration").toBeUndefined();
+				await new Promise((r) => setTimeout(r, 1_500));
+				expect(existsSync(marker), "a runtime-registered server ran").toBe(false);
+				expect(session.registered().filter((n) => n.includes("probeserver"))).toEqual([]);
+				expect(fixture.authorizations.length - requestsBefore, "a runtime tool call reached Penfield").toBe(0);
+				// The adapter itself still works.
+				const result = (await session.invoke("penfield_recall", { query: "anything" })) as { isError?: boolean };
+				expect(result?.isError ?? false).toBe(false);
+				await session.runner.emit({ type: "session_shutdown", reason: "quit" });
+			} finally {
+				(globalThis as { __penpiEventProbe?: unknown }).__penpiEventProbe = undefined;
+				await session?.dispose();
 				for (const restore of restoreEnv) restore();
 				setGlobalDispatcher(previousDispatcher);
 				await fixture.close();
