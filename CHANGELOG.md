@@ -26,7 +26,6 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
   sent (Pi 1.1.0 sent it as text), so the estimate drops it too. An error tool result with images
   is sent to Anthropic, and to Claude on Bedrock, with a placeholder per run of images and a
   caption; the estimate counts both.
-
 - **The embedded MCP adapter is pi-mcp-adapter 7.0.0** (from 2.12.1), on the MCP client 2.3.1.
   Penfield's tools keep their names and stay direct. What changes:
   - Pi 1.4.0's own MCP support stays off, as before: PENpi keeps `/mcp` with the adapter, so a
@@ -60,7 +59,6 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
   so does a 413 that names a token overflow.
 - **A run started by an extension's message** (`sendMessage` with `triggerTurn`) is not recorded as
   the user's request.
-
 - **The silent-truncation check counts the pre-cut notice of the request it judges.** It left it
   out, so the request that carried the notice read about 100 tokens short of its real growth, which
   could hide a small truncation or leave the sample unjudged. It matters only with the notice on.
@@ -74,7 +72,7 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
 - **After a cut, an agent can pick up an earlier task that is already finished, or report it as
   done**, as in 0.5.1.
 
-## [0.5.2] — Unreleased
+## [0.5.2] — 2026-11-02
 
 ### Security
 - **`minimatch` 11.0.3 replaces 10.2.6** (GHSA-g3hv-75wg-m249, moderate: a crafted glob pattern can
