@@ -326,6 +326,8 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps): void | Promise<voi
 	// Per-instance state (this closure, not module-level) so penpiCore is reentrant
 	// and the DI boundary is clean — no shared client/status across instances.
 	let client: PenfieldClient | undefined;
+	/** 0.6.0: the startup token fetch (publishTokenBeforeAdapter) while it may still be running; see session_start. */
+	let startupToken: Promise<unknown> | undefined;
 	const status: PenpiStatus = {};
 	/**
 	 * The orientation briefing, set by orient(). It goes into the system prompt as one section on every run
@@ -639,6 +641,14 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps): void | Promise<voi
 			}
 		}
 
+		// 0.6.0: a startup token fetch that outlived STARTUP_TOKEN_WAIT_MS (a slow refresh) finishes first, so this
+		// session's client reads the token it stored instead of sending the same refresh token a second time.
+		if (startupToken) {
+			const pending = startupToken;
+			startupToken = undefined;
+			await pending;
+		}
+
 		// Fresh connection per session_start (handles reload/resume/fork).
 		await client?.disconnect();
 		client = deps.makeClient(cfg, {
@@ -776,8 +786,10 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps): void | Promise<voi
 			const tokens = deps.makeClient(cfg);
 			if (tokens.hasNonInteractiveAuth()) {
 				let timer: ReturnType<typeof setTimeout> | undefined;
+				const pending = tokens.getAccessToken();
+				startupToken = pending.catch(() => undefined);
 				token = await Promise.race([
-					tokens.getAccessToken(),
+					pending,
 					new Promise<undefined>((resolve) => {
 						timer = setTimeout(() => resolve(undefined), STARTUP_TOKEN_WAIT_MS);
 					}),

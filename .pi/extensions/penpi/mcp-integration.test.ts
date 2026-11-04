@@ -748,6 +748,49 @@ describe("integration: Penfield direct tools across both startup paths", () => {
 	);
 
 	it.skipIf(!ready)(
+		"eager lifecycle, a refresh slower than the startup wait: one refresh request, not two (0.6.0)",
+		async () => {
+			// The startup token fetch gives up waiting after 10 s but its refresh keeps running. session_start must
+			// reuse it: a second client would read the still-expired token and send the same refresh token again, which
+			// a server rotating refresh tokens with reuse detection could treat as theft and end the login.
+			const profile = cleanProfile();
+			const tokenStore = join(profile, "penfield-tokens-dev.json");
+			writeFileSync(
+				tokenStore,
+				JSON.stringify({
+					accessToken: "expired-access",
+					expiresAt: Date.now() - 60_000,
+					refreshToken: "stored-refresh",
+				}),
+				{ mode: 0o600 },
+			);
+			const fixture = await startFixturePenfield(SEEDED_TOKEN, { tokenDelayMs: 11_500 });
+			const previousDispatcher = redirectTo(fixture);
+			const restoreEnv = [...sessionEnv(profile, tokenStore), setEnv("PENPI_MCP_LIFECYCLE", "eager")];
+			let session: Session | undefined;
+			try {
+				session = await startSession(profile);
+				expect(fixture.refreshes, "the startup fetch's refresh is still running").toEqual(["stored-refresh"]);
+				await session.runner.emit({ type: "session_start", reason: "startup" });
+				expect(session.errors).toEqual([]);
+				await new Promise((r) => setTimeout(r, 500));
+
+				expect(fixture.refreshes, "exactly one refresh request").toEqual(["stored-refresh"]);
+				expect(fixture.rejected, "no request may reach Penfield without the JWT").toEqual([]);
+				expect(fixture.authorizations.length, "orientation reached Penfield").toBeGreaterThan(0);
+				expect(fixture.authorizations.every((a) => a === `Bearer ${SEEDED_TOKEN}`)).toBe(true);
+				await session.runner.emit({ type: "session_shutdown", reason: "quit" });
+			} finally {
+				await session?.dispose();
+				for (const restore of restoreEnv.reverse()) restore();
+				setGlobalDispatcher(previousDispatcher);
+				await fixture.close();
+			}
+		},
+		120_000,
+	);
+
+	it.skipIf(!ready)(
 		"global install: the embedded adapter loads when PENpi is reached through a symlink",
 		async () => {
 			// penpi-global.sh links <agentDir>/extensions/penpi to the repository's

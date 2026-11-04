@@ -100,7 +100,10 @@ export interface FixturePenfield {
  * token, so "the right bearer appeared at some point" can be satisfied entirely
  * by PENpi's traffic while the adapter sends something else.
  */
-export async function startFixturePenfield(expectedToken: string): Promise<FixturePenfield> {
+export async function startFixturePenfield(
+	expectedToken: string,
+	opts: { tokenDelayMs?: number } = {},
+): Promise<FixturePenfield> {
 	const authorizations: string[] = [];
 	const rejected: string[] = [];
 	const initializations: string[] = [];
@@ -129,6 +132,7 @@ export async function startFixturePenfield(expectedToken: string): Promise<Fixtu
 		if (path === "/token" && req.method === "POST") {
 			const form = new URLSearchParams(String(await readRaw(req)));
 			refreshes.push(form.get("refresh_token") ?? "");
+			if (opts.tokenDelayMs) await new Promise((r) => setTimeout(r, opts.tokenDelayMs));
 			json({ access_token: expectedToken, expires_in: 3600, refresh_token: "fixture-refresh-next" });
 			return;
 		}
