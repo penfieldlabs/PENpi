@@ -659,6 +659,85 @@ describe("integration: Penfield direct tools across both startup paths", () => {
 		120_000,
 	);
 
+	for (const start of [
+		{ name: "a valid access token", store: () => ({ accessToken: SEEDED_TOKEN, expiresAt: Date.now() + 3_600_000 }) },
+		{
+			name: "an expired access token and a valid refresh token",
+			store: () => ({
+				accessToken: "expired-access",
+				expiresAt: Date.now() - 60_000,
+				refreshToken: "stored-refresh",
+			}),
+		},
+	]) {
+		it.skipIf(!ready)(
+			`eager lifecycle, ${start.name}: no request before the JWT and no 401 (0.6.0)`,
+			async () => {
+				// The 0.5.1 to 0.6.0 smokes' startup 401: with `penpi.mcpLifecycle: "eager"` the adapter connects while
+				// extensions load, before session_start publishes the JWT. PENpi now publishes it before the adapter loads.
+				const profile = cleanProfile();
+				const tokenStore = join(profile, "penfield-tokens-dev.json");
+				writeFileSync(tokenStore, JSON.stringify(start.store()), { mode: 0o600 });
+
+				const fixture = await startFixturePenfield(SEEDED_TOKEN);
+				const previousDispatcher = redirectTo(fixture);
+				const restoreEnv = [...sessionEnv(profile, tokenStore), setEnv("PENPI_MCP_LIFECYCLE", "eager")];
+				let session: Session | undefined;
+				try {
+					session = await startSession(profile);
+					// The adapter's load-time connect is scheduled with setImmediate: let it run.
+					await waitFor(() => fixture.capabilities.some((c) => c.client !== "penpi"), 5_000);
+					await session.runner.emit({ type: "session_start", reason: "startup" });
+					expect(session.errors).toEqual([]);
+					await waitFor(() => session?.active.has("penfield_recall") === true);
+					await new Promise((r) => setTimeout(r, 500));
+
+					expect(fixture.rejected, "no request may reach Penfield without the JWT").toEqual([]);
+					expect(fixture.authorizations.every((a) => a === `Bearer ${SEEDED_TOKEN}`)).toBe(true);
+					// An eager entry connects twice in adapter 7.x, both times with the JWT: once while extensions load,
+					// and again at session_start, which shuts the load-time state down first (its index.ts, "session_restart").
+					expect(
+						fixture.capabilities.filter((c) => c.client !== "penpi").length,
+						"the adapter's load-time connect and its session_start connect",
+					).toBe(2);
+					expect(fixture.refreshes).toEqual(start.name.startsWith("an expired") ? ["stored-refresh"] : []);
+					expect(session.active.has("penfield_recall")).toBe(true);
+					await session.runner.emit({ type: "session_shutdown", reason: "quit" });
+				} finally {
+					await session?.dispose();
+					for (const restore of restoreEnv.reverse()) restore();
+					setGlobalDispatcher(previousDispatcher);
+					await fixture.close();
+				}
+			},
+			120_000,
+		);
+	}
+
+	it.skipIf(!ready)(
+		"eager lifecycle with no login: the adapter waits for session_start instead of connecting without a token (0.6.0)",
+		async () => {
+			const profile = cleanProfile();
+			const tokenStore = join(profile, "penfield-tokens-dev.json");
+			const fixture = await startFixturePenfield(SEEDED_TOKEN);
+			const previousDispatcher = redirectTo(fixture);
+			const restoreEnv = [...sessionEnv(profile, tokenStore), setEnv("PENPI_MCP_LIFECYCLE", "eager")];
+			let session: Session | undefined;
+			try {
+				session = await startSession(profile);
+				await new Promise((r) => setTimeout(r, 1_000));
+				expect(fixture.authorizations, "nothing may contact Penfield without a token").toEqual([]);
+				await session.runner.emit({ type: "session_shutdown", reason: "quit" });
+			} finally {
+				await session?.dispose();
+				for (const restore of restoreEnv.reverse()) restore();
+				setGlobalDispatcher(previousDispatcher);
+				await fixture.close();
+			}
+		},
+		60_000,
+	);
+
 	it.skipIf(!ready)(
 		"global install: the embedded adapter loads when PENpi is reached through a symlink",
 		async () => {

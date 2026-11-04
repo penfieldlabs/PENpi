@@ -61,11 +61,15 @@ function makeServer(): Server {
 	return server;
 }
 
-async function readBody(req: IncomingMessage): Promise<unknown> {
+async function readRaw(req: IncomingMessage): Promise<string> {
 	const chunks: Buffer[] = [];
 	for await (const chunk of req) chunks.push(chunk as Buffer);
-	if (chunks.length === 0) return undefined;
-	return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+	return Buffer.concat(chunks).toString("utf8");
+}
+
+async function readBody(req: IncomingMessage): Promise<unknown> {
+	const raw = await readRaw(req);
+	return raw === "" ? undefined : JSON.parse(raw);
 }
 
 export interface FixturePenfield {
@@ -75,6 +79,8 @@ export interface FixturePenfield {
 	authorizations: string[];
 	/** Every rejected `Authorization` header, so a test can assert none occurred. */
 	rejected: string[];
+	/** Each refresh token the OAuth token endpoint was given (0.6.0: a start with an expired access token). */
+	refreshes: string[];
 	/** The `clientInfo.name` of every accepted `initialize` request: which MCP clients connected, and how often. */
 	initializations: string[];
 	/** The client capabilities each accepted `initialize` offered, by `clientInfo.name`, in order. */
@@ -100,8 +106,33 @@ export async function startFixturePenfield(expectedToken: string): Promise<Fixtu
 	const initializations: string[] = [];
 	const capabilities: Array<{ client: string; capabilities: Record<string, unknown> }> = [];
 	const fileUris: string[] = [];
+	const refreshes: string[] = [];
 
 	const http: HttpServer = createServer(async (req: IncomingMessage, res: ServerResponse) => {
+		// OAuth, for PenfieldClient's refresh of an expired access token: the protected-resource and
+		// authorization-server metadata, and a token endpoint that issues `expectedToken` (0.6.0).
+		const path = (req.url ?? "").split("?")[0] ?? "";
+		const json = (body: unknown) =>
+			res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(body));
+		if (path.startsWith("/.well-known/oauth-protected-resource")) {
+			json({ authorization_servers: ["https://auth-dev.penfield.app"] });
+			return;
+		}
+		if (path.startsWith("/.well-known/oauth-authorization-server")) {
+			json({
+				device_authorization_endpoint: "https://auth-dev.penfield.app/device",
+				token_endpoint: "https://auth-dev.penfield.app/token",
+				registration_endpoint: "https://auth-dev.penfield.app/register",
+			});
+			return;
+		}
+		if (path === "/token" && req.method === "POST") {
+			const form = new URLSearchParams(String(await readRaw(req)));
+			refreshes.push(form.get("refresh_token") ?? "");
+			json({ access_token: expectedToken, expires_in: 3600, refresh_token: "fixture-refresh-next" });
+			return;
+		}
+
 		// Stateless Streamable HTTP: only POST carries JSON-RPC. Clients treat 405
 		// on GET/DELETE as "this server has no standalone stream", which is correct.
 		if (req.method !== "POST") {
@@ -158,6 +189,7 @@ export async function startFixturePenfield(expectedToken: string): Promise<Fixtu
 		initializations,
 		capabilities,
 		fileUris,
+		refreshes,
 		close: () =>
 			new Promise<void>((resolve, reject) => {
 				http.closeAllConnections();

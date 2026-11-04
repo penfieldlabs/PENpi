@@ -43,9 +43,12 @@
  * rejects the entry. Nothing about the warm path can be made to work earlier than
  * session_start; the fix is to stop trying to act before it.
  *
- * Explicit overrides remain supported (`penpi.mcpLifecycle`, PENPI_MCP_LIFECYCLE);
- * choosing `eager` re-enters the race above. Both paths are proven end to end in
- * mcp-integration.test.ts against the real adapter and a real MCP server.
+ * Explicit overrides remain supported (`penpi.mcpLifecycle`, PENPI_MCP_LIFECYCLE).
+ * Since 0.6.0, for `eager` and `keep-alive` PENpi publishes the JWT before the
+ * adapter loads (publishTokenBeforeAdapter in index.ts), from the stored login, and
+ * without one makes the entry `lazy` for the session, so the race above cannot
+ * occur. All of these paths are proven end to end in mcp-integration.test.ts
+ * against the real adapter and a real MCP server.
  *
  * Note this is about the CONSCIOUS layer — the tools the model calls. PENpi's
  * automatic orientation does not go through the adapter at all: it uses its own

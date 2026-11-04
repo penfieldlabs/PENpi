@@ -589,7 +589,8 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps): void | Promise<voi
 				readFailed = true;
 				recordRefresh("failed", errLine(err), errLine(err));
 				// 0.5.2: the engine log is opt-in, and doctor helps only if someone looks: say it once per session.
-				if (!warnedRefreshFailure) {
+				// 0.6.0: not while healing a failed orientation, which the user was already told about at start.
+				if (!warnedRefreshFailure && !healing) {
 					warnedRefreshFailure = true;
 					ctx.ui.notify(
 						`PENpi: a memory refresh failed (${errLine(err)}); /penpi doctor shows the details.`,
@@ -734,11 +735,13 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps): void | Promise<voi
 			if (!adapterRegisteredMcp) registerUnavailableMcp(pi, problem);
 		};
 		let built: ReturnType<typeof buildAdapterConfig>;
+		let adapterCfg: PenfieldConfig;
 		try {
 			const lifecycle = resolveMcpLifecycle();
 			const cfg = resolvePenfieldConfig(undefined, penpiDevFromArgv() ? "dev" : undefined);
 			built = buildAdapterConfig(cfg, lifecycle ? { lifecycle } : {});
 			adapterPenfieldUrl = cfg.mcpUrl;
+			adapterCfg = cfg;
 		} catch (err) {
 			unavailable(`could not build the MCP adapter config (${errLine(err)})`);
 			return;
@@ -749,12 +752,42 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps): void | Promise<voi
 			);
 		}
 		return (async () => {
+			await publishTokenBeforeAdapter(built.config, adapterCfg);
 			try {
 				await installAdapter(adapterPi, built.config);
 			} catch (err) {
 				unavailable(`could not load pi-mcp-adapter (${errLine(err)})`);
 			}
 		})();
+	}
+
+	/**
+	 * 0.6.0: an `eager` or `keep-alive` penfield entry makes the adapter connect while extensions load, before
+	 * session_start publishes `PENFIELD_JWT` (the race in mcp-config.ts's header), so its first connect went out with
+	 * no token and got a 401. PENpi now publishes the token first, from the stored login (refreshing an expired access
+	 * token, never prompting). Without one, the entry is `lazy` for this session, so the adapter never connects
+	 * without a token; session_start's orientation reports the missing login as before.
+	 */
+	async function publishTokenBeforeAdapter(config: AdapterConfig, cfg: PenfieldConfig): Promise<void> {
+		const entry = config.mcpServers.penfield as { lifecycle?: string } | undefined;
+		if (!entry || (entry.lifecycle !== "eager" && entry.lifecycle !== "keep-alive")) return;
+		let token: string | undefined;
+		try {
+			const tokens = deps.makeClient(cfg);
+			if (tokens.hasNonInteractiveAuth()) {
+				let timer: ReturnType<typeof setTimeout> | undefined;
+				token = await Promise.race([
+					tokens.getAccessToken(),
+					new Promise<undefined>((resolve) => {
+						timer = setTimeout(() => resolve(undefined), STARTUP_TOKEN_WAIT_MS);
+					}),
+				]).finally(() => clearTimeout(timer));
+			}
+		} catch {
+			token = undefined;
+		}
+		if (token) process.env[JWT_ENV] = token;
+		else config.mcpServers.penfield = { ...entry, lifecycle: "lazy" };
 	}
 
 	// --- orientation + token sharing (closures over client/status/deps) ---
@@ -901,6 +934,9 @@ export function disarmDuplicateGuard(): void {
  */
 /** D21: the longest shutdown waits for a Penfield read still running (a refresh) before disconnecting. */
 const REFRESH_SHUTDOWN_WAIT_MS = 2_000;
+
+/** 0.6.0: the longest startup waits for a token before an eager adapter loads (a refresh of an expired one). */
+const STARTUP_TOKEN_WAIT_MS = 10_000;
 
 /**
  * 0.5.2: the refresh's comparison key. Penfield's reflect result is JSON whose `top_memories` carry a `score` that

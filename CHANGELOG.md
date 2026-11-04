@@ -50,6 +50,19 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
     adapter update (0.6.1).
 
 ### Fixed
+- **No 401 from Penfield at startup with `penpi.mcpLifecycle: "eager"`.** An eager (or
+  `keep-alive`) Penfield entry made the adapter connect while extensions load, before PENpi had
+  published the login, so the first connect was refused and stderr showed "MCP: Failed to connect
+  to penfield". The adapter connected again at the session's start, so the tools worked. PENpi now
+  publishes the login before the adapter loads, refreshing an expired one first. With no login,
+  the entry is `lazy` for that session, so nothing connects without one.
+- **A model request no longer waits behind a held proxy connection.** Behind an HTTPS proxy, Pi
+  sent every connection to the proxy through one client, one at a time, so a connection the proxy
+  held open (seen with a Penfield connection) held up the model's requests until it closed: 127
+  seconds in one test. Each connection now gets its own.
+- **One Penfield outage gives one warning.** When orientation failed at start, the first failed
+  refresh while healing warned a second time. Those refreshes now only log; a refresh failure
+  after a healed orientation still warns, once.
 - **A rebuilt window sends the same system prompt as the session did** (D23). After a resume or
   `/reload`, the system messages could be laid out differently from the in-session window, which
   changed the bytes and missed the provider's prompt cache. At every cut, the system messages in

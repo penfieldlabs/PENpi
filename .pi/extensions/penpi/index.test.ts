@@ -1356,7 +1356,7 @@ describe("memory refresh outcomes (0.5.1)", () => {
 		expect(t.stub.client.awaken).not.toHaveBeenCalled();
 	});
 
-	it("after a failed orientation each run tries the read once; a failed attempt is logged and warned about once", async () => {
+	it("after a failed orientation each run tries the read once; a failed attempt is logged, and the outage warned about once (0.6.0)", async () => {
 		// 0.5.2: a failed orientation heals itself (this one never can: the connect keeps failing).
 		const t = withRefresh({});
 		// As the real client: a failed connect leaves it disconnected.
@@ -1379,9 +1379,36 @@ describe("memory refresh outcomes (0.5.1)", () => {
 		expect(t.doctor()[0]).toMatch(
 			/ failed; 0 changed, 0 unchanged, 0 skipped, 2 failed \(last error: fetch failed\)$/,
 		);
-		const warnings = notifies.filter((n) => n.msg.includes("/penpi doctor"));
-		expect(warnings).toEqual([
-			{ msg: "PENpi: a memory refresh failed (fetch failed); /penpi doctor shows the details.", level: "warning" },
+		// One outage, one warning: the orientation's at start. The refreshes that try to heal it add none (0.6.0).
+		expect(notifies.filter((n) => n.level === "warning").map((n) => n.msg)).toEqual([
+			"PENpi: Penfield orientation failed — fetch failed. Continuing without memory.",
+		]);
+	});
+
+	it("a refresh failure after a healed orientation still warns once (0.6.0)", async () => {
+		const t = withRefresh({});
+		let failConnect = true;
+		t.stub.client.connected = false;
+		t.stub.client.connect.mockImplementation(async () => {
+			t.stub.client.connected = !failConnect;
+			if (failConnect) throw new Error("fetch failed");
+		});
+		const { ctx, notifies } = makeCtx();
+		await t.handlers.session_start({ reason: "startup" }, ctx);
+		// Run 1 heals the orientation.
+		failConnect = false;
+		t.logLines.length = 0;
+		t.handlers.agent_end({}, ctx);
+		await vi.waitFor(() => expect(t.logLines.length).toBe(1));
+		expect(t.logLines[0]).toMatch(/^memory refresh: changed/);
+		// Runs 2 and 3: the read fails; that is a new problem, warned about once.
+		t.stub.client.awaken.mockRejectedValue(new Error("tool awaken timed out after 10000ms"));
+		for (let run = 0; run < 2; run++) {
+			t.handlers.agent_end({}, ctx);
+			await vi.waitFor(() => expect(t.logLines.length).toBe(run + 2));
+		}
+		expect(notifies.filter((n) => n.msg.includes("/penpi doctor")).map((n) => n.msg)).toEqual([
+			"PENpi: a memory refresh failed (tool awaken timed out after 10000ms); /penpi doctor shows the details.",
 		]);
 	});
 
