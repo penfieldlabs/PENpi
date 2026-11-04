@@ -188,8 +188,8 @@ packages/coding-agent/src/utils/shell.ts	core patch: strip Penfield credentials 
 packages/coding-agent/test/agent-session-auto-compaction-queue.test.ts	upstream test adapted to PENpi's compaction-off default
 packages/coding-agent/test/args.test.ts	tests hidden extension CLI flags
 packages/coding-agent/test/package-manager.test.ts	tests exact pins for managed installs
-packages/coding-agent/test/penpi-http-proxy-held-connect.test.ts	PENpi test: a held proxy CONNECT does not block a request to another host
 packages/coding-agent/test/penpi-builtin-mcp-disabled.test.ts	PENpi test against the real session
+packages/coding-agent/test/penpi-http-proxy-held-connect.test.ts	PENpi test: a held proxy CONNECT does not block a request to another host
 packages/coding-agent/test/penpi-print-mode-continuation.test.ts	PENpi test against the real session
 packages/coding-agent/test/penpi-shell-env.test.ts	PENpi test against the real session
 packages/coding-agent/test/settings-manager-compaction.test.ts	upstream test adapted to PENpi's compaction-off default
