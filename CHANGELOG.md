@@ -45,9 +45,9 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
     user a question) is the adapter's default: on with a UI, off without one.
   - The `mcp` tool's description and parameters are longer, so every request's tool list grows a
     little, and a session's cached prompt prefix changes once.
-  - The adapter now depends on `recheck` 4.6.0-beta.3, a pre-release, pinned exactly by the
-    adapter itself. Stable 4.6.0 to 4.6.2 shipped on 25 and 26 October; the pin moves with an
-    adapter update (0.6.1).
+  - The adapter pins `recheck` 4.6.0-beta.3, a pre-release, exactly. PENpi installs the stable
+    4.6.2 instead (shipped 26 October), through an npm `overrides` entry; the adapter uses it to
+    check a regular-expression tool search before running it.
 
 ### Fixed
 - **No 401 from Penfield at startup with `penpi.mcpLifecycle: "eager"`.** An eager (or

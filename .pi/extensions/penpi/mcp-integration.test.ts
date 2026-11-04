@@ -358,6 +358,15 @@ async function expectPenpiAdapterDefaults(session: Session, fixture: FixturePenf
 	expect(JSON.stringify(proxy?.definition)).not.toContain("save-script");
 	const semantic = JSON.stringify(await session.invoke("mcp", { search: "recall", searchMode: "semantic" }));
 	expect(semantic).toContain("Semantic search is turned off by settings.semanticSearch");
+	// A regex tool search goes through recheck (4.6.2 by PENpi's npm override, 0.6.0): a safe pattern finds the tool, a
+	// pattern with catastrophic backtracking is refused before it runs.
+	const regex = JSON.stringify(await session.invoke("mcp", { search: "^penfield_rec(all|ord)$", regex: true }));
+	expect(regex).toContain("penfield_recall");
+	const unsafe = JSON.stringify(await session.invoke("mcp", { search: "^(a+)+$", regex: true }));
+	expect(unsafe, "recheck ran and judged the pattern, rather than failing").toContain(
+		"rejected as unsafe (vulnerable)",
+	);
+	expect(JSON.parse(readFileSync(join(adapterRoot, "..", "recheck", "package.json"), "utf8")).version).toBe("4.6.2");
 	const install = JSON.stringify(await session.invoke("mcp", { action: "install", url: "https://example.invalid/" }));
 	expect(install).toContain("programmatic_config");
 }

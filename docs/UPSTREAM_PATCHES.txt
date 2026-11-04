@@ -117,7 +117,7 @@ docs/adr/0030-strict-config-values.md	PENpi decision record
 docs/adr/0031-upstream-ancestry-and-patch-manifest.md	PENpi decision record
 docs/adr/0032-context-engine.md	PENpi decision record
 docs/adr/README.md	PENpi decision record
-package-lock.json	follows package.json (PENpi workspace and pins); pi-mcp-adapter installed with --legacy-peer-deps (CONTRIBUTING.md)
+package-lock.json	follows package.json (PENpi workspace and pins); pi-mcp-adapter installed with --legacy-peer-deps (CONTRIBUTING.md); overrides include recheck 4.6.2 (pi-mcp-adapter pins 4.6.0-beta.3) and miniflare's undici 7.30.1
 package.json	PENpi version, workspace, checks and pins, context engine suite and tokenizer scripts; no npm publishing or model-catalog scripts
 packages/agent/package.json	vitest 4.1.12 security update (as upstream 2685de7a1)
 packages/ai/package.json	build uses the committed model-data snapshot (offline); vitest 4.1.12 security update (as upstream 2685de7a1)
