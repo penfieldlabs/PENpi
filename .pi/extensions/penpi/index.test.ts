@@ -156,26 +156,51 @@ function load(flags: Record<string, boolean> = {}, clientOver: Record<string, an
 }
 
 describe("search_transcript (0.6.1)", () => {
-	it("searches the session folder Pi uses (a custom sessionDir), not one rebuilt from the cwd", async () => {
+	const line = (o: unknown) => `${JSON.stringify(o)}\n`;
+	const session = (cwd: string, text: string) =>
+		line({ type: "session", version: 3, id: "s", timestamp: "2026-11-05T10:00:00.000Z", cwd }) +
+		line({ type: "message", id: "m", message: { role: "user", content: [{ type: "text", text }], timestamp: 1 } });
+	const search = async (folder: string, cwd: string, query: string) => {
 		const { tools } = load();
-		const custom = mkdtempSync(join(tmpdir(), "penpi-custom-sessions-"));
-		writeFileSync(
-			join(custom, "2026-11-05T10-00-00-000Z_s1.jsonl"),
-			JSON.stringify({
-				type: "message",
-				message: { role: "user", content: [{ type: "text", text: "the vault code is QUARTZ-17" }], timestamp: 1 },
-			}),
-		);
-		const ctx = {
-			cwd: mkdtempSync(join(tmpdir(), "penpi-project-")),
-			sessionManager: { getSessionDir: () => custom },
-		};
 		const tool = tools.search_transcript as {
 			execute: (...a: unknown[]) => Promise<{ content: Array<{ text: string }> }>;
 		};
-		const res = await tool.execute("t1", { query: "quartz-17" }, undefined, undefined, ctx);
-		expect(res.content[0].text).toContain("1 match(es)");
-		expect(res.content[0].text).toContain("the vault code is QUARTZ-17");
+		return (
+			await tool.execute("t1", { query }, undefined, undefined, {
+				cwd,
+				sessionManager: { getSessionDir: () => folder },
+			})
+		).content[0].text;
+	};
+
+	it("searches the session folder Pi uses (a custom sessionDir), not one rebuilt from the cwd", async () => {
+		const custom = mkdtempSync(join(tmpdir(), "penpi-custom-sessions-"));
+		const cwd = mkdtempSync(join(tmpdir(), "penpi-project-"));
+		writeFileSync(join(custom, "2026-11-05T10-00-00-000Z_s1.jsonl"), session(cwd, "the vault code is QUARTZ-17"));
+		const text = await search(custom, cwd, "quartz-17");
+		expect(text).toContain("1 match(es)");
+		expect(text).toContain("the vault code is QUARTZ-17");
+		rmSync(custom, { recursive: true, force: true });
+	});
+
+	it("in a custom folder shared by every project, another project's session is not searched (0.6.1 review, F1)", async () => {
+		const custom = mkdtempSync(join(tmpdir(), "penpi-flat-sessions-"));
+		writeFileSync(
+			join(custom, "2026-11-05T10-00-00-000Z_other.jsonl"),
+			session("/work/other-project", "other project: the deploy password is TOPAZ-9"),
+		);
+		writeFileSync(
+			join(custom, "2026-11-05T11-00-00-000Z_this.jsonl"),
+			session("/work/this-project", "this project: the password is OPAL-3"),
+		);
+		writeFileSync(
+			join(custom, "2026-11-05T12-00-00-000Z_noheader.jsonl"),
+			line({ type: "message", message: { role: "user", content: "password" } }),
+		);
+		const text = await search(custom, "/work/this-project", "password");
+		expect(text).toContain("OPAL-3");
+		expect(text).not.toContain("TOPAZ-9");
+		expect(text).toContain("across 1 session file(s)");
 		rmSync(custom, { recursive: true, force: true });
 	});
 });

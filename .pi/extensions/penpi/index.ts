@@ -544,7 +544,8 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps): void | Promise<voi
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 			// 0.6.1: the folder Pi itself writes this project's sessions to (sessionDir, --session-dir,
 			// PI_CODING_AGENT_SESSION_DIR), not one rebuilt from the cwd; an in-memory session has none.
-			const dir = ctx.sessionManager.getSessionDir() || sessionDirForCwd(ctx.cwd);
+			const own = sessionDirForCwd(ctx.cwd);
+			const dir = ctx.sessionManager.getSessionDir() || own;
 			// Deliberately searches ALL session logs including the live one: after a cut the
 			// messages that rolled out of the context window are in the CURRENT session's
 			// transcript, which is precisely what Tier 3 exists to reach. (Cost: a query can
@@ -553,6 +554,8 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps): void | Promise<voi
 			const res = await searchTranscripts(dir, params.query, {
 				limit: params.limit ?? 10,
 				hiddenCustomTypes: [BRIEFING_CUSTOM_TYPE, ...(engine?.options.hiddenCustomTypes ?? [])],
+				// 0.6.1 review: a folder that is not this project's own holds other projects' sessions too.
+				...(resolve(dir) === resolve(own) ? {} : { onlyCwd: ctx.cwd }),
 			});
 			if (res.matches.length === 0) {
 				return {

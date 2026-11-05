@@ -41,7 +41,8 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
 - **`search_transcript` searches the session folder Pi uses.** It built the folder from the
   working directory, so with `sessionDir` in settings, `--session-dir` or
   `PI_CODING_AGENT_SESSION_DIR` it searched a folder with no sessions. It now asks Pi for the
-  session's folder.
+  session's folder. A custom folder holds every project's sessions, so there it reads only the
+  sessions whose header names this project's folder, as Pi's own session list does.
 - **Stdio MCP servers no longer get the Penfield credentials.** PENpi keeps the Penfield bearer
   in its environment as `PENFIELD_JWT` for the MCP adapter, and the adapter starts a stdio
   server with that whole environment, so every stdio server in the global `mcp.json` received
