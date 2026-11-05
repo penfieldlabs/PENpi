@@ -6,7 +6,7 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
 
 ## [Unreleased]
 
-## [0.6.0] — Unreleased
+## [0.6.0] — 2026-11-05
 
 ### Changed
 - **PENpi is on upstream Pi v1.4.0** (from v1.1.0). See Pi's own changelog
