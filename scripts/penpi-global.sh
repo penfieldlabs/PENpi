@@ -134,6 +134,11 @@ uninstall)
   [ -L "$EXT_LINK" ] && case "$(readlink "$EXT_LINK")" in "$REPO"/*) rm -rf "$EXT_LINK";; esac
   remove_block "$PROFILE"
   echo "✅ PENpi global install removed (repo + your other settings untouched)."
+  # 0.6.1: the Penfield login is left in place (a reinstall keeps it); say where it is and how to remove it.
+  echo "   Your Penfield login is not removed. It is stored in $HOME/.config/penpi/penfield-tokens-<env>.json"
+  echo "   (or the file penpi.penfield.tokenStore or PENPI_PENFIELD_TOKEN_STORE names)."
+  for f in "$HOME"/.config/penpi/penfield-tokens-*.json; do [ -e "$f" ] && echo "   Found: $f"; done
+  echo "   To remove it: run /penpi logout in a PENpi session before uninstalling, or delete the file."
   ;;
 
 status)

@@ -164,6 +164,15 @@ describe("penpi settings are global-only", () => {
 		expect(errors[0]).toContain("global-only");
 	});
 
+	it("warns once however often the settings are read (0.6.1; six times per startup in 0.6.0)", () => {
+		writeProjectSettings({ displayBriefing: true });
+		for (let i = 0; i < 6; i++) resolvePenpiConfig();
+		resolvePenfieldConfig();
+		resolveMcpLifecycle();
+		expect(errors).toHaveLength(1);
+		expect(errors[0]).toContain("global-only");
+	});
+
 	it("stays quiet when the project settings have no penpi block", () => {
 		writeFileSync(join(project, ".pi", "settings.json"), JSON.stringify({ theme: "dark" }));
 		resolvePenpiConfig();

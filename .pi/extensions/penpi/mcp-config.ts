@@ -138,9 +138,25 @@ export function penfieldServerEntry(cfg: PenfieldConfig, opts: EnsureMcpOptions 
 	};
 }
 
-/** A server entry from the global mcp.json with PENpi's server defaults under it; a non-object entry is left as is. */
+/**
+ * A server entry from the global mcp.json with PENpi's server defaults under it; a non-object entry is left as is.
+ *
+ * 0.6.1: a stdio server (one with a `command`) gets PENpi's Penfield credentials empty in its `env`: the bearer
+ * (`PENFIELD_JWT`, which PENpi publishes in `process.env` for the adapter's penfield entry, `bearerTokenEnv`) and the
+ * API key (`PENPI_PENFIELD_API_KEY`). pi-mcp-adapter 7.x starts a stdio server with all of `process.env` and then the
+ * server's own `env` over it (server-manager.ts resolveEnv), so every stdio server got them; Pi's shell already strips
+ * both (utils/shell.ts getShellEnv). A server whose own `env` names one keeps what it names.
+ */
+export const STDIO_BLANKED_ENV = [JWT_ENV, "PENPI_PENFIELD_API_KEY"] as const;
+
 function withServerDefaults(entry: unknown): unknown {
-	return isRecord(entry) ? { ...PENPI_SERVER_DEFAULTS, ...entry } : entry;
+	if (!isRecord(entry)) return entry;
+	const merged: Record<string, unknown> = { ...PENPI_SERVER_DEFAULTS, ...entry };
+	if (typeof entry.command === "string" && (entry.env === undefined || isRecord(entry.env))) {
+		const own = isRecord(entry.env) ? entry.env : {};
+		merged.env = { ...Object.fromEntries(STDIO_BLANKED_ENV.map((name) => [name, ""])), ...own };
+	}
+	return merged;
 }
 
 /** The adapter's in-memory config: what `createMcpAdapter({ config })` receives. */

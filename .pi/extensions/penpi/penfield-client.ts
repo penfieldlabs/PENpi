@@ -142,6 +142,23 @@ export async function acquireRefreshLock(
 	}
 }
 
+/**
+ * Remove the stored Penfield login (0.6.1, `/penpi logout`): the token store, access and refresh token, and its
+ * refresh lock. A symbolic link at `path` is removed, not what it points at. Returns whether a store was there.
+ */
+export function deleteTokenStore(path: string): boolean {
+	let existed = false;
+	try {
+		lstatSync(path);
+		existed = true;
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+	}
+	rmSync(path, { force: true });
+	rmSync(`${path}.lock`, { force: true });
+	return existed;
+}
+
 export interface DeviceCodePrompt {
 	verificationUriComplete: string;
 	verificationUri: string;

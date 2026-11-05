@@ -41,7 +41,7 @@ import {
 import { installPenpiEngine } from "./engine/entry.ts";
 import type { EngineHandle } from "./engine/index.ts";
 import { type AdapterConfig, buildAdapterConfig, ensurePenfieldMcpEntry, JWT_ENV } from "./mcp-config.ts";
-import { PenfieldClient, type PenfieldClientOptions, type ToolResult } from "./penfield-client.ts";
+import { deleteTokenStore, PenfieldClient, type PenfieldClientOptions, type ToolResult } from "./penfield-client.ts";
 import { searchTranscripts, sessionDirForCwd } from "./transcript-search.ts";
 
 const STATE_CUSTOM_TYPE = "penpi-state";
@@ -414,12 +414,41 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps): void | Promise<voi
 	// /penpi [login] — status, or run the Penfield device-code login ceremony.
 	pi.registerCommand("penpi", {
 		description:
-			"PENpi status, `/penpi login` to authenticate Penfield (device code), `/penpi doctor` for the context engine's window and limits, `/penpi reset-limits` to forget learned limits",
+			"PENpi status, `/penpi login` to authenticate Penfield (device code), `/penpi logout` to remove the stored login, `/penpi doctor` for the context engine's window and limits, `/penpi reset-limits` to forget learned limits",
 		handler: async (args, ctx) => {
 			const sub = args.trim();
 			if (sub === "doctor" || sub === "reset-limits") {
 				if (engine) await engine.command(sub, ctx);
 				else ctx.ui.notify("PENpi: the context engine is not installed in this session.", "warning");
+				return;
+			}
+			if (sub === "logout") {
+				// 0.6.1: remove the stored login (access and refresh token) and this session's bearer.
+				const cfg = resolvePenfield();
+				await client?.disconnect();
+				client = undefined;
+				let removed: boolean;
+				try {
+					removed = deleteTokenStore(cfg.tokenStorePath);
+				} catch (err) {
+					ctx.ui.notify(
+						`PENpi: could not remove the stored Penfield login at ${cfg.tokenStorePath} — ${errLine(err)}`,
+						"error",
+					);
+					return;
+				}
+				delete process.env[JWT_ENV];
+				ctx.ui.notify(
+					[
+						removed
+							? `PENpi: logged out of Penfield (${cfg.env}). Removed the stored login at ${cfg.tokenStorePath} (access and refresh token) and cleared ${JWT_ENV} for this session.`
+							: `PENpi: no stored Penfield login at ${cfg.tokenStorePath}; cleared ${JWT_ENV} for this session.`,
+						cfg.authMode === "apiKey"
+							? "  An API key is configured (settings or PENPI_PENFIELD_API_KEY); it is not removed, so PENpi logs in again with it at the next start."
+							: "  Penfield's tools and orientation stop until you run `/penpi login`.",
+					].join("\n"),
+					"info",
+				);
 				return;
 			}
 			if (sub === "login") {
@@ -461,7 +490,7 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps): void | Promise<voi
 					`  Orientation: ${status.injecting === false ? "skipped (raw diagnostic)" : status.injecting ? "automatic" : "?"} (briefing ${penpiCfg.displayBriefing ? "shown" : "hidden"})`,
 					`  Context: ${engine ? "context engine (run /penpi doctor for the window, calibration and limits)" : "context engine not installed"}`,
 					`  saveContextOnShutdown: ${penpiCfg.saveContextOnShutdown}`,
-					"  (run `/penpi login` if unauthenticated; `--penpi-raw` diagnoses behavior without automatic orientation)",
+					"  (run `/penpi login` if unauthenticated, `/penpi logout` to remove the stored login; `--penpi-raw` diagnoses behavior without automatic orientation)",
 				].join("\n"),
 				"info",
 			);

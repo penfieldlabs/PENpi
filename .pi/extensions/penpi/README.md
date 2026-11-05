@@ -101,6 +101,9 @@ manually).
 - **`/penpi`** — status: Penfield auth/connection, automatic orientation, and whether the
   context engine is installed.
 - **`/penpi login`** — run the Penfield device-code login (RFC 8628).
+- **`/penpi logout`** — remove the stored Penfield login (access and refresh token, in the
+  token store) and clear `PENFIELD_JWT` for the session. An API key in settings or the
+  environment is not removed.
 - **`/penpi doctor`** — the context engine's effective window and output limit and where
   they come from, the cut band, the calibration ratio, learned limits with their evidence,
   answers produced from truncated input, and the settings that apply.

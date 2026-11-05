@@ -40,8 +40,23 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
   working directory, so with `sessionDir` in settings, `--session-dir` or
   `PI_CODING_AGENT_SESSION_DIR` it searched a folder with no sessions. It now asks Pi for the
   session's folder.
+- **Stdio MCP servers no longer get the Penfield credentials.** PENpi keeps the Penfield bearer
+  in its environment as `PENFIELD_JWT` for the MCP adapter, and the adapter starts a stdio
+  server with that whole environment, so every stdio server in the global `mcp.json` received
+  the bearer (and an API key in `PENPI_PENFIELD_API_KEY`). PENpi now gives each stdio server
+  both empty; a server whose own `env` names one keeps what it names. Pi's shell already
+  stripped both from the commands the agent runs.
+- **A `penpi` block in a project's settings is reported once.** The warning that it is ignored
+  printed several times per start (six in one review); it now prints once.
+- **The docs say what they should.** KNOWN_LIMITATIONS no longer says the token store is written
+  in place (it is written to a temporary file and renamed); AGENTS.md says what the commit hook
+  runs (`npm run check` and the lockfile check, not `npm test`).
 
 ### Changed
+- **`/penpi logout`** removes the stored Penfield login (access and refresh token) and its
+  refresh lock, clears `PENFIELD_JWT` for the session, and says so. Uninstalling PENpi leaves
+  the login in place, so a reinstall keeps it, and its output now says where the token store is
+  and that `/penpi logout` removes it.
 - **The embedded MCP adapter subscribes to nothing on Pi's event bus.** 0.6.0 blocked the four
   request channels pi-mcp-adapter 7.0.0 listens on; 0.6.1 blocks every subscription, so a
   channel a later adapter release adds cannot answer other extensions unnoticed. The adapter

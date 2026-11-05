@@ -151,6 +151,19 @@ test("install refuses a symbolic-link settings file", () => {
 	assert.equal(readFileSync(target, "utf8"), '{"refresh_token":"synthetic-review-marker"}');
 });
 
+test("uninstall says where the Penfield login is and how to remove it, and leaves it (0.6.1)", () => {
+	const testHome = home();
+	assert.equal(run(testHome, "install").status, 0);
+	const store = join(testHome, ".config", "penpi", "penfield-tokens-prod.json");
+	write(store, "{}");
+	const result = run(testHome, "uninstall");
+	assert.equal(result.status, 0, result.stderr);
+	assert.match(result.stdout, /Your Penfield login is not removed/);
+	assert.ok(result.stdout.includes(`Found: ${store}`), result.stdout);
+	assert.match(result.stdout, /run \/penpi logout in a PENpi session before uninstalling, or delete the file/);
+	assert.equal(existsSync(store), true);
+});
+
 test("uninstall refuses an incomplete profile block before changing installation state", () => {
 	const testHome = home();
 	assert.equal(run(testHome, "install").status, 0);

@@ -12,12 +12,26 @@ dependencies in the root lock are integrity-hashed. Versions and generated-lock 
 reduce accidental drift, and CI runs npm signature verification, but the missing hashes
 leave weaker artifact verification for the inherited core packages.
 
-## Penfield token-store crash recovery
+## The Penfield token store
 
-The OAuth token store is permission-restricted (`0700` directory, `0600` file) but written
-directly rather than through temporary-file-plus-rename replacement. A process or machine
-failure during that write can leave malformed JSON. PENpi then fails closed and requires a
-fresh `/penpi login`; it does not attempt to recover a partially written refresh token.
+PENpi keeps the Penfield login (access and refresh token) in
+`~/.config/penpi/penfield-tokens-<env>.json`, or the file `penpi.penfield.tokenStore` or
+`PENPI_PENFIELD_TOKEN_STORE` names: mode `0600` in a `0700` folder. It writes a temporary file in
+the same folder and renames it over the store, so a crash leaves the old or the new file, never
+a partial one. A store that does not parse (one edited by hand) counts as no login: run
+`/penpi login`. Since 0.6.1 a refresh holds a lock file beside the store (`<store>.lock`); one
+left by a process that died during a refresh is taken over after 60 seconds, and a session
+starting in that minute may wait for it. `/penpi logout` removes the store and its lock.
+Uninstalling PENpi does not; its output says where the store is.
+
+## Penfield credentials and the programs PENpi starts
+
+PENpi publishes the Penfield bearer in its own process environment as `PENFIELD_JWT`, where the
+embedded MCP adapter reads it for the `penfield` entry. Pi's shell strips it, and
+`PENPI_PENFIELD_API_KEY`, from the commands the agent runs. Since 0.6.1 every stdio MCP server in
+the global `mcp.json` gets both empty in its environment; a server whose own `env` names one of
+them keeps what it names. A program started some other way with PENpi's whole environment, by
+another extension for example, still sees them.
 
 ## Global uninstall scope
 
@@ -26,7 +40,9 @@ override, and shell-profile block. It does not remove the runtime-generated
 `mcpServers.penfield` entry from `~/.pi/agent/mcp.json`, because that file is shared with
 user-managed MCP servers. The entry contains endpoint/configuration metadata and an
 environment-variable name, not the token itself. Remove only that JSON entry manually if
-complete configuration cleanup is required.
+complete configuration cleanup is required. Uninstall also leaves the Penfield login in the
+token store, so a reinstall keeps it; run `/penpi logout` before uninstalling to remove it
+(the uninstall output says where it is).
 
 ## Settings-file permissions
 

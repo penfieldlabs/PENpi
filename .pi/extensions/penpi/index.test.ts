@@ -550,6 +550,30 @@ describe("/penpi login command", () => {
 		expect(stub.client.disconnect).toHaveBeenCalled();
 	});
 
+	it("logout removes the stored login and its lock, clears PENFIELD_JWT, and says so (0.6.1)", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "penpi-logout-"));
+		const store = join(dir, "penfield-tokens-prod.json");
+		writeFileSync(store, JSON.stringify({ accessToken: "a", refreshToken: "r", expiresAt: 0 }), { mode: 0o600 });
+		writeFileSync(`${store}.lock`, "1.x", { mode: 0o600 });
+		process.env.PENPI_PENFIELD_TOKEN_STORE = store;
+		process.env.PENFIELD_JWT = "jwt";
+		const { commands, stub } = load({}, { auth: true });
+		const { ctx, notifies } = makeCtx();
+		await commands.penpi("logout", ctx);
+		expect(existsSync(store)).toBe(false);
+		expect(existsSync(`${store}.lock`)).toBe(false);
+		expect(process.env.PENFIELD_JWT).toBeUndefined();
+		expect(
+			notifies.some((n) => n.msg.includes(`Removed the stored login at ${store} (access and refresh token)`)),
+		).toBe(true);
+		expect(notifies.some((n) => n.msg.includes("until you run `/penpi login`"))).toBe(true);
+		// Again: nothing stored, and it says so.
+		await commands.penpi("logout", ctx);
+		expect(notifies.at(-1)?.msg).toContain(`no stored Penfield login at ${store}`);
+		expect(stub.client.login).not.toHaveBeenCalled();
+		rmSync(dir, { recursive: true, force: true });
+	});
+
 	it("status (no arg) reports injection and context management without throwing", async () => {
 		const { commands } = load();
 		const { ctx, notifies } = makeCtx();
@@ -981,7 +1005,8 @@ describe("embedded adapter (ADR 0026)", () => {
 		const { installed } = await loadEmbedded();
 		expect(installed[0].config).toEqual({
 			mcpServers: {
-				search: { ...PENPI_SERVER_DEFAULTS, command: "ddg" },
+				// 0.6.1: a stdio server gets PENpi's Penfield credentials empty.
+				search: { ...PENPI_SERVER_DEFAULTS, command: "ddg", env: { PENFIELD_JWT: "", PENPI_PENFIELD_API_KEY: "" } },
 				penfield: {
 					url: "https://mcp.penfield.app/",
 					auth: "bearer",
