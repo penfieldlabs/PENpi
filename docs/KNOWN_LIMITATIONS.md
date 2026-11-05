@@ -40,8 +40,13 @@ PENpi publishes the Penfield bearer in its own process environment as `PENFIELD_
 embedded MCP adapter reads it for the `penfield` entry. Pi's shell strips it, and
 `PENPI_PENFIELD_API_KEY`, from the commands the agent runs. Since 0.6.1 every stdio MCP server in
 the global `mcp.json` gets both empty in its environment; a server whose own `env` names one of
-them keeps what it names. A program started some other way with PENpi's whole environment, by
-another extension for example, still sees them.
+them keeps what it names. The variables are set to an empty string, not removed: the MCP
+adapter starts a stdio server with PENpi's whole environment and lays the server's `env` over
+it, and offers no way to remove a variable (its `inheritEnv: false` would also remove `PATH`
+and `HOME`). A server that checks only whether `PENFIELD_JWT` is present, not its value, sees it
+present and empty. The full fix is to keep the bearer out of the environment altogether (a
+header PENpi resolves itself), which is a larger change than 0.6.1 makes. A program started some
+other way with PENpi's whole environment, by another extension for example, still sees them.
 
 ## Global uninstall scope
 
@@ -100,14 +105,19 @@ a truncated answer must be named.
 
 ## Extensions that change messages in Pi's `context` event
 
-The context engine plans each request against its own record of the session. Another
-extension that adds, removes or rewrites messages in Pi's `context` event makes the request's
-messages differ from that record. The engine then sends Pi's messages uncut: it does not
-manage the window for those requests, and a long session can outgrow it until the provider
-refuses the request as too long. Since 0.6.1 the engine says so once per session, and
-`/penpi doctor` counts the requests ("requests not matching the engine's record"). An extension
-that changes messages this way is not compatible with the engine; remove it, or make it change
-messages in another way.
+The context engine plans each request against its own record of the session, and checks Pi's
+messages against it by their roles. Another extension that adds or removes messages in Pi's
+`context` event makes the request's messages differ from that record. The engine then sends
+Pi's messages uncut: it does not manage the window for those requests, and a long session can
+outgrow it until the provider refuses the request as too long. Since 0.6.1 the engine says so
+once per session (in print and json mode on stderr), and `/penpi doctor` counts the requests
+("requests not matching the engine's record").
+
+An extension that rewrites a message's content and keeps the roles and the number of messages
+is not detected: the engine sends its own copy of the message, so the rewrite is undone without
+a warning. Both kinds of extension are not compatible with the engine; remove them, or make
+them change messages another way. Making the engine stay in step with such extensions is a
+0.7.0 question (ROADMAP).
 
 ## `pi mcp list` and a trusted project's MCP servers
 

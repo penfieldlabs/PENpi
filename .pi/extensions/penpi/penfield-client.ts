@@ -134,7 +134,8 @@ export function writeTokenFile(path: string, contents: string): void {
  *
  * Two waiters may both find the same lock stale; the second can then remove the lock the first has just taken, and
  * both refresh. The second is then refused (`invalid_grant`), reads the store again and uses what the first stored, and
- * Penfield does not revoke the login over it (checked for 0.6.1), so this is not guarded further.
+ * Penfield does not revoke the login over it (checked for 0.6.1), so this is not guarded further. A takeover by rename
+ * (move the stale file aside, check it is the one judged stale) would close it; it is on the 0.7.0 list (ROADMAP).
  */
 export async function acquireRefreshLock(
 	storePath: string,

@@ -29,9 +29,11 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
   many more results there are.
 - **The engine says when it steps aside.** When a request's messages do not match the engine's
   record of the session, the engine sends them uncut and does not manage the window. Another
-  extension that adds or changes messages in Pi's `context` event causes this on every request,
-  and nothing told the user. The engine now warns once per session, `/penpi doctor` shows the
-  count, and KNOWN_LIMITATIONS lists the incompatibility.
+  extension that adds or removes messages in Pi's `context` event causes this on every request,
+  and nothing told the user. The engine now warns once per session (on stderr in print and json
+  mode), `/penpi doctor` shows the count, and KNOWN_LIMITATIONS lists the incompatibility. An
+  extension that rewrites a message's content and keeps the roles is not detected: the engine
+  sends its own copy, so the rewrite is undone without a warning (KNOWN_LIMITATIONS).
 - **The installer accepts packages written as objects.** Pi's settings allow a package as a
   string or as an object with a `source` and resource filters; the installer refused the object
   form ("packages must be an array of strings") and stopped. It now accepts both, and removes a

@@ -72,3 +72,27 @@ Before implementation:
 - Cover the remaining gap: a rule the agent reads in a file mid-session is carried by
   neither the message carry-over nor the system prompt. The next E4 version plants one rule
   that way.
+
+## Considered for 0.7.0 (left out of 0.6.1 on purpose)
+
+Status: candidates, from the 0.6.1 review. Each was left out of 0.6.1 to keep that release's
+changes small; none is a known failure in normal use.
+
+- **Stay in step with extensions that change messages in `context`.** Pair Pi's messages with
+  the engine's record by identity or content, pass messages another extension added through
+  (counted in the budget, never cut), and keep another extension's removals and rewrites for the
+  request. Today the engine sends such requests uncut (it warns, once per session) or undoes a
+  rewrite that keeps the roles (KNOWN_LIMITATIONS). Risks: ambiguous matches, an extension
+  appending a large message every request, cache stability.
+- **The refresh lock's stale takeover by rename.** Two waiters that find the same stale lock can
+  both take it; the second refresh is then refused and reads the store again, so the outcome is
+  one refused request. Moving the stale file aside and checking it is the one judged stale would
+  close the race.
+- **A dead-owner check for the refresh lock.** Record the pid, host, boot id and pid namespace in
+  the lock and take it over at once when its owner is gone (falling back to the stale time on any
+  mismatch). It would shorten the wait after a crash during a refresh from 70 seconds to one poll.
+- **Unknown keys under `penpi.penfield`.** The `penpi` block's unknown keys are reported since
+  0.6.1; a misspelled key under `penpi.penfield` is still ignored without a word.
+- **Keep the Penfield bearer out of the process environment.** Stdio MCP servers get
+  `PENFIELD_JWT` set to an empty string since 0.6.1; resolving the bearer as a header inside
+  PENpi would remove the variable altogether.
