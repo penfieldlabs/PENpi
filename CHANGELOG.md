@@ -23,7 +23,9 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
   (the id `context_search` lists for a hit on a file name) returned only the call, such as
   `read({"path":"ops/freeze-window.yaml"})`, and a model could take that for the whole answer.
   The result now follows the call: in full when it fits the page, otherwise a line naming the
-  result's entry to recall.
+  result's entry to recall. The page keeps its limits: each result is measured in tokens at its
+  own density, the pointer lines count too, and when not even a pointer fits, one line says how
+  many more results there are.
 - **The engine says when it steps aside.** When a request's messages do not match the engine's
   record of the session, the engine sends them uncut and does not manage the window. Another
   extension that adds or changes messages in Pi's `context` event causes this on every request,
