@@ -568,7 +568,17 @@ export function installPlanner(core: EngineCore): void {
 			idx = st.index = rebuildIndex(ctx, limits, ratio);
 			if (!aligned(idx, messages)) {
 				stats.alignMismatches++;
+				st.alignMismatches++;
 				log(`align mismatch window=${idx.items.length} event=${messages.length}`);
+				// 0.6.1: say so, once per session. Until now this was only counted, and the engine stepped aside unseen.
+				if (!st.alignWarned) {
+					st.alignWarned = true;
+					ctx.ui.notify(
+						`context-engine: this request's ${messages.length} messages do not match the engine's record of the session (${idx.items.length} entries), so they were sent uncut: the engine is not managing the window while this lasts, and the request can outgrow it. ` +
+							`The likely cause is another extension adding or changing messages in Pi's "context" event; see KNOWN_LIMITATIONS. /${opts.commandName} doctor counts these requests.`,
+						"warning",
+					);
+				}
 				// D25 N2: Pi's messages are sent; a shrink still re-caps the section in them for this request. The
 				// cap last seen is kept, so the next aligned request sees the shrink and makes the recorded cut.
 				const seen = { ...st.sectionCapSeen };

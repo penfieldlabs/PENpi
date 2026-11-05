@@ -72,6 +72,17 @@ tokens (2.3%); on the 0.5.x corpus it made research.glm.32k.silent-messages fail
 accepts such misses inside C8's band (0.02 plus the estimate error, at most 5%); outside the band,
 a truncated answer must be named.
 
+## Extensions that change messages in Pi's `context` event
+
+The context engine plans each request against its own record of the session. Another
+extension that adds, removes or rewrites messages in Pi's `context` event makes the request's
+messages differ from that record. The engine then sends Pi's messages uncut: it does not
+manage the window for those requests, and a long session can outgrow it until the provider
+refuses the request as too long. Since 0.6.1 the engine says so once per session, and
+`/penpi doctor` counts the requests ("requests not matching the engine's record"). An extension
+that changes messages this way is not compatible with the engine; remove it, or make it change
+messages in another way.
+
 ## `pi mcp list` and a trusted project's MCP servers
 
 `pi mcp list`, and Pi's other `mcp` subcommands, run Pi's own MCP handler before any
