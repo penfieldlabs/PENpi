@@ -16,13 +16,25 @@
  */
 
 import { randomBytes } from "node:crypto";
-import { lstatSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdirSync, readFileSync, renameSync, rmSync, type Stats, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { PenfieldConfig } from "./config.ts";
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+/** The error a TokenManager gives when there is no login to use (none stored, refused, or logged out: 0.6.1). */
+export const LOGIN_REQUIRED = "Penfield device login required — run /penpi login";
+
+/** Whether anything is at the token store's path (a symbolic link counts; a logout removes it). */
+function storeExists(path: string): boolean {
+	try {
+		lstatSync(path);
+		return true;
+	} catch {
+		return false;
+	}
+}
 const EXPIRY_SKEW_MS = 60_000;
 const DEFAULT_TIMEOUT_MS = 15_000;
 /**
@@ -99,8 +111,15 @@ export function writeTokenFile(path: string, contents: string): void {
 
 /**
  * Take the cross-process refresh lock (`<token store>.lock`, created exclusively at mode 0600). Returns its release,
- * or undefined when no lock can be had (an unwritable folder, or REFRESH_LOCK_WAIT_MS spent waiting): the caller then
- * refreshes without it, as before 0.6.1. A lock whose file is older than REFRESH_LOCK_STALE_MS is removed and taken.
+ * or undefined when no lock can be had: the caller then refreshes without it, as before 0.6.1. That is the case for an
+ * unwritable folder, for REFRESH_LOCK_WAIT_MS spent waiting, for anything at the lock path that is not a regular file
+ * (a directory, a symbolic link), and for a stale lock that cannot be removed. A lock whose file is older than
+ * REFRESH_LOCK_STALE_MS is removed and taken. Every retry checks the deadline and waits REFRESH_LOCK_POLL_MS first, so
+ * the loop ends within the wait and never holds the event loop (0.6.1 review: it could spin forever).
+ *
+ * Two waiters may both find the same lock stale; the second can then remove the lock the first has just taken, and
+ * both refresh. The second is then refused (`invalid_grant`), reads the store again and uses what the first stored, and
+ * Penfield does not revoke the login over it (checked for 0.6.1), so this is not guarded further.
  */
 export async function acquireRefreshLock(
 	storePath: string,
@@ -129,13 +148,22 @@ export async function acquireRefreshLock(
 		} catch (error) {
 			if ((error as NodeJS.ErrnoException).code !== "EEXIST") return undefined;
 		}
+		let held: Stats | undefined;
 		try {
-			if (Date.now() - statSync(path).mtimeMs > staleMs) {
-				rmSync(path, { force: true });
-				continue;
+			held = lstatSync(path); // the lock itself, never what a link at its path points to
+		} catch (error) {
+			// ENOENT: released between our attempts; try again, after the wait below.
+			if ((error as NodeJS.ErrnoException).code !== "ENOENT") return undefined;
+		}
+		if (held) {
+			if (!held.isFile()) return undefined; // a directory or a link at the lock path: not ours to remove
+			if (Date.now() - held.mtimeMs > staleMs) {
+				try {
+					rmSync(path);
+				} catch (error) {
+					if ((error as NodeJS.ErrnoException).code !== "ENOENT") return undefined; // cannot remove it
+				}
 			}
-		} catch {
-			continue; // released between our attempts
 		}
 		if (Date.now() > deadline) return undefined;
 		await sleep(REFRESH_LOCK_POLL_MS);
@@ -143,20 +171,20 @@ export async function acquireRefreshLock(
 }
 
 /**
- * Remove the stored Penfield login (0.6.1, `/penpi logout`): the token store, access and refresh token, and its
- * refresh lock. A symbolic link at `path` is removed, not what it points at. Returns whether a store was there.
+ * Remove the stored Penfield login (0.6.1, `/penpi logout`): the token store, access and refresh token. It takes the
+ * refresh lock first, as a refresher does, so a refresh in another process finishes before the store goes, and one that
+ * starts after it finds the store gone and does not refresh. A symbolic link at `path` is removed, not what it points
+ * at. Returns whether a store was there.
  */
-export function deleteTokenStore(path: string): boolean {
-	let existed = false;
+export async function deleteTokenStore(path: string): Promise<boolean> {
+	const release = await acquireRefreshLock(path);
 	try {
-		lstatSync(path);
-		existed = true;
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+		const existed = storeExists(path);
+		rmSync(path, { force: true });
+		return existed;
+	} finally {
+		release?.();
 	}
-	rmSync(path, { force: true });
-	rmSync(`${path}.lock`, { force: true });
-	return existed;
 }
 
 export interface DeviceCodePrompt {
@@ -193,6 +221,13 @@ export class TokenManager {
 	private inflight?: Promise<string>;
 	/** Cached OAuth endpoints discovered from the authorization-server metadata. */
 	private oauthMeta?: { registrationEndpoint?: string; deviceAuthorizationEndpoint: string; tokenEndpoint: string };
+	/**
+	 * 0.6.1 review: whether this process has seen the token store, by reading it or writing it. Once it has, a missing
+	 * store means a logout (`/penpi logout`, here or in another session): the in-memory pair is dropped, not used to
+	 * refresh, and a refresh's result is not written back. A process that never read or wrote it (an unwritable folder:
+	 * every write failed) has only its in-memory pair, and keeps using it.
+	 */
+	private storeSeen = false;
 
 	constructor(cfg: PenfieldConfig, onDeviceCode?: (p: DeviceCodePrompt) => void) {
 		this.cfg = cfg;
@@ -200,7 +235,10 @@ export class TokenManager {
 	}
 
 	async getAccessToken(): Promise<string> {
-		if (this.mem && this.mem.expiresAt - EXPIRY_SKEW_MS > Date.now()) return this.mem.accessToken;
+		if (this.mem && this.mem.expiresAt - EXPIRY_SKEW_MS > Date.now()) {
+			if (this.loggedOut()) throw new Error(LOGIN_REQUIRED);
+			return this.mem.accessToken;
+		}
 		if (this.inflight) return this.inflight;
 		this.inflight = this.acquire().finally(() => {
 			this.inflight = undefined;
@@ -270,10 +308,13 @@ export class TokenManager {
 		// Penfield refuses a refresh token once it has been used, so this process's own copy may be spent.
 		const fresh = this.validStored();
 		if (fresh) return fresh;
+		if (this.loggedOut()) throw new Error(LOGIN_REQUIRED);
 		const release = await acquireRefreshLock(this.cfg.tokenStorePath);
 		try {
 			const meanwhile = this.validStored(); // another process refreshed while this one waited for the lock
 			if (meanwhile) return meanwhile;
+			// Under the lock, which /penpi logout also takes: a store removed now was logged out, not to be refreshed.
+			if (this.loggedOut()) throw new Error(LOGIN_REQUIRED);
 			const stored = newest(this.loadStore(), this.mem);
 			if (stored?.refreshToken) {
 				// Seed mem from the store so a refresh response that omits refresh_token
@@ -301,7 +342,17 @@ export class TokenManager {
 		} finally {
 			release?.();
 		}
-		throw new Error("Penfield device login required — run /penpi login");
+		throw new Error(LOGIN_REQUIRED);
+	}
+
+	/**
+	 * True when this process had seen the token store and it is gone (logged out); the in-memory pair is dropped then.
+	 * In API-key mode there is no store to log out of.
+	 */
+	private loggedOut(): boolean {
+		if (this.cfg.authMode === "apiKey" || !this.storeSeen || storeExists(this.cfg.tokenStorePath)) return false;
+		this.mem = undefined;
+		return true;
 	}
 
 	/** The stored access token, when the store holds one still valid (and then also in memory). */
@@ -431,7 +482,7 @@ export class TokenManager {
 				// Non-JSON body (e.g. a proxy error page) — fail with the HTTP status, not a SyntaxError.
 				throw new Error(`Penfield device-code polling failed: non-JSON response (${res.status})`);
 			}
-			if (res.ok && j.access_token) return this.persist(j, clientId);
+			if (res.ok && j.access_token) return this.persist(j, clientId, true);
 			if (j.error === "authorization_pending") continue;
 			if (j.error === "slow_down") {
 				intervalMs += 5000;
@@ -469,7 +520,9 @@ export class TokenManager {
 		return this.persist((await res.json()) as TokenResponse, clientId);
 	}
 
-	private persist(t: TokenResponse, clientId?: string): string {
+	private persist(t: TokenResponse, clientId?: string, login = false): string {
+		// 0.6.1 review: a refresh that finished after a logout must not bring the store back; only a login writes a new one.
+		if (!login && this.loggedOut()) throw new Error(LOGIN_REQUIRED);
 		// A refresh response may omit refresh_token (and clientId) when unchanged —
 		// don't clobber the stored values to null, or the next refresh breaks.
 		const prev = this.mem;
@@ -481,6 +534,7 @@ export class TokenManager {
 		};
 		try {
 			writeTokenFile(this.cfg.tokenStorePath, JSON.stringify(this.mem));
+			this.storeSeen = true;
 		} catch {
 			// Non-fatal: tokens stay in memory for this session.
 		}
@@ -489,7 +543,9 @@ export class TokenManager {
 
 	private loadStore(): StoredTokens | undefined {
 		try {
-			return JSON.parse(readFileSync(this.cfg.tokenStorePath, "utf8")) as StoredTokens;
+			const stored = JSON.parse(readFileSync(this.cfg.tokenStorePath, "utf8")) as StoredTokens;
+			this.storeSeen = true;
+			return stored;
 		} catch {
 			return undefined;
 		}

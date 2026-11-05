@@ -1,5 +1,14 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readdirSync,
+	readFileSync,
+	rmSync,
+	utimesSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -554,7 +563,10 @@ describe("/penpi login command", () => {
 		const dir = mkdtempSync(join(tmpdir(), "penpi-logout-"));
 		const store = join(dir, "penfield-tokens-prod.json");
 		writeFileSync(store, JSON.stringify({ accessToken: "a", refreshToken: "r", expiresAt: 0 }), { mode: 0o600 });
+		// A lock left by a crashed process (stale): logout takes it over, as a refresher does, and leaves none.
 		writeFileSync(`${store}.lock`, "1.x", { mode: 0o600 });
+		const old = (Date.now() - 120_000) / 1000;
+		utimesSync(`${store}.lock`, old, old);
 		process.env.PENPI_PENFIELD_TOKEN_STORE = store;
 		process.env.PENFIELD_JWT = "jwt";
 		const { commands, stub } = load({}, { auth: true });
@@ -566,12 +578,34 @@ describe("/penpi login command", () => {
 		expect(
 			notifies.some((n) => n.msg.includes(`Removed the stored login at ${store} (access and refresh token)`)),
 		).toBe(true);
-		expect(notifies.some((n) => n.msg.includes("until you run `/penpi login`"))).toBe(true);
+		// 0.6.1 review: it says what stops, and what does not (an open adapter connection).
+		expect(notifies.some((n) => n.msg.includes("your other PENpi sessions stop at their next request"))).toBe(true);
+		expect(
+			notifies.some((n) =>
+				n.msg.includes("keeps working until it reconnects (it then has no login) or its session ends"),
+			),
+		).toBe(true);
 		// Again: nothing stored, and it says so.
 		await commands.penpi("logout", ctx);
 		expect(notifies.at(-1)?.msg).toContain(`no stored Penfield login at ${store}`);
 		expect(stub.client.login).not.toHaveBeenCalled();
 		rmSync(dir, { recursive: true, force: true });
+	});
+
+	it("a logout in another session: the next request clears this session's PENFIELD_JWT; another failure keeps it (0.6.1 review)", async () => {
+		const { LOGIN_REQUIRED } = await import("./penfield-client.ts");
+		let failure = new Error("Penfield token refresh failed: 503");
+		const { handlers } = load({}, { auth: true, getAccessToken: vi.fn(async () => Promise.reject(failure)) });
+		await handlers.session_start({ reason: "startup" }, makeCtx().ctx);
+		const settle = () => new Promise((r) => setTimeout(r, 0));
+		process.env.PENFIELD_JWT = "old-bearer";
+		await handlers.context({ messages: [] }, makeCtx().ctx);
+		await settle();
+		expect(process.env.PENFIELD_JWT).toBe("old-bearer");
+		failure = new Error(LOGIN_REQUIRED);
+		await handlers.context({ messages: [] }, makeCtx().ctx);
+		await settle();
+		expect(process.env.PENFIELD_JWT).toBeUndefined();
 	});
 
 	it("status (no arg) reports injection and context management without throwing", async () => {

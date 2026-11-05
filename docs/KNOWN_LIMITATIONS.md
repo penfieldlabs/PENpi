@@ -21,8 +21,12 @@ the same folder and renames it over the store, so a crash leaves the old or the 
 a partial one. A store that does not parse (one edited by hand) counts as no login: run
 `/penpi login`. Since 0.6.1 a refresh holds a lock file beside the store (`<store>.lock`); one
 left by a process that died during a refresh is taken over after 60 seconds, and a session
-starting in that minute may wait for it. `/penpi logout` removes the store and its lock.
-Uninstalling PENpi does not; its output says where the store is.
+starting in that minute may wait for it. Anything else at the lock's path (a directory, a
+symbolic link), or a stale lock in a folder PENpi cannot write, makes PENpi refresh without the
+lock. `/penpi logout` takes the lock, then removes the store. Other PENpi sessions then stop
+using their login at their next request, but a Penfield connection the MCP adapter already has
+open keeps its bearer until it reconnects or its session ends: PENpi has no way to close it.
+Uninstalling PENpi does not remove the store; its output says where it is.
 
 ## Penfield credentials and the programs PENpi starts
 

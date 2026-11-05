@@ -9,7 +9,18 @@
  * processes (`__fixtures__/refresh-child.ts`) against a fixture that rotates and refuses reuse.
  */
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	statSync,
+	symlinkSync,
+	utimesSync,
+	writeFileSync,
+} from "node:fs";
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -77,7 +88,9 @@ async function startRotating(delayMs = 300): Promise<Rotating> {
 }
 
 /** Runs one child process; resolves with its JSON lines. */
-function runChild(env: Record<string, string>): Promise<Array<{ token?: string; error?: string }>> {
+function runChild(
+	env: Record<string, string>,
+): Promise<Array<{ token?: string; error?: string; loggedOut?: boolean }>> {
 	return new Promise((resolve, reject) => {
 		const child = spawn(process.execPath, [CHILD], {
 			env: { ...process.env, ...env },
@@ -161,6 +174,72 @@ describe("Penfield token refresh across processes (0.6.1)", () => {
 	}, 30_000);
 });
 
+describe("a logout sticks against another running session (0.6.1 review)", () => {
+	let dir: string;
+	let store: string;
+	let fx: Rotating;
+	beforeEach(async (context) => {
+		dir = mkdtempSync(join(tmpdir(), "penpi-logout-procs-"));
+		store = join(dir, "penfield-tokens-dev.json");
+		// A refresh slow enough for a logout to start during it (a process starts in up to about a second).
+		fx = await startRotating(context.task.name.includes("during") ? 4_000 : 300);
+	});
+	afterEach(async () => {
+		await fx.close();
+		rmSync(dir, { recursive: true, force: true });
+	});
+
+	it("a session started before the logout does not log back in: not while its token is valid, not after it expires", async () => {
+		const start = Date.now();
+		writeFileSync(
+			store,
+			JSON.stringify({
+				clientId: "cid",
+				accessToken: "AT0",
+				expiresAt: start + SKEW_MS + 6000,
+				refreshToken: "RT1",
+			}),
+			{
+				mode: 0o600,
+			},
+		);
+		const env = { STORE: store, PORT: String(fx.port) };
+		// B reads the store at once, asks again after the logout (its token still valid), and once more after it expired.
+		const b = runChild({ ...env, AT_TIMES: `0,${start + 4500},${start + 9000}` });
+		const a = runChild({ ...env, LOGOUT_AT: String(start + 3000) });
+		const [bOut, aOut] = await Promise.all([b, a]);
+		expect(aOut).toEqual([{ loggedOut: true }]);
+		expect(bOut[0]).toEqual({ token: "AT0" });
+		expect(bOut[1]).toEqual({ error: "Penfield device login required — run /penpi login" });
+		expect(bOut[2]).toEqual({ error: "Penfield device login required — run /penpi login" });
+		expect(fx.refreshes).toEqual([]);
+		expect(existsSync(store)).toBe(false);
+	}, 30_000);
+
+	it("a logout during another session's refresh: the store stays gone", async () => {
+		const start = Date.now();
+		writeFileSync(
+			store,
+			JSON.stringify({ clientId: "cid", accessToken: "AT0", expiresAt: start - 1000, refreshToken: "RT1" }),
+			{
+				mode: 0o600,
+			},
+		);
+		const env = { STORE: store, PORT: String(fx.port) };
+		// B starts a refresh at once (the fixture answers after 4 s); A logs out once the fixture has B's request.
+		const b = runChild({ ...env, AT_TIMES: "0" });
+		while (fx.refreshes.length === 0) await new Promise((r) => setTimeout(r, 20));
+		const a = runChild({ ...env, LOGOUT_AT: "0" });
+		const [, aOut] = await Promise.all([b, a]);
+		expect(fx.refreshes).toEqual(["RT1"]);
+		expect(aOut).toEqual([{ loggedOut: true }]);
+		// Wait for anything still writing, then look.
+		await new Promise((r) => setTimeout(r, 500));
+		expect(existsSync(store)).toBe(false);
+		expect(existsSync(`${store}.lock`)).toBe(false);
+	}, 30_000);
+});
+
 describe("the refresh lock (0.6.1)", () => {
 	let dir: string;
 	beforeEach(() => {
@@ -175,6 +254,46 @@ describe("the refresh lock (0.6.1)", () => {
 		expect(statSync(`${store}.lock`).mode & 0o777).toBe(0o600);
 		release?.();
 		expect(existsSync(`${store}.lock`)).toBe(false);
+	});
+
+	it("0.6.1 review: a dangling link, a directory or a stale lock in a read-only folder gives up the lock at once", async () => {
+		const dangling = join(dir, "a.json");
+		symlinkSync(join(dir, "nowhere"), `${dangling}.lock`);
+		const asDir = join(dir, "b.json");
+		mkdirSync(`${asDir}.lock`);
+		const old = (Date.now() - 120_000) / 1000;
+		utimesSync(`${asDir}.lock`, old, old);
+		const ro = join(dir, "ro");
+		mkdirSync(ro);
+		writeFileSync(join(ro, "c.json.lock"), "12345.dead");
+		utimesSync(join(ro, "c.json.lock"), old, old);
+		chmodSync(ro, 0o500);
+		try {
+			for (const store of [dangling, asDir, join(ro, "c.json")]) {
+				const t0 = Date.now();
+				expect(await acquireRefreshLock(store, 60_000, 5_000), store).toBeUndefined();
+				expect(Date.now() - t0, store).toBeLessThan(1_000);
+			}
+			expect(existsSync(`${asDir}.lock`)).toBe(true); // a directory is not removed
+		} finally {
+			chmodSync(ro, 0o700);
+		}
+	});
+
+	it("0.6.1 review: while it waits for a held lock, the event loop keeps running, and it gives up at its wait limit", async () => {
+		const store = join(dir, "held.json");
+		writeFileSync(`${store}.lock`, "999.live", { mode: 0o600 });
+		let ticks = 0;
+		const timer = setInterval(() => ticks++, 20);
+		const t0 = Date.now();
+		try {
+			expect(await acquireRefreshLock(store, 60_000, 500)).toBeUndefined();
+		} finally {
+			clearInterval(timer);
+		}
+		expect(Date.now() - t0).toBeGreaterThanOrEqual(500);
+		expect(Date.now() - t0).toBeLessThan(2_000);
+		expect(ticks).toBeGreaterThan(5);
 	});
 
 	it("a lock left by a crashed process is taken over once stale; a live one is waited for", async () => {

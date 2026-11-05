@@ -15,8 +15,10 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
   but one were told to run `/penpi login`. A process now reads the token store again before it
   refreshes and uses a token another process already stored. Refreshing and saving happen under a
   lock file beside the token store (`penfield-tokens-<env>.json.lock`, mode 600), which is taken
-  over after 60 seconds if the process holding it died. After a refused refresh token, PENpi reads
-  the store once more before asking for a login.
+  over after 60 seconds if the process holding it died. Anything else at the lock's path (a
+  directory, a symbolic link) or a stale lock that cannot be removed makes PENpi refresh without
+  the lock rather than wait. After a refused refresh token, PENpi reads the store once more
+  before asking for a login.
 - **`context_recall` on a tool call returns its result.** Recalling the entry of a tool call
   (the id `context_search` lists for a hit on a file name) returned only the call, such as
   `read({"path":"ops/freeze-window.yaml"})`, and a model could take that for the whole answer.
@@ -53,8 +55,12 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
   runs (`npm run check` and the lockfile check, not `npm test`).
 
 ### Changed
-- **`/penpi logout`** removes the stored Penfield login (access and refresh token) and its
-  refresh lock, clears `PENFIELD_JWT` for the session, and says so. Uninstalling PENpi leaves
+- **`/penpi logout`** removes the stored Penfield login (access and refresh token) and clears
+  `PENFIELD_JWT` for the session. It takes the refresh lock first, so a refresh running in
+  another session finishes before the store goes, and nothing writes the store back afterwards.
+  Your other PENpi sessions find the store gone at their next request and ask for `/penpi
+  login` instead of refreshing. A Penfield connection the MCP tools already have open keeps
+  working until it reconnects or its session ends, and the message says so. Uninstalling PENpi leaves
   the login in place, so a reinstall keeps it, and its output now says where the token store is
   and that `/penpi logout` removes it.
 - **The embedded MCP adapter subscribes to nothing on Pi's event bus.** 0.6.0 blocked the four
