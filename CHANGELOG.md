@@ -6,6 +6,18 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
 
 ## [Unreleased]
 
+## [0.6.1] — Unreleased
+
+### Fixed
+- **Penfield login across several PENpi processes.** Penfield issues a new refresh token on every
+  refresh and refuses one that was already used. Each PENpi process kept the refresh token it had
+  read, so when several sessions refreshed at once, or one refreshed after another already had, all
+  but one were told to run `/penpi login`. A process now reads the token store again before it
+  refreshes and uses a token another process already stored. Refreshing and saving happen under a
+  lock file beside the token store (`penfield-tokens-<env>.json.lock`, mode 600), which is taken
+  over after 60 seconds if the process holding it died. After a refused refresh token, PENpi reads
+  the store once more before asking for a login.
+
 ## [0.6.0] — 2026-11-05
 
 ### Changed

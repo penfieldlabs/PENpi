@@ -16,7 +16,7 @@
  */
 
 import { randomBytes } from "node:crypto";
-import { lstatSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
@@ -25,6 +25,16 @@ import type { PenfieldConfig } from "./config.ts";
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 const EXPIRY_SKEW_MS = 60_000;
 const DEFAULT_TIMEOUT_MS = 15_000;
+/**
+ * 0.6.1: the refresh lock beside the token store, shared by every PENpi process on the machine. Penfield rotates
+ * refresh tokens and refuses a used one (`invalid_grant`), so two processes refreshing with the same token leave one
+ * of them logged out. A lock older than REFRESH_LOCK_STALE_MS is taken over (a refresh makes at most three sequential
+ * requests of DEFAULT_TIMEOUT_MS), so a crashed process cannot block logins; a waiter gives up waiting after
+ * REFRESH_LOCK_WAIT_MS and refreshes without it.
+ */
+const REFRESH_LOCK_STALE_MS = 60_000;
+const REFRESH_LOCK_WAIT_MS = 70_000;
+const REFRESH_LOCK_POLL_MS = 100;
 
 /** Per-request Penfield timeout (override with PENPI_PENFIELD_TIMEOUT_MS). */
 function requestTimeoutMs(): number {
@@ -87,11 +97,65 @@ export function writeTokenFile(path: string, contents: string): void {
 	}
 }
 
+/**
+ * Take the cross-process refresh lock (`<token store>.lock`, created exclusively at mode 0600). Returns its release,
+ * or undefined when no lock can be had (an unwritable folder, or REFRESH_LOCK_WAIT_MS spent waiting): the caller then
+ * refreshes without it, as before 0.6.1. A lock whose file is older than REFRESH_LOCK_STALE_MS is removed and taken.
+ */
+export async function acquireRefreshLock(
+	storePath: string,
+	staleMs = REFRESH_LOCK_STALE_MS,
+	waitMs = REFRESH_LOCK_WAIT_MS,
+): Promise<(() => void) | undefined> {
+	const path = `${storePath}.lock`;
+	const id = `${process.pid}.${randomBytes(6).toString("hex")}`;
+	const deadline = Date.now() + waitMs;
+	try {
+		mkdirSync(dirname(storePath), { recursive: true, mode: 0o700 });
+	} catch {
+		return undefined;
+	}
+	for (;;) {
+		try {
+			// "wx" (O_CREAT | O_EXCL): fails on any existing file, a symbolic link included, and never follows one.
+			writeFileSync(path, id, { encoding: "utf8", mode: 0o600, flag: "wx" });
+			return () => {
+				try {
+					if (readFileSync(path, "utf8") === id) rmSync(path, { force: true });
+				} catch {
+					// already gone (taken over as stale): nothing to release
+				}
+			};
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== "EEXIST") return undefined;
+		}
+		try {
+			if (Date.now() - statSync(path).mtimeMs > staleMs) {
+				rmSync(path, { force: true });
+				continue;
+			}
+		} catch {
+			continue; // released between our attempts
+		}
+		if (Date.now() > deadline) return undefined;
+		await sleep(REFRESH_LOCK_POLL_MS);
+	}
+}
+
 export interface DeviceCodePrompt {
 	verificationUriComplete: string;
 	verificationUri: string;
 	userCode: string;
 	expiresInSec: number;
+}
+
+type RefreshError = Error & { oauthError?: string };
+
+/** Of two token sets, the one whose access token expires last (the more recent refresh). */
+function newest(a: StoredTokens | undefined, b: StoredTokens | undefined): StoredTokens | undefined {
+	if (!a) return b;
+	if (!b) return a;
+	return (b.expiresAt ?? 0) > (a.expiresAt ?? 0) ? b : a;
 }
 
 interface StoredTokens {
@@ -185,19 +249,52 @@ export class TokenManager {
 	// Never starts a device ceremony — that would block startup. Throws instead,
 	// directing the user to run `/penpi login` (handled by login()).
 	private async deviceRefresh(): Promise<string> {
-		const stored = this.mem ?? this.loadStore();
-		if (stored?.accessToken && stored.expiresAt - EXPIRY_SKEW_MS > Date.now()) {
-			this.mem = stored;
-			return stored.accessToken;
-		}
-		if (stored?.refreshToken) {
-			// Seed mem from the store so a refresh response that omits refresh_token
-			// (or clientId) preserves the stored values instead of nulling them.
-			this.mem = stored;
-			const refreshed = await this.refresh(stored.refreshToken, stored.clientId).catch(() => undefined);
-			if (refreshed) return refreshed;
+		// 0.6.1: read the store again first. Another PENpi process may have refreshed since this one last read it, and
+		// Penfield refuses a refresh token once it has been used, so this process's own copy may be spent.
+		const fresh = this.validStored();
+		if (fresh) return fresh;
+		const release = await acquireRefreshLock(this.cfg.tokenStorePath);
+		try {
+			const meanwhile = this.validStored(); // another process refreshed while this one waited for the lock
+			if (meanwhile) return meanwhile;
+			const stored = newest(this.loadStore(), this.mem);
+			if (stored?.refreshToken) {
+				// Seed mem from the store so a refresh response that omits refresh_token
+				// (or clientId) preserves the stored values instead of nulling them.
+				this.mem = stored;
+				try {
+					return await this.refresh(stored.refreshToken, stored.clientId);
+				} catch (error) {
+					// A refused refresh token: read the store once more before giving up, in case another process (one
+					// that took no lock: an older PENpi, or one that gave up waiting) rotated it.
+					const after = this.validStored();
+					if (after) return after;
+					const latest = this.loadStore();
+					if (
+						(error as RefreshError).oauthError === "invalid_grant" &&
+						latest?.refreshToken &&
+						latest.refreshToken !== stored.refreshToken
+					) {
+						this.mem = latest;
+						const retried = await this.refresh(latest.refreshToken, latest.clientId).catch(() => undefined);
+						if (retried) return retried;
+					}
+				}
+			}
+		} finally {
+			release?.();
 		}
 		throw new Error("Penfield device login required — run /penpi login");
+	}
+
+	/** The stored access token, when the store holds one still valid (and then also in memory). */
+	private validStored(): string | undefined {
+		const s = this.loadStore();
+		if (s?.accessToken && s.expiresAt - EXPIRY_SKEW_MS > Date.now()) {
+			this.mem = s;
+			return s.accessToken;
+		}
+		return undefined;
 	}
 
 	/**
@@ -339,7 +436,19 @@ export class TokenManager {
 				...(clientId ? { client_id: clientId } : {}),
 			}),
 		});
-		if (!res.ok) throw new Error(`Penfield token refresh failed: ${res.status}`);
+		if (!res.ok) {
+			// The OAuth error code only (RFC 6749 5.2), e.g. invalid_grant for a refresh token already used.
+			let oauthError: string | undefined;
+			try {
+				oauthError = ((await res.json()) as { error?: unknown }).error as string | undefined;
+			} catch {
+				// not JSON
+			}
+			throw Object.assign(
+				new Error(`Penfield token refresh failed: ${res.status}${oauthError ? ` (${oauthError})` : ""}`),
+				{ oauthError },
+			);
+		}
 		return this.persist((await res.json()) as TokenResponse, clientId);
 	}
 
