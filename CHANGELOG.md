@@ -15,7 +15,8 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
   but one were told to run `/penpi login`. A process now reads the token store again before it
   refreshes and uses a token another process already stored. Refreshing and saving happen under a
   lock file beside the token store (`penfield-tokens-<env>.json.lock`, mode 600), which is taken
-  over after 60 seconds if the process holding it died. Anything else at the lock's path (a
+  over after 70 seconds (four times the Penfield request timeout plus 10 seconds) if the process
+  holding it died. Anything else at the lock's path (a
   directory, a symbolic link) or a stale lock that cannot be removed makes PENpi refresh without
   the lock rather than wait. After a refused refresh token, PENpi reads the store once more
   before asking for a login.

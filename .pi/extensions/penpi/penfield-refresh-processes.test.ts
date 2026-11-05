@@ -26,7 +26,7 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { acquireRefreshLock, TokenManager } from "./penfield-client.ts";
+import { acquireRefreshLock, refreshLockStaleMs, refreshLockWaitMs, TokenManager } from "./penfield-client.ts";
 
 const CHILD = join(import.meta.dirname, "__fixtures__", "refresh-child.ts");
 const SKEW_MS = 60_000; // penfield-client.ts EXPIRY_SKEW_MS
@@ -399,6 +399,34 @@ describe("the refresh lock (0.6.1)", () => {
 		expect(Date.now() - t0).toBeGreaterThanOrEqual(500);
 		expect(Date.now() - t0).toBeLessThan(2_000);
 		expect(ticks).toBeGreaterThan(5);
+	});
+
+	it("0.6.1 review: the stale time and the wait follow the request timeout (four requests under the lock)", async () => {
+		const saved = process.env.PENPI_PENFIELD_TIMEOUT_MS;
+		try {
+			delete process.env.PENPI_PENFIELD_TIMEOUT_MS;
+			expect([refreshLockStaleMs(), refreshLockWaitMs()]).toEqual([70_000, 80_000]); // 4 × 15 s + 10 s
+			process.env.PENPI_PENFIELD_TIMEOUT_MS = "30000";
+			expect([refreshLockStaleMs(), refreshLockWaitMs()]).toEqual([130_000, 140_000]);
+			// A short timeout does not cut below a logout's revocation limit (20 s).
+			process.env.PENPI_PENFIELD_TIMEOUT_MS = "1000";
+			expect(refreshLockStaleMs()).toBe(30_000);
+			// With the defaults, a lock just older than the stale time is taken over; one just younger is not.
+			const store = join(dir, "derived.json");
+			writeFileSync(`${store}.lock`, "1.dead", { mode: 0o600 });
+			const older = (Date.now() - 31_000) / 1000;
+			utimesSync(`${store}.lock`, older, older);
+			const release = await acquireRefreshLock(store, undefined, 500);
+			expect(release).toBeTypeOf("function");
+			release?.();
+			writeFileSync(`${store}.lock`, "2.live", { mode: 0o600 });
+			const younger = (Date.now() - 25_000) / 1000;
+			utimesSync(`${store}.lock`, younger, younger);
+			expect(await acquireRefreshLock(store, undefined, 300)).toBeUndefined();
+		} finally {
+			if (saved === undefined) delete process.env.PENPI_PENFIELD_TIMEOUT_MS;
+			else process.env.PENPI_PENFIELD_TIMEOUT_MS = saved;
+		}
 	});
 
 	it("a lock left by a crashed process is taken over once stale; a live one is waited for", async () => {

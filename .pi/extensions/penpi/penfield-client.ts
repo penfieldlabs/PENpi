@@ -42,13 +42,26 @@ const DEFAULT_TIMEOUT_MS = 15_000;
 /**
  * 0.6.1: the refresh lock beside the token store, shared by every PENpi process on the machine. Penfield rotates
  * refresh tokens and refuses a used one (`invalid_grant`), so two processes refreshing with the same token leave one
- * of them logged out. A lock older than REFRESH_LOCK_STALE_MS is taken over (a refresh makes at most three sequential
- * requests of DEFAULT_TIMEOUT_MS), so a crashed process cannot block logins; a waiter gives up waiting after
- * REFRESH_LOCK_WAIT_MS and refreshes without it.
+ * of them logged out. A lock older than refreshLockStaleMs() is taken over, so a crashed process cannot block logins;
+ * a waiter gives up waiting after refreshLockWaitMs() and refreshes without it.
  */
-const REFRESH_LOCK_STALE_MS = 60_000;
-const REFRESH_LOCK_WAIT_MS = 70_000;
 const REFRESH_LOCK_POLL_MS = 100;
+
+/**
+ * How old a refresh lock must be before another process takes it over (0.6.1 review). A holder makes at most four
+ * sequential Penfield requests under the lock: a refresh makes the two discovery requests, the token request and the
+ * one retry after `invalid_grant`; a logout makes the two discovery requests and the two revocations, all within
+ * REVOKE_TIMEOUT_MS. Each request has requestTimeoutMs() (PENPI_PENFIELD_TIMEOUT_MS), so a live holder is never older
+ * than the longer of the two, and 10 s more is the margin. 70 s at the default timeout.
+ */
+export function refreshLockStaleMs(): number {
+	return Math.max(4 * requestTimeoutMs(), REVOKE_TIMEOUT_MS) + 10_000;
+}
+
+/** How long a waiter waits for the lock before it refreshes without it: past the stale time, so it can take over a dead one. */
+export function refreshLockWaitMs(): number {
+	return refreshLockStaleMs() + 10_000;
+}
 
 /** Per-request Penfield timeout (override with PENPI_PENFIELD_TIMEOUT_MS). */
 function requestTimeoutMs(): number {
@@ -114,9 +127,9 @@ export function writeTokenFile(path: string, contents: string): void {
 /**
  * Take the cross-process refresh lock (`<token store>.lock`, created exclusively at mode 0600). Returns its release,
  * or undefined when no lock can be had: the caller then refreshes without it, as before 0.6.1. That is the case for an
- * unwritable folder, for REFRESH_LOCK_WAIT_MS spent waiting, for anything at the lock path that is not a regular file
+ * unwritable folder, for refreshLockWaitMs() spent waiting, for anything at the lock path that is not a regular file
  * (a directory, a symbolic link), and for a stale lock that cannot be removed. A lock whose file is older than
- * REFRESH_LOCK_STALE_MS is removed and taken. Every retry checks the deadline and waits REFRESH_LOCK_POLL_MS first, so
+ * refreshLockStaleMs() is removed and taken. Every retry checks the deadline and waits REFRESH_LOCK_POLL_MS first, so
  * the loop ends within the wait and never holds the event loop (0.6.1 review: it could spin forever).
  *
  * Two waiters may both find the same lock stale; the second can then remove the lock the first has just taken, and
@@ -125,8 +138,8 @@ export function writeTokenFile(path: string, contents: string): void {
  */
 export async function acquireRefreshLock(
 	storePath: string,
-	staleMs = REFRESH_LOCK_STALE_MS,
-	waitMs = REFRESH_LOCK_WAIT_MS,
+	staleMs = refreshLockStaleMs(),
+	waitMs = refreshLockWaitMs(),
 ): Promise<(() => void) | undefined> {
 	const path = `${storePath}.lock`;
 	const id = `${process.pid}.${randomBytes(6).toString("hex")}`;
