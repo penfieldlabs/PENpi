@@ -22,6 +22,48 @@ function callLabel(call: { name: string; arguments?: unknown }): string {
 	return values.join(" ");
 }
 
+/**
+ * Each tool call in a branch paired with its result entry (D16, Later 8, N7): `callOfResult` maps a result entry to
+ * its call's label and entry, `resultOfBlock` maps "<call entry>#<block index>" to the result entry. context_search
+ * names a call's result; context_recall (0.6.1) returns it with the call.
+ */
+export function pairToolResults(branch: ReturnType<ExtensionContext["sessionManager"]["getBranch"]>): {
+	callOfResult: Map<string, { label: string; entry: string }>;
+	resultOfBlock: Map<string, string>;
+} {
+	// D16: a tool result does not contain what its call asked for (a read result holds the file, not its
+	// path), so a result is searched together with its call, and a hit on a call names its result entry.
+	// Later 8: calls and results pair in branch order (a result answers the earliest open call with its id), so
+	// a provider that reuses ids pairs each result with its own call; empty ids pair nothing.
+	const callOfResult = new Map<string, { label: string; entry: string }>();
+	const resultOfBlock = new Map<string, string>();
+	// N7: a queue per id, first in, first out: calls with the same id in one message pair in order. The queues
+	// span one message (round 4): a message that opens calls drops the earlier calls that never got a result,
+	// so an unanswered call does not take a later result with its id.
+	const open = new Map<string, Array<{ label: string; entry: string; block: number }>>();
+	for (const entry of branch) {
+		if (entry.type !== "message") continue;
+		const message = entry.message as AgentMessage & { toolCallId?: string };
+		if (message.role === "assistant" && (message as AssistantMessage).content.some((b) => b.type === "toolCall"))
+			open.clear();
+		if (message.role === "assistant")
+			(message as AssistantMessage).content.forEach((block, index) => {
+				if (block.type === "toolCall" && block.id) {
+					const queue = open.get(block.id) ?? [];
+					queue.push({ label: callLabel(block), entry: entry.id, block: index });
+					open.set(block.id, queue);
+				}
+			});
+		if (message.role === "toolResult" && message.toolCallId) {
+			const call = open.get(message.toolCallId)?.shift();
+			if (!call) continue;
+			callOfResult.set(entry.id, { label: call.label, entry: call.entry });
+			resultOfBlock.set(`${call.entry}#${call.block}`, entry.id);
+		}
+	}
+	return { callOfResult, resultOfBlock };
+}
+
 export function installSearch(core: EngineCore): void {
 	const { pi, opts, st } = core;
 
@@ -36,36 +78,8 @@ export function installSearch(core: EngineCore): void {
 		const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
 		if (terms.length === 0) throw new Error("Give at least one word to search for.");
 		const branch = ctx.sessionManager.getBranch();
-		// D16: a tool result does not contain what its call asked for (a read result holds the file, not its
-		// path), so a result is searched together with its call, and a hit on a call names its result entry.
-		// Later 8: calls and results pair in branch order (a result answers the earliest open call with its id), so
-		// a provider that reuses ids pairs each result with its own call; empty ids pair nothing.
-		const callOfResult = new Map<string, { label: string; entry: string }>();
-		const resultOfBlock = new Map<string, string>();
-		// N7: a queue per id, first in, first out: calls with the same id in one message pair in order. The queues
-		// span one message (round 4): a message that opens calls drops the earlier calls that never got a result,
-		// so an unanswered call does not take a later result with its id.
-		const open = new Map<string, Array<{ label: string; entry: string; block: number }>>();
-		for (const entry of branch) {
-			if (entry.type !== "message") continue;
-			const message = entry.message as AgentMessage & { toolCallId?: string };
-			if (message.role === "assistant" && (message as AssistantMessage).content.some((b) => b.type === "toolCall"))
-				open.clear();
-			if (message.role === "assistant")
-				(message as AssistantMessage).content.forEach((block, index) => {
-					if (block.type === "toolCall" && block.id) {
-						const queue = open.get(block.id) ?? [];
-						queue.push({ label: callLabel(block), entry: entry.id, block: index });
-						open.set(block.id, queue);
-					}
-				});
-			if (message.role === "toolResult" && message.toolCallId) {
-				const call = open.get(message.toolCallId)?.shift();
-				if (!call) continue;
-				callOfResult.set(entry.id, { label: call.label, entry: call.entry });
-				resultOfBlock.set(`${call.entry}#${call.block}`, entry.id);
-			}
-		}
+		// D16: a result is searched together with its call, and a hit on a call names its result entry.
+		const { callOfResult, resultOfBlock } = pairToolResults(branch);
 		const cut = core.readCut(branch);
 		const keptFrom = cut ? branch.findIndex((e) => e.id === cut.firstKeptEntryId) : -1;
 		const omitted = new Set(

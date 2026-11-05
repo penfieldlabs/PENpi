@@ -4,6 +4,7 @@ import type { EngineCore } from "../core.ts";
 import { type Block, textOfContent, textTokens } from "../estimator.ts";
 import { RECALL_TOOL } from "../options.ts";
 import { contributesMessages } from "../planner.ts";
+import { pairToolResults } from "./search.ts";
 
 export function installRecall(core: EngineCore): void {
 	const { pi } = core;
@@ -51,14 +52,46 @@ export function installRecall(core: EngineCore): void {
 			);
 			const offset = Math.max(0, params.offset ?? 0);
 			const slice = text.slice(offset, offset + page);
+			// 0.6.1 (the 0.6.0 gate's candidate s10): a tool call's entry holds only the call, e.g.
+			// `read({"path":...})`, and the model took that for the whole answer. On the entry's last page, each call's
+			// result follows: in full when it fits what is left of the page, else a line naming its entry to recall.
+			const results: string[] = [];
+			const shown: string[] = [];
+			if (entry.type === "message" && offset + slice.length >= text.length && Array.isArray(content)) {
+				const { resultOfBlock } = pairToolResults(ctx.sessionManager.getBranch());
+				let room = page - slice.length;
+				(content as Block[]).forEach((block, index) => {
+					if (block.type !== "toolCall") return;
+					const resultId = resultOfBlock.get(`${params.entry}#${index}`);
+					if (!resultId) return;
+					const result = ctx.sessionManager.getEntry(resultId);
+					const resultText =
+						result?.type === "message" ? textOfContent((result.message as { content?: unknown }).content) : "";
+					const head = `[result of ${block.name}: entry ${resultId}, ${resultText.length} characters]`;
+					if (resultText.length + head.length + 2 <= room) {
+						results.push(`${head}\n${resultText}`);
+						room -= resultText.length + head.length + 2;
+						shown.push(resultId);
+					} else
+						results.push(
+							`[result of ${block.name}: entry ${resultId}, ${resultText.length} characters; read it with ${RECALL_TOOL}({"entry":"${resultId}"})]`,
+						);
+				});
+			}
 			return {
 				content: [
 					{
 						type: "text",
-						text: `[entry ${params.entry} characters ${offset}-${offset + slice.length} of ${text.length}]\n${slice}`,
+						text: `[entry ${params.entry} characters ${offset}-${offset + slice.length} of ${text.length}]\n${slice}${results.length ? `\n${results.join("\n")}` : ""}`,
 					},
 				],
-				details: { entry: params.entry, offset, length: slice.length, total: text.length },
+				details: {
+					entry: params.entry,
+					offset,
+					length: slice.length,
+					total: text.length,
+					...(results.length ? { results: results.length, resultsShown: shown } : {}),
+				},
 			};
 		},
 	});

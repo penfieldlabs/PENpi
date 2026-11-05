@@ -17,6 +17,11 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
   lock file beside the token store (`penfield-tokens-<env>.json.lock`, mode 600), which is taken
   over after 60 seconds if the process holding it died. After a refused refresh token, PENpi reads
   the store once more before asking for a login.
+- **`context_recall` on a tool call returns its result.** Recalling the entry of a tool call
+  (the id `context_search` lists for a hit on a file name) returned only the call, such as
+  `read({"path":"ops/freeze-window.yaml"})`, and a model could take that for the whole answer.
+  The result now follows the call: in full when it fits the page, otherwise a line naming the
+  result's entry to recall.
 
 ## [0.6.0] — 2026-11-05
 

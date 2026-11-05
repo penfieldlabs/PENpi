@@ -311,6 +311,7 @@ packages/coding-agent/test/suite/context-engine/v060-custom-triggered-run.test.t
 packages/coding-agent/test/suite/context-engine/v060-d24-notice.test.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/context-engine/v060-error-image-caption.test.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/context-engine/v060-request-size-413.test.ts	PENpi: context engine behaviour suite (ADR 0032)
+packages/coding-agent/test/suite/context-engine/v061-recall-tool-call.test.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/context-engine/vitest.config.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/regressions/copilot-request-size-overflow.test.ts	upstream test adapted to PENpi's compaction-off default
 packages/coding-agent/test/suite/virtual-models.test.ts	upstream test adapted to PENpi's compaction-off default
