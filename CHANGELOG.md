@@ -36,6 +36,10 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
   was accepted (with `lowWater: 0.9, highWater: 0.5` a session cut 86 times instead of 8). Such
   a pair now falls back to the defaults for both, with a warning. A key PENpi does not know,
   such as a misspelling, is reported with the closest known name.
+- **`search_transcript` searches the session folder Pi uses.** It built the folder from the
+  working directory, so with `sessionDir` in settings, `--session-dir` or
+  `PI_CODING_AGENT_SESSION_DIR` it searched a folder with no sessions. It now asks Pi for the
+  session's folder.
 
 ## [0.6.0] — 2026-11-05
 

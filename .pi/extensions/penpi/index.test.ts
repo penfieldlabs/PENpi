@@ -145,6 +145,31 @@ function load(flags: Record<string, boolean> = {}, clientOver: Record<string, an
 	return { ...f, stub };
 }
 
+describe("search_transcript (0.6.1)", () => {
+	it("searches the session folder Pi uses (a custom sessionDir), not one rebuilt from the cwd", async () => {
+		const { tools } = load();
+		const custom = mkdtempSync(join(tmpdir(), "penpi-custom-sessions-"));
+		writeFileSync(
+			join(custom, "2026-11-05T10-00-00-000Z_s1.jsonl"),
+			JSON.stringify({
+				type: "message",
+				message: { role: "user", content: [{ type: "text", text: "the vault code is QUARTZ-17" }], timestamp: 1 },
+			}),
+		);
+		const ctx = {
+			cwd: mkdtempSync(join(tmpdir(), "penpi-project-")),
+			sessionManager: { getSessionDir: () => custom },
+		};
+		const tool = tools.search_transcript as {
+			execute: (...a: unknown[]) => Promise<{ content: Array<{ text: string }> }>;
+		};
+		const res = await tool.execute("t1", { query: "quartz-17" }, undefined, undefined, ctx);
+		expect(res.content[0].text).toContain("1 match(es)");
+		expect(res.content[0].text).toContain("the vault code is QUARTZ-17");
+		rmSync(custom, { recursive: true, force: true });
+	});
+});
+
 describe("penpiCore registration", () => {
 	it("registers its five hooks, command, two flags, and transcript tool (the context engine registers its own)", () => {
 		const { handlers, commands, tools, registeredFlags } = load();
