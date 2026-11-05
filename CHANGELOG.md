@@ -27,6 +27,10 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
   extension that adds or changes messages in Pi's `context` event causes this on every request,
   and nothing told the user. The engine now warns once per session, `/penpi doctor` shows the
   count, and KNOWN_LIMITATIONS lists the incompatibility.
+- **The installer accepts packages written as objects.** Pi's settings allow a package as a
+  string or as an object with a `source` and resource filters; the installer refused the object
+  form ("packages must be an array of strings") and stopped. It now accepts both, and removes a
+  stock `pi-mcp-adapter` given either way.
 
 ## [0.6.0] — 2026-11-05
 
