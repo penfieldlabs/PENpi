@@ -2,11 +2,16 @@
  * One PENpi process for penfield-refresh-processes.test.ts (0.6.1): a TokenManager on a shared token store, its
  * Penfield traffic sent to the test's rotating fixture. Prints one JSON line per getAccessToken() call.
  *
- * Environment: STORE (the token store), PORT (the fixture), AT_TIMES (comma-separated epoch ms at which to call
- * getAccessToken; a past time means at once). With LOGOUT_AT (epoch ms) it is a `/penpi logout` instead: at that time
- * it revokes and removes the stored login (logoutStoredLogin, as the command does; REVOKE_TIMEOUT_MS bounds the
- * revocation) and prints whether a store was there and what revoking it came to.
+ * Readiness handshake (0.6.1 review: start-up time must not decide a test): the child prints {"ready":true} once it
+ * has started and waits for a line on stdin ("go"); every time below counts from that line, so how long the process
+ * took to start does not matter.
+ *
+ * Environment: STORE (the token store), PORT (the fixture), AT_TIMES (comma-separated ms after "go" at which to call
+ * getAccessToken). With LOGOUT_AT (ms after "go") it is a `/penpi logout` instead: at that time it revokes and removes
+ * the stored login (logoutStoredLogin, as the command does; REVOKE_TIMEOUT_MS bounds the revocation) and prints whether
+ * a store was there and what revoking it came to.
  */
+import { createInterface } from "node:readline";
 import type { PenfieldConfig } from "../config.ts";
 import { logoutStoredLogin, TokenManager } from "../penfield-client.ts";
 
@@ -29,8 +34,15 @@ const cfg: PenfieldConfig = {
 	scope: "read write offline_access",
 };
 
+console.log(JSON.stringify({ ready: true }));
+const stdin = createInterface({ input: process.stdin });
+await stdin[Symbol.asyncIterator]().next();
+const go = Date.now();
+stdin.close();
+process.stdin.destroy(); // nothing more is read, so the process ends when its work does
+
 if (process.env.LOGOUT_AT) {
-	const wait = Number(process.env.LOGOUT_AT) - Date.now();
+	const wait = go + Number(process.env.LOGOUT_AT) - Date.now();
 	if (wait > 0) await new Promise((r) => setTimeout(r, wait));
 	const result = await logoutStoredLogin(
 		cfg,
@@ -45,7 +57,7 @@ const tm = new TokenManager(cfg);
 for (const at of String(process.env.AT_TIMES ?? "0")
 	.split(",")
 	.map(Number)) {
-	const wait = at - Date.now();
+	const wait = go + at - Date.now();
 	if (wait > 0) await new Promise((r) => setTimeout(r, wait));
 	try {
 		console.log(JSON.stringify({ pid: process.pid, token: await tm.getAccessToken() }));

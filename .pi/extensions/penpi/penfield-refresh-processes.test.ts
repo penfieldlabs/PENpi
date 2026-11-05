@@ -105,23 +105,28 @@ async function startRotating(delayMs = 300, revoke: "ok" | "down" | "slow" | "no
 	};
 }
 
-/** Runs one child process; resolves with its JSON lines. */
-function runChild(
-	env: Record<string, string>,
-): Promise<Array<{ token?: string; error?: string; loggedOut?: boolean; revocation?: string }>> {
-	return new Promise((resolve, reject) => {
-		const child = spawn(process.execPath, [CHILD], {
-			env: { ...process.env, ...env },
-			stdio: ["ignore", "pipe", "pipe"],
-		});
-		let out = "";
-		let err = "";
-		child.stdout.on("data", (c) => {
-			out += c;
-		});
-		child.stderr.on("data", (c) => {
-			err += c;
-		});
+type ChildLine = { token?: string; error?: string; loggedOut?: boolean; revocation?: string };
+
+/**
+ * One child process, with the readiness handshake (0.6.1 review): `ready` resolves once it has started, `go()` starts
+ * its clock (its AT_TIMES and LOGOUT_AT count from then), and `done` resolves with its JSON lines.
+ */
+function startChild(env: Record<string, string>): { ready: Promise<void>; go: () => void; done: Promise<ChildLine[]> } {
+	const child = spawn(process.execPath, [CHILD], { env: { ...process.env, ...env }, stdio: ["pipe", "pipe", "pipe"] });
+	let out = "";
+	let err = "";
+	let markReady: () => void = () => {};
+	const ready = new Promise<void>((r) => {
+		markReady = r;
+	});
+	child.stdout.on("data", (c) => {
+		out += c;
+		if (out.includes('{"ready":true}')) markReady();
+	});
+	child.stderr.on("data", (c) => {
+		err += c;
+	});
+	const done = new Promise<ChildLine[]>((resolve, reject) => {
 		child.on("error", reject);
 		child.on("exit", (code) =>
 			code === 0
@@ -129,7 +134,7 @@ function runChild(
 						out
 							.trim()
 							.split("\n")
-							.filter(Boolean)
+							.filter((l) => l && l !== '{"ready":true}')
 							.map((l) => {
 								const { pid: _pid, ...rest } = JSON.parse(l);
 								return rest;
@@ -138,6 +143,21 @@ function runChild(
 				: reject(new Error(`child exited ${code}: ${err}`)),
 		);
 	});
+	return { ready, go: () => child.stdin.end("go\n"), done };
+}
+
+/** Starts every child, waits until all are ready, runs `seed` (the store as of "go"), then starts them together. */
+async function together(envs: Array<Record<string, string>>, seed: () => void = () => {}): Promise<ChildLine[][]> {
+	const children = envs.map(startChild);
+	await Promise.all(children.map((c) => c.ready));
+	seed();
+	for (const c of children) c.go();
+	return Promise.all(children.map((c) => c.done));
+}
+
+/** One child, started at once. */
+async function runChild(env: Record<string, string>): Promise<ChildLine[]> {
+	return (await together([env]))[0];
 }
 
 describe("Penfield token refresh across processes (0.6.1)", () => {
@@ -155,13 +175,14 @@ describe("Penfield token refresh across processes (0.6.1)", () => {
 	});
 
 	it("three processes started together with an expired token: one refresh, every process gets a token", async () => {
-		writeFileSync(
-			store,
-			JSON.stringify({ clientId: "cid", accessToken: "AT0", expiresAt: Date.now() - 1000, refreshToken: "RT1" }),
-			{ mode: 0o600 },
-		);
 		const env = { STORE: store, PORT: String(fx.port), AT_TIMES: "0" };
-		const results = await Promise.all([runChild(env), runChild(env), runChild(env)]);
+		const results = await together([env, env, env], () =>
+			writeFileSync(
+				store,
+				JSON.stringify({ clientId: "cid", accessToken: "AT0", expiresAt: Date.now() - 1000, refreshToken: "RT1" }),
+				{ mode: 0o600 },
+			),
+		);
 		expect(results.map((r) => r[0])).toEqual([{ token: "AT1" }, { token: "AT1" }, { token: "AT1" }]);
 		expect(fx.refreshes).toEqual(["RT1"]);
 		const saved = JSON.parse(readFileSync(store, "utf8"));
@@ -170,22 +191,26 @@ describe("Penfield token refresh across processes (0.6.1)", () => {
 	}, 30_000);
 
 	it("two live sessions across an expiry: the second uses the pair the first stored, with no refresh of its own", async () => {
-		const start = Date.now();
-		// Valid for about 4 s more (beyond the 60 s skew), so both sessions first read it (process start-up included), then
-		// both see it expire: the first at 6 s, the second at 8.5 s, after the first has stored the new pair.
-		writeFileSync(
-			store,
-			JSON.stringify({
-				clientId: "cid",
-				accessToken: "AT0",
-				expiresAt: start + SKEW_MS + 4000,
-				refreshToken: "RT1",
-			}),
-			{ mode: 0o600 },
+		// Valid for 4 s more (beyond the 60 s skew) from "go": both sessions read it at once, then both see it expire,
+		// the first at 6 s and the second at 8.5 s, after the first has stored the new pair.
+		const env = { STORE: store, PORT: String(fx.port) };
+		const [a, b] = await together(
+			[
+				{ ...env, AT_TIMES: "0,6000" },
+				{ ...env, AT_TIMES: "0,8500" },
+			],
+			() =>
+				writeFileSync(
+					store,
+					JSON.stringify({
+						clientId: "cid",
+						accessToken: "AT0",
+						expiresAt: Date.now() + SKEW_MS + 4000,
+						refreshToken: "RT1",
+					}),
+					{ mode: 0o600 },
+				),
 		);
-		const first = runChild({ STORE: store, PORT: String(fx.port), AT_TIMES: `0,${start + 6000}` });
-		const second = runChild({ STORE: store, PORT: String(fx.port), AT_TIMES: `0,${start + 8500}` });
-		const [a, b] = await Promise.all([first, second]);
 		expect(a).toEqual([{ token: "AT0" }, { token: "AT1" }]);
 		expect(b).toEqual([{ token: "AT0" }, { token: "AT1" }]);
 		expect(fx.refreshes).toEqual(["RT1"]);
@@ -208,24 +233,25 @@ describe("a logout sticks against another running session (0.6.1 review)", () =>
 	});
 
 	it("a session started before the logout does not log back in: not while its token is valid, not after it expires", async () => {
-		const start = Date.now();
-		writeFileSync(
-			store,
-			JSON.stringify({
-				clientId: "cid",
-				accessToken: "AT0",
-				expiresAt: start + SKEW_MS + 6000,
-				refreshToken: "RT1",
-			}),
-			{
-				mode: 0o600,
-			},
-		);
 		const env = { STORE: store, PORT: String(fx.port) };
 		// B reads the store at once, asks again after the logout (its token still valid), and once more after it expired.
-		const b = runChild({ ...env, AT_TIMES: `0,${start + 4500},${start + 9000}` });
-		const a = runChild({ ...env, LOGOUT_AT: String(start + 3000) });
-		const [bOut, aOut] = await Promise.all([b, a]);
+		const [bOut, aOut] = await together(
+			[
+				{ ...env, AT_TIMES: "0,4500,9000" },
+				{ ...env, LOGOUT_AT: "3000" },
+			],
+			() =>
+				writeFileSync(
+					store,
+					JSON.stringify({
+						clientId: "cid",
+						accessToken: "AT0",
+						expiresAt: Date.now() + SKEW_MS + 6000,
+						refreshToken: "RT1",
+					}),
+					{ mode: 0o600 },
+				),
+		);
 		expect(aOut).toEqual([{ loggedOut: true, revocation: "revoked" }]);
 		expect(bOut[0]).toEqual({ token: "AT0" });
 		expect(bOut[1]).toEqual({ error: "Penfield device login required — run /penpi login" });
@@ -235,20 +261,21 @@ describe("a logout sticks against another running session (0.6.1 review)", () =>
 	}, 30_000);
 
 	it("a logout during another session's refresh: the store stays gone", async () => {
-		const start = Date.now();
+		const env = { STORE: store, PORT: String(fx.port) };
+		// Both started and ready; B refreshes at once (the fixture answers after 4 s); A logs out once the fixture has B's
+		// request.
+		const b = startChild({ ...env, AT_TIMES: "0" });
+		const a = startChild({ ...env, LOGOUT_AT: "0" });
+		await Promise.all([a.ready, b.ready]);
 		writeFileSync(
 			store,
-			JSON.stringify({ clientId: "cid", accessToken: "AT0", expiresAt: start - 1000, refreshToken: "RT1" }),
-			{
-				mode: 0o600,
-			},
+			JSON.stringify({ clientId: "cid", accessToken: "AT0", expiresAt: Date.now() - 1000, refreshToken: "RT1" }),
+			{ mode: 0o600 },
 		);
-		const env = { STORE: store, PORT: String(fx.port) };
-		// B starts a refresh at once (the fixture answers after 4 s); A logs out once the fixture has B's request.
-		const b = runChild({ ...env, AT_TIMES: "0" });
+		b.go();
 		while (fx.refreshes.length === 0) await new Promise((r) => setTimeout(r, 20));
-		const a = runChild({ ...env, LOGOUT_AT: "0" });
-		const [, aOut] = await Promise.all([b, a]);
+		a.go();
+		const [, aOut] = await Promise.all([b.done, a.done]);
 		expect(fx.refreshes).toEqual(["RT1"]);
 		expect(aOut).toEqual([{ loggedOut: true, revocation: "revoked" }]);
 		// Wait for anything still writing, then look.
@@ -302,12 +329,14 @@ describe("logout revokes the login at Penfield (0.6.1)", () => {
 
 	it("another session started before the logout gets login required at its next refresh, not a silent re-login", async () => {
 		const fx = await fixture("ok");
-		const start = Date.now();
-		seed(start + SKEW_MS + 3000);
 		const env = { STORE: store, PORT: String(fx.port) };
-		const b = runChild({ ...env, AT_TIMES: `0,${start + 6000}` });
-		const a = runChild({ ...env, LOGOUT_AT: String(start + 2000) });
-		const [bOut, aOut] = await Promise.all([b, a]);
+		const [bOut, aOut] = await together(
+			[
+				{ ...env, AT_TIMES: "0,6000" },
+				{ ...env, LOGOUT_AT: "2000" },
+			],
+			() => seed(Date.now() + SKEW_MS + 3000),
+		);
 		expect(aOut).toEqual([{ loggedOut: true, revocation: "revoked" }]);
 		expect(bOut).toEqual([{ token: "AT0" }, { error: "Penfield device login required — run /penpi login" }]);
 		expect(fx.refreshes).toEqual([]);
@@ -328,8 +357,11 @@ describe("logout revokes the login at Penfield (0.6.1)", () => {
 	it("the revocation endpoint is slow: the local logout completes within its time limit", async () => {
 		const fx = await fixture("slow");
 		seed(Date.now() + SKEW_MS + 60_000);
+		const child = startChild({ STORE: store, PORT: String(fx.port), LOGOUT_AT: "0", REVOKE_TIMEOUT_MS: "1500" });
+		await child.ready;
 		const t0 = Date.now();
-		const out = await runChild({ STORE: store, PORT: String(fx.port), LOGOUT_AT: "0", REVOKE_TIMEOUT_MS: "1500" });
+		child.go();
+		const out = await child.done;
 		expect(out).toEqual([{ loggedOut: true, revocation: "failed" }]);
 		expect(Date.now() - t0).toBeLessThan(6_000); // the endpoint answers after 10 s
 		expect(existsSync(store)).toBe(false);
