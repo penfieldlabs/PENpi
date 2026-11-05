@@ -6,6 +6,95 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-11-05
+
+### Changed
+- **PENpi is on upstream Pi v1.4.0** (from v1.1.0). See Pi's own changelog
+  (`packages/coding-agent/CHANGELOG.md`). What PENpi users notice:
+  - When the final answer is still cut off at the output limit after the engine's continuations,
+    `pi -p` exits 1, as in 0.5.x, and the stderr message is now Pi's own ("Response was truncated:
+    the model reached its output token limit."). `--mode json` exits 0 in that case.
+  - The `kimi-coding` provider uses Chat Completions.
+  - Pi retries more transient provider errors before a run ends, and sends client identity
+    headers with each request.
+  - Upstream removed the experimental server stack and its client, protocol and server packages.
+- **The model data is v1.4.0's own**, as published in `@earendil-works/pi-ai` 1.4.0, with no
+  changes. Context windows, output limits and prices change for many models, and the engine plans
+  against them. Claude Sonnet 5.5's cache reads cost $0.10 per million tokens, as Anthropic lists
+  them now; 0.5.x corrected them to $0.20, which is no longer the published price.
+- **The engine's estimate follows Pi 1.4.0's converters.** Thinking from another model is no longer
+  sent (Pi 1.1.0 sent it as text), so the estimate drops it too. An error tool result with images
+  is sent to Anthropic, and to Claude on Bedrock, with a placeholder per run of images and a
+  caption; the estimate counts both.
+- **The embedded MCP adapter is pi-mcp-adapter 7.0.0** (from 2.12.1), on the MCP client 2.3.1.
+  Penfield's tools keep their names and stay direct. What changes:
+  - Pi 1.4.0's own MCP support stays off, as before: PENpi keeps `/mcp` with the adapter, so a
+    trusted project's `.pi/mcp.json` still adds no servers (ADR 0026). If the adapter fails to
+    load, PENpi registers a `/mcp` of its own that says what failed, so this still holds.
+  - Other extensions cannot add MCP servers or reach Penfield through the adapter. A server one
+    registers with `pi.registerMcpServer()` is reported and not connected. The adapter's own
+    requests on Pi's event bus (register a server, call an MCP tool, open a raw MCP session) get
+    no answer.
+  - No MCP server learns local paths: `roots`, which 7.x answers with the working directory, is
+    off for every server. MCP Tasks are off too, since a task's result would arrive after its
+    call, as a message the context engine has not planned for. A server in the global `mcp.json`
+    may turn either on, except Penfield.
+  - The adapter gets PENpi's defaults for its settings: no `install` or `save-script` actions, no
+    semantic tool search (a model call outside the engine's accounting), and no sampling. The
+    global `mcp.json`'s own `settings` still override them. Elicitation (a server asking the
+    user a question) is the adapter's default: on with a UI, off without one.
+  - The `mcp` tool's description and parameters are longer, so every request's tool list grows a
+    little, and a session's cached prompt prefix changes once.
+  - The adapter pins `recheck` 4.6.0-beta.3, a pre-release, exactly. PENpi installs the stable
+    4.6.2 instead (shipped 26 October), through an npm `overrides` entry; the adapter uses it to
+    check a regular-expression tool search before running it.
+
+### Fixed
+- **No 401 from Penfield at startup with `penpi.mcpLifecycle: "eager"`.** An eager (or
+  `keep-alive`) Penfield entry made the adapter connect while extensions load, before PENpi had
+  published the login, so the first connect was refused and stderr showed "MCP: Failed to connect
+  to penfield". The adapter connected again at the session's start, so the tools worked. PENpi now
+  publishes the login before the adapter loads, refreshing an expired one first. With no login,
+  the entry is `lazy` for that session, so nothing connects without one.
+- **A model request no longer waits behind a held proxy connection.** Behind an HTTPS proxy, Pi
+  sent every connection to the proxy through one client, one at a time, so a connection the proxy
+  held open (seen with a Penfield connection) held up the model's requests until it closed: 127
+  seconds in one test. Each connection now gets its own.
+- **One Penfield outage gives one warning.** When orientation failed at start, the first failed
+  refresh while healing warned a second time. Those refreshes now only log; a refresh failure
+  after a healed orientation still warns, once.
+- **A rebuilt window sends the same system prompt as the session did** (D23). After a resume or
+  `/reload`, the system messages could be laid out differently from the in-session window, which
+  changed the bytes and missed the provider's prompt cache. At every cut, the system messages in
+  the kept window that are older than the cut are now merged into the leading prompt, with or
+  without a section change: the merged prompt is the same, but a provider that shows system
+  messages mid-conversation sees those updates in the leading prompt. A session cut under 0.5.x
+  whose kept window holds such a message gets the new layout at its first rebuild under 0.6.0,
+  with one prompt-cache miss, once.
+- **The replayed-reasoning check is more careful** (D22). It skips a request that appends an
+  image (the provider counts the image, the estimate of the appended text does not), counts the
+  pre-cut notice, and no longer reports "ignored" while some requests read around 0.4.
+- **Copilot's HTTP 413 does not shrink the window.** Pi 1.4.0 counts every HTTP 413 as a context
+  overflow, including GitHub Copilot's "failed to parse request", a request too large in bytes
+  with no token numbers. The engine leaves that one to Pi, as 0.5.x did, instead of learning a
+  smaller window from it. The 413s that Pi 1.1.0 already counted as overflows, Anthropic's
+  `request_too_large` and Cerebras' 413 with no body, still recover as overflows, as in 0.5.x, and
+  so does a 413 that names a token overflow.
+- **A run started by an extension's message** (`sendMessage` with `triggerTurn`) is not recorded as
+  the user's request.
+- **The silent-truncation check counts the pre-cut notice of the request it judges.** It left it
+  out, so the request that carried the notice read about 100 tokens short of its real growth, which
+  could hide a small truncation or leave the sample unjudged. It matters only with the notice on.
+
+### Known issues
+- **E2 has one known failure, new with the upstream v1.4.0 corpus:** data.o200k.1m.silent-messages
+  (C6 detection lag 4 against the limit 3), accepted until 0.7.0. Its first truncations are too
+  small for any usage rule to see. The code is not the cause: on the v1.1.0 corpus, 0.6.0 passes
+  this run at lag 2, as 0.5.1 does. The earlier entry, research.glm.32k.silent-messages (accepted
+  in 0.5.0 and 0.5.1), passes on the new corpus, and it is gone.
+- **After a cut, an agent can pick up an earlier task that is already finished, or report it as
+  done**, as in 0.5.1.
+
 ## [0.5.2] — 2026-11-02
 
 ### Security

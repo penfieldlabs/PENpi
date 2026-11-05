@@ -80,7 +80,7 @@ source is used ([ADR 0030](../../../docs/adr/0030-strict-config-values.md)).
 | `saveContextOnShutdown` | `PENPI_SAVE_CONTEXT_ON_SHUTDOWN` | `false` | `save_context()` on shutdown (opt-in; env `=true`/`1` to enable) |
 | `injectBriefing` | `PENPI_INJECT_BRIEFING` | `true` | advanced diagnostic control for automatic orientation; normally leave enabled (`--penpi-raw` disables it for one session) |
 | `displayBriefing` | `PENPI_DISPLAY_BRIEFING` | `false` | also **show** normal automatic orientation in the UI. It does not change model context; set `true` to audit exactly what memory is injected each session |
-| `mcpLifecycle` | `PENPI_MCP_LIFECYCLE` | `lazy` | adapter connection lifecycle. `lazy` prevents warm-profile connections before PENpi publishes `PENFIELD_JWT`; explicit overrides are advanced and `eager` can reintroduce the startup race |
+| `mcpLifecycle` | `PENPI_MCP_LIFECYCLE` | `lazy` | adapter connection lifecycle. `lazy` connects on first use. With `eager` or `keep-alive`, PENpi publishes `PENFIELD_JWT` before the adapter loads (refreshing an expired login), and without a login uses `lazy` for that session |
 
 The context engine's settings (`windowCeiling`, `highWater` / `lowWater`, `limitOverrides`,
 `pinUserMessages` and the rest) go in the same `penpi` block and have no env vars; see

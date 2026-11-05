@@ -1,6 +1,6 @@
 # Context engine
 
-PENpi 0.5.0 manages the context window with the context engine
+Since 0.5.0, PENpi manages the context window with the context engine
 (`.pi/extensions/penpi/engine/`). It replaces FIFO (ADR 0003) and the compaction fallbacks
 around it (ADRs 0023, 0025, 0027 and 0028). Nothing is summarized and nothing is deleted. The
 session file keeps the whole transcript verbatim, and the engine only decides what the model sees
@@ -14,6 +14,14 @@ made while porting it.
   (45%). The cut is saved as a session entry, so the window stays the same across requests, which
   keeps the provider's prompt cache. Messages before the cut leave the model's view, not the
   session.
+- **System messages fold into the leading prompt at a cut.** At every cut, the system messages
+  in the kept window that are older than the cut (a section update, a tool added or removed
+  mid-session) are merged into the leading system prompt and are no longer sent where they were
+  recorded. The merged prompt is the same. A provider that shows system messages mid-conversation
+  now sees those updates in the leading prompt instead of at their place. A window rebuilt after
+  a resume or `/reload` sends the same bytes as the session did (D23). A session cut under 0.5.x
+  whose kept window holds such a message is laid out this way at its first rebuild under 0.6.0:
+  one prompt-cache miss, once.
 - **A header after each cut.** The header says what left the window and how to get it back. It
   carries the user's earlier messages verbatim (the pin: only messages a person typed, capped at
   min(10% of the window, 20,000 tokens)). It also carries the model's working notes
@@ -42,9 +50,17 @@ made while porting it.
   re-probed later, and are cleared with `/penpi reset-limits`. When the engine detects silent
   truncation, it names the answers that were produced from truncated input.
 - **Recovery without compaction.** An overflow is retried with a smaller window, at most 3 times
-  per run. A response cut off at the output limit gets up to 3 continuations per run. A response
-  that spent the whole output limit on reasoning, with no text and no tool call, is asked for the
-  answer directly (`reasoningOnlyContinuation`).
+  per run. Pi 1.4.0 counts any HTTP 413 as an overflow; its new case, GitHub Copilot's 413 with no
+  token numbers (a request too large in bytes), is not taken as a window to learn: it is left to
+  Pi. Anthropic's `request_too_large` and Cerebras' 413 with no body, which Pi 1.1.0 already
+  counted, recover as overflows, as before. A response cut off at the
+  output limit gets up to 3 continuations per run. A response that spent the whole output limit on
+  reasoning, with no text and no tool call, is asked for the answer directly
+  (`reasoningOnlyContinuation`). In print mode (`pi -p`) the answer is printed with its
+  continuations; if it is still cut off when they run out, pi exits 1 and says so on stderr (from
+  0.6.0 with Pi 1.4.0's message, "Response was truncated: the model reached its output token
+  limit."; 0.5.x exited 1 with its own). `--mode json` exits 0 in that case. The release-gate
+  benchmark runs pi in RPC mode (`--mode rpc`), which this does not affect.
 - **Broken tool calls are repaired in the request.** Some providers return a tool call with no id
   or no name. Pi records it, and a provider that checks ids rejects every later request. The engine
   leaves a call with no name out of what it sends, with the note *[a tool call with no name was

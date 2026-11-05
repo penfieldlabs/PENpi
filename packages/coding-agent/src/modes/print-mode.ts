@@ -190,9 +190,8 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 					if (text.length > 0) {
 						writeRawStdout(`${text}\n`);
 					}
-					// Still cut off after the run: the continuation budget ran out (or nothing continued it).
 					if (assistantMsg.stopReason === "length") {
-						console.error("Response incomplete: the model stopped at its output token limit.");
+						console.error("Response was truncated: the model reached its output token limit.");
 						exitCode = 1;
 					}
 				}

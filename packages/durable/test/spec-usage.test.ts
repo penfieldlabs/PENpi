@@ -134,6 +134,7 @@ function examples() {
 	// ─── Section 7.2: hooks reading extension state ──────────────────────────────
 
 	const PlanModeDoc = defineDoc<{ enabled: boolean }>({
+		checkpointWhen: () => false,
 		kind: "app.plan-mode",
 		version: 1,
 		scope: "conversation",
@@ -181,7 +182,7 @@ function examples() {
 					const settled = await (await handle.submit(request, context)).wait(context);
 					if (settled.status !== "done" || settled.type !== "input")
 						throw new Error(`Subagent failed: ${settled.status}`);
-					return { content: [{ type: "text", text: await answerText(api, settled.answer, context) }] };
+					return { output: [{ type: "text", text: await answerText(api, settled.answer, context) }] };
 				},
 			}),
 		],
@@ -270,6 +271,7 @@ function examples() {
 			// Absent: the conversation runs locally. Only conversations with this document run in a container.
 			// Subagents do not copy it: their creator writes it too when they should run in the container.
 			const ContainerDoc = defineDoc<{ image: string }>({
+				checkpointWhen: () => false,
 				kind: "app.container",
 				version: 1,
 				scope: "conversation",

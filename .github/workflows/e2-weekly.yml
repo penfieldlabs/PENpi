@@ -21,6 +21,8 @@ jobs:
     env:
       E2_WORKERS: "4"
       E2_OUT: ${{ github.workspace }}/e2-results
+      # The fixed scratch path the gate uses too (run-e2.sh's default): request sizes depend on its length.
+      E2_SCRATCH: /tmp/penpi-e2-scratch
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

@@ -82,3 +82,61 @@ load leaves PENpi running without the conscious layer. Both are reported at
   until they re-run `scripts/penpi-global.sh install` or remove it; until then pi loads
   both copies, and the stock copy still reads project config. PENpi warns on every
   session start while that is the case.
+
+## Addendum (0.6.0): Pi's built-in MCP and pi-mcp-adapter 7.x
+
+Pi 1.4 ships a built-in MCP extension. It reads `<agentDir>/mcp.json` and, in a trusted
+project, `<project>/.pi/mcp.json`, and it connects the servers other extensions register
+with `pi.registerMcpServer()`. Pi leaves it out when another extension registers `/mcp`.
+Adapter 2.12.1 always registered `/mcp`. Adapter 7.x, under a host-supplied config,
+registers `/mcp` only when Pi has no `registerMcpServer`; otherwise it leaves `/mcp` and
+the global file to Pi and connects the servers other extensions register. Under PENpi
+that would load Pi's built-in MCP next to the adapter. It would start the servers in a
+trusted project's `.pi/mcp.json` and the servers other extensions register, which is what
+this decision rules out. It would also read the `penfield` entry in the global `mcp.json`:
+Pi 1.4 rejects that entry's `auth` form and reports a config error, and a Pi that accepted
+it would connect to Penfield a second time.
+
+PENpi therefore installs the adapter on a view of its `ExtensionAPI` without
+`registerMcpServer`, `unregisterMcpServer` and `getMcpServers` (`withoutPiMcpServers` in
+index.ts). The adapter then registers `/mcp`, Pi leaves its built-in MCP out, and no MCP
+extension connects servers that other extensions register; Pi reports each of those as
+registered but not connected. Nothing is written to the user's settings. The integration
+suite loads PENpi the way Pi's startup does, with the built-in extensions, in a trusted
+project whose `.pi/mcp.json` defines a server and next to an extension that registers one:
+the built-in MCP is not loaded, Pi's MCP client never connects to Penfield, neither server
+runs, and the registered one is reported. A live run of the `pi` binary showed the same,
+and with the change undone it showed Pi's built-in MCP owning `/mcp` and both servers
+running.
+
+PENpi also passes its own defaults for the adapter's `settings` (`PENPI_ADAPTER_SETTINGS`
+in mcp-config.ts), which the global `mcp.json`'s `settings` override key by key:
+`allowInstall` and `allowScriptToolSave` off (the adapter refuses both actions under a
+supplied config, and this stops the `mcp` tool offering them), `semanticSearch` off (a
+classifier model call outside the context engine's and the bench's accounting), and
+`sampling` off. Elicitation is left to the adapter: on with a UI, off without one.
+
+Three more points from the external review of PR #42 (0.6.0):
+
+- **Server defaults.** Adapter 7.x answers a server's `roots/list` with the session's
+  working directory, and runs MCP Tasks, unless a server sets `roots: false` or
+  `tasks: false`. PENpi sets both on the `penfield` entry and, as defaults, on every server
+  in the global `mcp.json` (`PENPI_SERVER_DEFAULTS`); the file may set either per server,
+  except for `penfield`.
+- **The adapter's event bus.** Adapter 7.x also answers requests from any extension on
+  `pi.events`: register a server and connect it on use, read one back, call any MCP tool
+  (Penfield's included), and open a raw MCP session to a configured server. PENpi uses
+  none of them. The `ExtensionAPI` view the adapter gets subscribes nothing on those four
+  channels (`BLOCKED_ADAPTER_EVENTS`), so such a request gets no answer; the adapter's
+  status and tool-approval events pass. So no MCP server from another extension is
+  connected, whether it comes through `pi.registerMcpServer()` or the adapter's bus, and
+  no extension calls Penfield's tools through the adapter. A probe extension in the
+  integration suite sends all four and gets no answer, no server and no tool call.
+- **A failed adapter.** Pi leaves its built-in MCP out only because an extension registers
+  `/mcp`. If the adapter does not load, or its config cannot be built, PENpi registers a
+  `/mcp` of its own that says what failed, so the built-in stays out and a trusted
+  project's `.pi/mcp.json` still starts nothing. It writes no settings. The integration
+  suite forces the adapter import to fail in a trusted project and checks both.
+
+`pi mcp list` and Pi's other `mcp` subcommands are a separate path: Pi runs its built-in
+MCP handler for them before any extension loads (KNOWN_LIMITATIONS.md).

@@ -1,6 +1,7 @@
 # E2: the context engine against real tokenizers
 
-E2 runs long, realistic agent sessions through stock Pi v1.1.0 (`AgentSession`, `test/suite/harness.ts`,
+E2 runs long, realistic agent sessions through stock Pi at the version the fork is on (v1.4.0 from 0.6.0:
+`AgentSession`, `test/suite/harness.ts`,
 the faux provider from `packages/ai/src/providers/faux.ts`) with a context engine installed as an
 extension, and puts a provider simulator in front of the faux model that counts every request with a
 **real tokenizer** (OpenAI o200k_base, GLM-5.3-Flash) the way a server would: chat template, tool
@@ -243,9 +244,9 @@ and the lag is at most `maxLag`, and PENpi's version (the root `package.json`) i
   (`run-e2.sh` with no selection). In any other set, such as a selection or the misconfigured runs, an entry whose
   run is not there is reported as not run. Anything an entry does not cover fails as before.
 
-Today's entry: research.glm.32k.silent-messages, C6 lag 4 (limit 3), until 0.6.0 (renewed in 0.5.1: the upstream
-merge planned for 0.6.0 changes E2's corpus). It is the same at this checkout's path length and at the GitHub
-runner's.
+Today's entry: data.o200k.1m.silent-messages, C6 lag 4 (limit 3), until 0.7.0. It is new with the upstream v1.4.0
+corpus: 0.6.0's engine on the v1.1.0 corpus passes the run at lag 2, as 0.5.1 does. The earlier entry,
+research.glm.32k.silent-messages (C6 lag 4, from 0.5.0), was deleted in 0.6.0, whose corpus no longer makes it fail.
 
 ## C3 trend
 
@@ -286,11 +287,14 @@ differ by a few tokens between repetitions. Re-running four 32k configurations w
 (CJK and data, GLM, reject and silent) reproduced every verdict, cut count, truncation count and rejection
 count; per-request sizes differed by at most 63 tokens.
 
-The checkout's path is part of every request: the sessions' working directory is under the checkout
-(`.cache/scratch`), and Pi puts it in the system prompt. A checkout at another path length gives other request
-sizes. RC5's matrix from a 91-character scratch path and from the GitHub runner's 99 characters gave the same
-verdict, failing criteria and silent-truncation record in all 96 runs; the largest request per run differed by
--287 to +69 tokens.
+The scratch path is part of every request: the sessions' working directory is under it, and Pi puts it in the
+system prompt, so another path length gives other request sizes. RC5's matrix from a 91-character scratch path and
+from the GitHub runner's 99 characters gave the same verdict, failing criteria and silent-truncation record in all
+96 runs; the largest request per run differed by -287 to +69 tokens. In 0.6.0 a run near a limit did differ:
+`data.o200k.1m.silent-messages` failed at the gate's 86-character scratch path and passed on a reviewer's checkout
+with a longer path. So `run-e2.sh` uses one fixed scratch path, `/tmp/penpi-e2-scratch`, wherever the checkout is;
+CI and the gate use it too. `E2_SCRATCH` overrides it (one run at a time per path). Running the `.e2.ts` files with
+vitest directly still uses `.cache/scratch` under the checkout.
 
 The default matrix uses seed 1. Other seeds give other sessions (other tasks, sizes and content), which
 is a cheap robustness check of borderline behaviour, for example the silent modes on the fast mixes
@@ -324,4 +328,4 @@ so 88 of 90 pass today).
 | `summarize.mjs` | summary tables and comparison; exit code |
 | `known-failures.json`, `known-failures.ts` | accepted known failures and the rule that applies them (see Known failures) |
 | `known-failures.test.ts` | unit test of the rule and the summary's counting (runs in `npm test`) |
-| `vitest.config.ts`, `tsconfig.json` | config (temp files and Vite cache under `.cache/scratch`) |
+| `vitest.config.ts`, `tsconfig.json` | config (temp files and Vite cache under `E2_SCRATCH`, else `.cache/scratch`) |

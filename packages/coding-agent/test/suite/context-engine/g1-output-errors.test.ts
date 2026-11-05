@@ -58,7 +58,7 @@ describe("G1: provider error classes", () => {
 	const table: Array<Record<string, unknown>> = [];
 	for (const fixture of ERROR_FIXTURES) {
 		it(`g1 classify ${fixture.id} (${fixture.provider}) as ${fixture.expected.class}`, () => {
-			const info = classifyProviderError(fixture.text);
+			const info = classifyProviderError(fixture.text, fixture.piProvider);
 			table.push({
 				id: fixture.id,
 				provider: fixture.provider,
