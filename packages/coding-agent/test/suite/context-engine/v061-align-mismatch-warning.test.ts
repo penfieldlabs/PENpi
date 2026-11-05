@@ -7,7 +7,7 @@
  */
 
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ExtensionAPI } from "../../../src/core/extensions/types.ts";
 import { createHarness, createTestUiContext, type Harness } from "../harness.ts";
 import { createContextEngine, newStats } from "./engine.ts";
@@ -62,8 +62,37 @@ describe("0.6.1: the engine says when it steps aside", () => {
 		expect(stats.alignMismatches).toBe(3);
 		expect(warnings).toHaveLength(1);
 		expect(warnings[0]).toContain("the engine is not managing the window");
-		expect(warnings[0]).toContain(`another extension adding or changing messages in Pi's "context" event`);
+		expect(warnings[0]).toContain(`another extension adding or removing messages in Pi's "context" event`);
 		expect(doctor).toContain("requests not matching the engine's record: 3 this session, sent uncut");
+	});
+
+	it("without a UI (print and json mode): the warning goes to stderr, once (0.6.1 review, N1)", async () => {
+		const written: string[] = [];
+		const spy = vi.spyOn(process.stderr, "write").mockImplementation((chunk: string | Uint8Array) => {
+			written.push(String(chunk));
+			return true;
+		});
+		try {
+			const stats = newStats();
+			const harness = await createHarness({
+				models: [{ id: "faux-32k", contextWindow: 32_000, maxTokens: 4_000 }],
+				settings: { compaction: { enabled: false } },
+				extensionFactories: [workExtension, appender, createContextEngine({ stats })],
+			});
+			harnesses.push(harness);
+			await harness.session.bindExtensions({}); // no UI context: hasUI is false, notify does nothing
+			const model = scriptedModel(harness);
+			for (let p = 0; p < 3; p++) {
+				model.push(finalTurn(`done ${p}`));
+				await harness.session.prompt(`task ${p}`);
+			}
+			expect(stats.alignMismatches).toBe(3);
+		} finally {
+			spy.mockRestore();
+		}
+		const lines = written.filter((w) => w.includes("do not match the engine's record"));
+		expect(lines).toHaveLength(1);
+		expect(lines[0]).toMatch(/^context-engine: .*the engine is not managing the window.*\n$/);
 	});
 
 	it("without one: no warning, and doctor says none", async () => {

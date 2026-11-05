@@ -118,7 +118,7 @@ describe("engine settings (penpi block)", () => {
 		const { options, warnings } = read({ lowWater: 0.9, highWater: 0.5 });
 		expect(options).toEqual({});
 		expect(warnings).toEqual([
-			"ignoring penpi.lowWater=0.9 and penpi.highWater=0.5: lowWater must be below highWater; using the defaults for both (0.45 and 0.75)",
+			"penpi.lowWater=0.9 and penpi.highWater=0.5 contradict each other (lowWater must be below highWater): both fall back to the defaults (0.45 and 0.75)",
 		]);
 		// One value set alone is checked against the other's default.
 		expect(read({ lowWater: 0.8 }).warnings[0]).toContain("penpi.lowWater=0.8 and penpi.highWater=0.75");
@@ -132,7 +132,7 @@ describe("engine settings (penpi block)", () => {
 		const { options, warnings } = read({ ratioFloor: 3, ratioCeiling: 2 });
 		expect(options).toEqual({});
 		expect(warnings).toEqual([
-			"ignoring penpi.ratioFloor=3 and penpi.ratioCeiling=2: ratioFloor must be at most ratioCeiling; using the defaults for both (0.8 and 6)",
+			"penpi.ratioFloor=3 and penpi.ratioCeiling=2 contradict each other (ratioFloor must be at most ratioCeiling): both fall back to the defaults (0.8 and 6)",
 		]);
 		expect(read({ ratioFloor: 2, ratioCeiling: 2 }).warnings).toEqual([]);
 	});

@@ -573,11 +573,12 @@ export function installPlanner(core: EngineCore): void {
 				// 0.6.1: say so, once per session. Until now this was only counted, and the engine stepped aside unseen.
 				if (!st.alignWarned) {
 					st.alignWarned = true;
-					ctx.ui.notify(
+					const warning =
 						`context-engine: this request's ${messages.length} messages do not match the engine's record of the session (${idx.items.length} entries), so they were sent uncut: the engine is not managing the window while this lasts, and the request can outgrow it. ` +
-							`The likely cause is another extension adding or changing messages in Pi's "context" event; see KNOWN_LIMITATIONS. /${opts.commandName} doctor counts these requests.`,
-						"warning",
-					);
+						`The likely cause is another extension adding or removing messages in Pi's "context" event; see KNOWN_LIMITATIONS. /${opts.commandName} doctor counts these requests.`;
+					// 0.6.1 review (N1): in print and json mode the UI drops notifications, so the warning goes to stderr.
+					if (ctx.hasUI) ctx.ui.notify(warning, "warning");
+					else process.stderr.write(`${warning}\n`);
 				}
 				// D25 N2: Pi's messages are sent; a shrink still re-caps the section in them for this request. The
 				// cap last seen is kept, so the next aligned request sees the shrink and makes the recorded cut.

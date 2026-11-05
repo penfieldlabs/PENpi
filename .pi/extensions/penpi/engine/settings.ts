@@ -303,8 +303,9 @@ export function engineOptionsFromSettings(
 		const high = options[upper] ?? (DEFAULTS[upper] as number);
 		const ok = relation === "below" ? low < high : low <= high;
 		if (ok) continue;
+		// 0.6.1 review (N4): the pair falls back, not only the value that was set.
 		warn(
-			`ignoring ${label(lower)}=${low} and ${label(upper)}=${high}: ${lower} must be ${relation} ${upper}; using the defaults for both (${DEFAULTS[lower]} and ${DEFAULTS[upper]})`,
+			`${label(lower)}=${low} and ${label(upper)}=${high} contradict each other (${lower} must be ${relation} ${upper}): both fall back to the defaults (${DEFAULTS[lower]} and ${DEFAULTS[upper]})`,
 		);
 		delete options[lower];
 		delete options[upper];

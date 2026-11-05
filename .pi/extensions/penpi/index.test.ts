@@ -639,8 +639,12 @@ describe("/penpi login command", () => {
 			`Revoked the login at Penfield and removed the stored login at ${store} (access and refresh token)`,
 		);
 		// It says what stops, and what does not: other sessions stop; a token already handed out works until it expires.
-		expect(said).toContain("your other PENpi sessions stop at their next request");
-		expect(said).toContain("An access token already handed out keeps working until it expires (up to 24 hours)");
+		expect(said).toContain(
+			"Stops now: PENpi's own use of Penfield in this session, and in your other PENpi sessions at their next request (they ask for `/penpi login`); any refresh with the old refresh token, which Penfield has revoked.",
+		);
+		expect(said).toContain(
+			"Keeps working: a Penfield connection the MCP tools already have open, here or in another session, keeps its bearer until it reconnects (it then has no login) or the access token expires. Penfield does not end an access token on revocation, so that is up to 24 hours.",
+		);
 		// Again: nothing stored, and it says so.
 		await commands.penpi("logout", ctx);
 		expect(notifies.at(-1)?.msg).toContain(`no stored Penfield login at ${store}`);
@@ -660,6 +664,7 @@ describe("/penpi login command", () => {
 		expect(last?.level).toBe("warning");
 		expect(last?.msg).toContain("Could not reach Penfield to revoke the login (HTTP 503 temporarily_unavailable)");
 		expect(last?.msg).toContain("the refresh token stays valid on the server until it expires or is used");
+		expect(last?.msg).not.toContain("which Penfield has revoked");
 		rmSync(dir, { recursive: true, force: true });
 	});
 

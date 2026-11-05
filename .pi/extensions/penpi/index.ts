@@ -464,14 +464,15 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps): void | Promise<voi
 						"  An API key is configured (settings or PENPI_PENFIELD_API_KEY); there is no stored login to revoke, and the key is not removed, so PENpi logs in again with it at the next start.",
 					);
 				else {
+					// 0.6.1 review (N2): exactly what stops and what keeps working.
 					lines.push(
-						"  PENpi stops using Penfield here, and your other PENpi sessions stop at their next request: they ask for `/penpi login` instead of refreshing.",
+						`  Stops now: PENpi's own use of Penfield in this session, and in your other PENpi sessions at their next request (they ask for \`/penpi login\`)${revocation.kind === "revoked" ? "; any refresh with the old refresh token, which Penfield has revoked" : ""}.`,
 					);
-					// 0.6.1: Penfield ends the refresh token, not an access token already handed out; the adapter offers PENpi
-					// no handle on its connections, so an open one is not closed either.
+					// Penfield ends the refresh token, not an access token already handed out; the adapter offers PENpi no
+					// handle on its connections, so an open one is not closed either.
 					if (existed)
 						lines.push(
-							"  An access token already handed out keeps working until it expires (up to 24 hours): the MCP tools' open Penfield connection, here or in another session, keeps working until then, or until it reconnects or its session ends.",
+							"  Keeps working: a Penfield connection the MCP tools already have open, here or in another session, keeps its bearer until it reconnects (it then has no login) or the access token expires. Penfield does not end an access token on revocation, so that is up to 24 hours.",
 						);
 				}
 				ctx.ui.notify(lines.join("\n"), revocation.kind === "failed" ? "warning" : "info");
