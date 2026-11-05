@@ -40,6 +40,10 @@ Husky runs the gate on commit; CI runs the same on push/PR.
 
 - Exact-pin every external dependency ([ADR 0014](docs/adr/0014-pin-third-party-dependencies.md));
   bump deliberately and re-run the gate.
+- Install or bump `pi-mcp-adapter` with
+  `npm install --legacy-peer-deps --save-exact pi-mcp-adapter@<version> -w .pi/extensions/penpi --include-workspace-root`.
+  Its peer range for `@earendil-works/pi-ai` makes a plain `npm install` drop the workspace link and install a second
+  `pi-ai` from the registry. `npm run check:lockfile-versions` fails if a registry `pi-ai` ever reaches the lockfile.
 
 ## Where things live
 

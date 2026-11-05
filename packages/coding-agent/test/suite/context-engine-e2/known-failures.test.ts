@@ -101,16 +101,17 @@ describe("E2 known failures", () => {
 		expect(validateKnownFailures(loadKnownFailures())).toEqual([]);
 	});
 
-	it("the repository's entry for its run is KNOWN, not EXPIRED, at PENpi 0.5.1 and at this version", () => {
-		// 0.5.1: renewed until 0.6.0, whose upstream merge changes E2's corpus (C6 is unchanged).
+	it("the repository's entry for its run is KNOWN at 0.6.0 and EXPIRED at 0.7.0", () => {
+		// 0.6.0: data.o200k.1m.silent-messages, new with the upstream v1.4.0 corpus (the code on the v1.1.0 corpus
+		// passes at lag 2), accepted until 0.7.0.
 		const entries = loadKnownFailures();
-		const r = run(RUN, { failing: ["C6"], lag: 4 });
-		expect(knownFailure(r, entries, "0.5.1")?.status).toBe("known");
-		expect(knownFailure(r, entries, "0.6.0")?.status).toBe("expired");
-		const s = summary([r], entries);
-		expect(s.code).toBe(0);
-		expect(s.md).toContain(`KNOWN 1 (${RUN} C6 lag 4, until 0.6.0)`);
-		expect(s.md).not.toContain("EXPIRED");
+		expect(entries).toHaveLength(1);
+		const r = run("data.o200k.1m.silent-messages", { failing: ["C6"], lag: 4 });
+		expect(knownFailure(r, entries, "0.6.0")?.status).toBe("known");
+		expect(knownFailure(r, entries, "0.7.0")?.status).toBe("expired");
+		expect(
+			knownFailure(run("data.o200k.1m.silent-messages", { failing: ["C6"], lag: 5 }), entries, "0.6.0")?.status,
+		).not.toBe("known");
 	});
 
 	it("covers its run failing C6 alone within the bound, below its version", () => {

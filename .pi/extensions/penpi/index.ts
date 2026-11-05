@@ -199,7 +199,8 @@ export function defaultDeps(): PenpiDeps {
  * Load the real adapter and install it on PENpi's own ExtensionAPI.
  * `createMcpAdapter({ config })` makes the adapter skip every config file it would
  * otherwise read, project files included. Imported lazily so that unit tests, which
- * load index.ts without Pi's loader, never evaluate the adapter.
+ * load index.ts without Pi's loader, never evaluate the adapter. `pi` is the API as
+ * withoutPiMcpServers gives it (penpiCore wraps it).
  */
 async function installEmbeddedAdapter(pi: ExtensionAPI, config: AdapterConfig): Promise<void> {
 	// Resolved from this file's REAL path. penpi-global.sh installs PENpi as a symlink
@@ -213,6 +214,74 @@ async function installEmbeddedAdapter(pi: ExtensionAPI, config: AdapterConfig): 
 		createMcpAdapter: (options: { config: AdapterConfig }) => (pi: ExtensionAPI) => void | Promise<void>;
 	};
 	await adapter.createMcpAdapter({ config })(pi);
+}
+
+/**
+ * `/mcp` when the embedded adapter did not load (0.6.0). Pi 1.4 leaves its built-in MCP out only because an extension
+ * registers `/mcp`; without one it loads it, and the built-in starts the servers in a trusted project's `.pi/mcp.json`
+ * (ADR 0026). This command keeps the built-in out and tells the user what failed. It writes no settings.
+ */
+function registerUnavailableMcp(pi: ExtensionAPI, problem: string): void {
+	pi.registerCommand("mcp", {
+		description: "MCP is unavailable in this session: PENpi's MCP adapter did not load",
+		handler: async (_args, ctx) => {
+			ctx.ui.notify(
+				`PENpi: MCP is unavailable in this session: ${problem}. No MCP server runs, Penfield's tools included; ` +
+					"Pi's built-in MCP stays off so a project's .pi/mcp.json starts nothing. Reinstall PENpi's " +
+					"dependencies (npm ci in the PENpi checkout) and restart pi.",
+				"warning",
+			);
+		},
+	});
+}
+
+/** The ExtensionAPI members for MCP servers that other extensions register (Pi 0.99+). */
+const PI_MCP_SERVER_MEMBERS = new Set<PropertyKey>(["registerMcpServer", "unregisterMcpServer", "getMcpServers"]);
+
+/**
+ * pi-mcp-adapter 7.x's requests from other extensions on `pi.events`: register a server and connect it on use, read
+ * one back, call any MCP tool (Penfield's included), and open a raw MCP session to a configured server. PENpi uses
+ * none of them, and the adapter only answers them, so it is never subscribed to these channels.
+ */
+export const BLOCKED_ADAPTER_EVENTS: ReadonlySet<string> = new Set([
+	"pi-mcp-adapter:runtime-register:v1",
+	"pi-mcp-adapter:runtime-snapshot:v1",
+	"pi-mcp-adapter:runtime-tool-call:v1",
+	"pi-mcp-adapter:protocol:v1",
+]);
+
+/**
+ * PENpi's ExtensionAPI as the embedded adapter sees it: without the MCP-server members, as on a Pi
+ * that has no MCP of its own (ADR 0026). pi-mcp-adapter 7.x checks for `pi.registerMcpServer`, and
+ * where it finds it under a host-supplied config it leaves `/mcp` to Pi and connects the servers
+ * other extensions register. Pi then keeps its built-in MCP loaded, which starts the servers in a
+ * trusted project's `.pi/mcp.json` and reads the global mcp.json (Pi 1.4 rejects the penfield
+ * entry's auth form; a Pi that accepted it would connect to Penfield twice). Without these members the
+ * adapter registers `/mcp`, which makes Pi leave its built-in MCP out, and does not connect servers
+ * from other extensions; Pi reports each of those as registered but not connected.
+ *
+ * The same holds for the adapter's own event-bus requests (BLOCKED_ADAPTER_EVENTS): its `pi.events.on` for those
+ * channels subscribes nothing, so a request another extension emits gets no answer. Its other events (status,
+ * tool approval) pass. `onCommand` sees each command the adapter registers, so PENpi knows whether `/mcp` exists.
+ */
+export function withoutPiMcpServers(pi: ExtensionAPI, onCommand?: (name: string) => void): ExtensionAPI {
+	const events: ExtensionAPI["events"] = {
+		emit: (channel, data) => pi.events.emit(channel, data),
+		on: (channel, handler) => (BLOCKED_ADAPTER_EVENTS.has(channel) ? () => {} : pi.events.on(channel, handler)),
+	};
+	const registerCommand: ExtensionAPI["registerCommand"] = (name, options) => {
+		onCommand?.(name);
+		return pi.registerCommand(name, options);
+	};
+	return new Proxy(pi, {
+		get: (target, key, receiver) => {
+			if (PI_MCP_SERVER_MEMBERS.has(key)) return undefined;
+			if (key === "events") return events;
+			if (key === "registerCommand") return registerCommand;
+			return Reflect.get(target, key, receiver);
+		},
+		has: (target, key) => !PI_MCP_SERVER_MEMBERS.has(key) && Reflect.has(target, key),
+	});
 }
 
 /**
@@ -257,6 +326,8 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps): void | Promise<voi
 	// Per-instance state (this closure, not module-level) so penpiCore is reentrant
 	// and the DI boundary is clean — no shared client/status across instances.
 	let client: PenfieldClient | undefined;
+	/** 0.6.0: the startup token fetch (publishTokenBeforeAdapter) while it may still be running; see session_start. */
+	let startupToken: Promise<unknown> | undefined;
 	const status: PenpiStatus = {};
 	/**
 	 * The orientation briefing, set by orient(). It goes into the system prompt as one section on every run
@@ -520,7 +591,8 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps): void | Promise<voi
 				readFailed = true;
 				recordRefresh("failed", errLine(err), errLine(err));
 				// 0.5.2: the engine log is opt-in, and doctor helps only if someone looks: say it once per session.
-				if (!warnedRefreshFailure) {
+				// 0.6.0: not while healing a failed orientation, which the user was already told about at start.
+				if (!warnedRefreshFailure && !healing) {
 					warnedRefreshFailure = true;
 					ctx.ui.notify(
 						`PENpi: a memory refresh failed (${errLine(err)}); /penpi doctor shows the details.`,
@@ -567,6 +639,14 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps): void | Promise<voi
 					"warning",
 				);
 			}
+		}
+
+		// 0.6.0: a startup token fetch that outlived STARTUP_TOKEN_WAIT_MS (a slow refresh) finishes first, so this
+		// session's client reads the token it stored instead of sending the same refresh token a second time.
+		if (startupToken) {
+			const pending = startupToken;
+			startupToken = undefined;
+			await pending;
 		}
 
 		// Fresh connection per session_start (handles reload/resume/fork).
@@ -655,16 +735,25 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps): void | Promise<voi
 	// own orientation and the context engine do not depend on the adapter.
 	if (deps.installAdapter) {
 		const installAdapter = deps.installAdapter;
+		let adapterRegisteredMcp = false;
+		const adapterPi = withoutPiMcpServers(pi, (name) => {
+			if (name === "mcp") adapterRegisteredMcp = true;
+		});
+		// 0.6.0: without the adapter's `/mcp`, Pi 1.4 would load its built-in MCP (a trusted project's .pi/mcp.json).
+		const unavailable = (problem: string): void => {
+			adapterProblems.push(`${problem}; no MCP server runs, Penfield's included`);
+			if (!adapterRegisteredMcp) registerUnavailableMcp(pi, problem);
+		};
 		let built: ReturnType<typeof buildAdapterConfig>;
+		let adapterCfg: PenfieldConfig;
 		try {
 			const lifecycle = resolveMcpLifecycle();
 			const cfg = resolvePenfieldConfig(undefined, penpiDevFromArgv() ? "dev" : undefined);
 			built = buildAdapterConfig(cfg, lifecycle ? { lifecycle } : {});
 			adapterPenfieldUrl = cfg.mcpUrl;
+			adapterCfg = cfg;
 		} catch (err) {
-			adapterProblems.push(
-				`could not build the MCP adapter config (${errLine(err)}); Penfield/web tools unavailable`,
-			);
+			unavailable(`could not build the MCP adapter config (${errLine(err)})`);
 			return;
 		}
 		if (built.warning) {
@@ -673,12 +762,44 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps): void | Promise<voi
 			);
 		}
 		return (async () => {
+			await publishTokenBeforeAdapter(built.config, adapterCfg);
 			try {
-				await installAdapter(pi, built.config);
+				await installAdapter(adapterPi, built.config);
 			} catch (err) {
-				adapterProblems.push(`could not load pi-mcp-adapter (${errLine(err)}); Penfield/web tools unavailable`);
+				unavailable(`could not load pi-mcp-adapter (${errLine(err)})`);
 			}
 		})();
+	}
+
+	/**
+	 * 0.6.0: an `eager` or `keep-alive` penfield entry makes the adapter connect while extensions load, before
+	 * session_start publishes `PENFIELD_JWT` (the race in mcp-config.ts's header), so its first connect went out with
+	 * no token and got a 401. PENpi now publishes the token first, from the stored login (refreshing an expired access
+	 * token, never prompting). Without one, the entry is `lazy` for this session, so the adapter never connects
+	 * without a token; session_start's orientation reports the missing login as before.
+	 */
+	async function publishTokenBeforeAdapter(config: AdapterConfig, cfg: PenfieldConfig): Promise<void> {
+		const entry = config.mcpServers.penfield as { lifecycle?: string } | undefined;
+		if (!entry || (entry.lifecycle !== "eager" && entry.lifecycle !== "keep-alive")) return;
+		let token: string | undefined;
+		try {
+			const tokens = deps.makeClient(cfg);
+			if (tokens.hasNonInteractiveAuth()) {
+				let timer: ReturnType<typeof setTimeout> | undefined;
+				const pending = tokens.getAccessToken();
+				startupToken = pending.catch(() => undefined);
+				token = await Promise.race([
+					pending,
+					new Promise<undefined>((resolve) => {
+						timer = setTimeout(() => resolve(undefined), STARTUP_TOKEN_WAIT_MS);
+					}),
+				]).finally(() => clearTimeout(timer));
+			}
+		} catch {
+			token = undefined;
+		}
+		if (token) process.env[JWT_ENV] = token;
+		else config.mcpServers.penfield = { ...entry, lifecycle: "lazy" };
 	}
 
 	// --- orientation + token sharing (closures over client/status/deps) ---
@@ -825,6 +946,9 @@ export function disarmDuplicateGuard(): void {
  */
 /** D21: the longest shutdown waits for a Penfield read still running (a refresh) before disconnecting. */
 const REFRESH_SHUTDOWN_WAIT_MS = 2_000;
+
+/** 0.6.0: the longest startup waits for a token before an eager adapter loads (a refresh of an expired one). */
+const STARTUP_TOKEN_WAIT_MS = 10_000;
 
 /**
  * 0.5.2: the refresh's comparison key. Penfield's reflect result is JSON whose `top_memories` carry a `score` that

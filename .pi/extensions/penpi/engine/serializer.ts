@@ -65,12 +65,41 @@ export function isReasoningDetails(signature: string | undefined): boolean {
 	}
 }
 
+/** transform-messages.ts (Pi 1.4.0): what an error tool result with images is sent with besides its own blocks. */
+export const ERROR_TOOL_IMAGE_PLACEHOLDER = "(image attached after the tool results)";
+
+/**
+ * 0.6.0 (Pi 1.4.0, splitErrorToolResultImages): anthropic-messages, and bedrock-converse-stream for a Claude model,
+ * reject images in an error tool result. Pi sends the result with each run of images replaced by a placeholder line,
+ * and the images after all tool results under a caption naming the call. The images are counted in messageTokens;
+ * this is the placeholders and the caption. (Bedrock's check also reads the model's name; the engine sees its id,
+ * which carries "claude" for Claude models.)
+ */
+function errorImageCaptionTokens(message: AgentMessage, target: SerializeTarget | undefined): number {
+	if (!target) return 0;
+	const api = target.converter ?? target.api;
+	const claudeOnBedrock = api === "bedrock-converse-stream" && /claude/i.test(target.modelId);
+	if (api !== "anthropic-messages" && !claudeOnBedrock) return 0;
+	const result = message as { isError?: boolean; content?: unknown; toolCallId?: string; toolName?: string };
+	if (!result.isError || !Array.isArray(result.content)) return 0;
+	let runs = 0;
+	let previousImage = false;
+	for (const block of result.content as Block[]) {
+		const image = block.type === "image";
+		if (image && !previousImage) runs++;
+		previousImage = image;
+	}
+	if (runs === 0) return 0;
+	const caption = `Images from the error result of tool call ${result.toolCallId} (${result.toolName}):`;
+	return runs * textTokens(ERROR_TOOL_IMAGE_PLACEHOLDER) + textTokens(caption);
+}
+
 /**
  * Estimated tokens of one message as Pi serializes it for `target`, and the part of them that is
- * replayed reasoning. Rules (packages/ai/src/api, Pi 1.1.0):
+ * replayed reasoning. Rules (packages/ai/src/api, Pi 1.4.0):
  *   every modelled API (transform-messages.ts): an assistant message that ended in error or was aborted
- *     is not sent; from another model, redacted thinking is dropped and other non-empty thinking is
- *     sent as plain text (counted, not reasoning); empty thinking without a same-model signature is
+ *     is not sent; thinking from another model is dropped, redacted or not (Pi 1.1.0 sent non-empty
+ *     thinking from another model as plain text); empty thinking without a same-model signature is
  *     dropped.
  *   openai-completions: blank text is dropped; thinking is sent only as reasoning_details (a signature
  *     holding them), as the reasoning field its signature names, or as text when
@@ -79,6 +108,8 @@ export function isReasoningDetails(signature: string | undefined): boolean {
  *   anthropic-messages: blank text is dropped; thinking is sent (signed, or as text when unsigned);
  *     redacted thinking is sent as its opaque payload; a message with no blocks left is not sent.
  *   bedrock-converse-stream: as anthropic; a message with no blocks left is not sent.
+ *   tool results: as messageTokens; an error result with images, for anthropic-messages and Claude on Bedrock, adds
+ *     a placeholder line per run of images and a caption naming the call (errorImageCaptionTokens).
  *   user messages (all three): blank text is dropped; a message with nothing left is not sent
  *     (Bedrock sends a placeholder: counted as the message overhead).
  *   any other API: every block counts (messageTokens), its thinking as reasoning.
@@ -90,6 +121,7 @@ export function serializedParts(
 ): { tokens: number; reasoning: number; asText?: number } {
 	const all = messageTokens(message);
 	const role = message.role;
+	if (role === "toolResult") return { tokens: all + errorImageCaptionTokens(message, target), reasoning: 0 };
 	if (role !== "assistant" && role !== "user") return { tokens: all, reasoning: 0 };
 	const content = (message as { content?: unknown }).content;
 	const modelled = !!target && (MODELLED_APIS as readonly string[]).includes(target.converter ?? target.api);
@@ -166,11 +198,12 @@ export function serializedParts(
 			tools += textTokens(`${b.name} ${JSON.stringify(b.arguments ?? {})}`) + 8;
 			kept++;
 		} else if (b.type === "thinking") {
+			// transformMessages (Pi 1.4.0): thinking from another model is dropped, redacted or not.
+			if (!sameModel) continue;
 			const thinking = b.thinking ?? "";
 			const signature = b.thinkingSignature;
 			const signed = !!signature && signature.trim().length > 0;
 			if (b.redacted) {
-				if (!sameModel) continue;
 				// openai-completions has no redacted form; the others replay the opaque payload.
 				if (api === "openai-completions") continue;
 				// D4: anthropic-messages sends the block even without a payload; count when unsure.
@@ -178,13 +211,6 @@ export function serializedParts(
 					reasoning += textTokens(signature ?? "");
 					kept++;
 				}
-				continue;
-			}
-			if (!sameModel) {
-				// transformMessages: non-empty thinking from another model becomes plain text.
-				if (thinking.trim().length === 0) continue;
-				text += textTokens(thinking);
-				kept++;
 				continue;
 			}
 			if (thinking.trim().length === 0) {

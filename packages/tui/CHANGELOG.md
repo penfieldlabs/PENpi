@@ -1,5 +1,42 @@
 # Changelog
 
+## [1.4.0] - 2026-10-21
+
+### Added
+
+- Added detection of the Rex terminal (`TERM_PROGRAM=rex`) with OSC 8 hyperlinks, truecolor, and Kitty images. Links previously fell back to the `text (url)` format ([#11131](https://github.com/earendil-works/pi/issues/11131), [#11150](https://github.com/earendil-works/pi/pull/11150) by [@petrroll](https://github.com/petrroll), [#11183](https://github.com/earendil-works/pi/pull/11183) by [@nihaals](https://github.com/nihaals))
+
+### Fixed
+
+- Fixed an unclosed `$$` display-math block swallowing or corrupting every Markdown table after it. A block-math token no longer spans a GFM table, and the streaming pending-math fallback no longer treats a following table as pending math ([#11159](https://github.com/earendil-works/pi/issues/11159))
+- Fixed Markdown bold and italic not rendering next to CJK punctuation ([#10730](https://github.com/earendil-works/pi/pull/10730) by [@theBucky](https://github.com/theBucky))
+- Fixed terminal modes (mouse tracking, focus reporting, Kitty keyboard protocol, bracketed paste, alternate screen) staying enabled when the process exits without calling `stop()`. A process `exit` handler now restores them synchronously ([#11170](https://github.com/earendil-works/pi/issues/11170))
+- Fixed `@` file autocomplete returning no results for queries containing regex metacharacters such as `[` or `(` ([#10972](https://github.com/earendil-works/pi/issues/10972))
+
+## [1.3.0] - 2026-10-15
+
+## [1.2.0] - 2026-10-12
+
+### Breaking Changes
+
+- `Editor.render()` and `Input.render()` now wrap the drawn cursor in zero-width APC markers instead of emitting `\x1b[7m` directly. TUI renderers resolve them; code that renders these components outside a TUI must strip them, for example with `stripTerminalSequences()`
+
+### Added
+
+- Added `renderFakeCursor()`. Components wrap their drawn cursor with it, and the TUI renders it in reverse video, or omits it after `CURSOR_MARKER` when `showHardwareCursor` is enabled
+
+### Changed
+
+- Changed `showHardwareCursor` to show only the terminal cursor: focused `Editor` and `Input` components no longer draw a reverse-video cursor when it is enabled. This avoids terminals that extend edge cell colors into the window padding stretching the drawn cursor at the first or last column
+
+### Fixed
+
+- Fixed overlay compositing dropping `CURSOR_MARKER` when an overlay ends directly left of the cursor, which lost the hardware cursor position
+- Fixed focused fullscreen overlays blocking mouse-wheel scrolling of the transcript. Wheel events that no component handles now scroll the transcript instead of reaching the focused overlay's `handleInput` as raw input; overlays that scroll with the wheel must implement `handleMouse` ([#10769](https://github.com/earendil-works/pi/issues/10769))
+- Fixed fragmented terminal color replies leaking hex values into the prompt and triggering the external editor via their BEL terminator (related reports: [#10256](https://github.com/earendil-works/pi/issues/10256), [#10657](https://github.com/earendil-works/pi/issues/10657))
+- Fixed inline images not rendering in Herdr since 1.1.0; Herdr now uses the Kitty graphics protocol ([#10774](https://github.com/earendil-works/pi/pull/10774) by [@ogulcancelik](https://github.com/ogulcancelik))
+- Fixed key bindings that name a shifted symbol, such as `+` or `ctrl++`, not matching when the Kitty keyboard protocol or modifyOtherKeys reports the key as Shift plus the unshifted key. `parseKey()` now returns the produced symbol (`+` instead of `shift+=`); the physical `shift+=` spelling still matches, and key ids such as `ctrl++` are parsed correctly ([#9880](https://github.com/earendil-works/pi/pull/9880) by [@christianklotz](https://github.com/christianklotz))
+
 ## [1.1.0] - 2026-10-07
 
 ### Breaking Changes

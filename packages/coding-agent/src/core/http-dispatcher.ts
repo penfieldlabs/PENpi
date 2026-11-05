@@ -93,7 +93,9 @@ export function configureHttpDispatcher(timeoutMs: number = DEFAULT_HTTP_IDLE_TI
 				autoSelectFamilyAttemptTimeout: DEFAULT_AUTO_SELECT_FAMILY_ATTEMPT_TIMEOUT_MS,
 			},
 			headersTimeout: normalizedTimeoutMs,
-			clientFactory: createUndiciClient,
+			// A Pool to the proxy, as undici's default: a single Client sends CONNECTs one at a
+			// time, so a CONNECT the proxy held open blocked every later request.
+			clientFactory: createUndiciOriginDispatcher,
 			factory: createUndiciOriginDispatcher,
 		}),
 	);

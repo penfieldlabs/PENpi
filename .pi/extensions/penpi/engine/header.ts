@@ -144,6 +144,9 @@ export function installHeader(core: EngineCore): void {
 	// H5: remember the prompt that starts each run; the header pins it (D10: every prompt, short or long,
 	// becomes the task; with the user-message pin on, the pin carries the earlier ones).
 	pi.on("before_agent_start", (event) => {
+		// 0.6.0 (Pi 1.4): a run started by a custom message (sendMessage with triggerTurn) has no prompt; only a
+		// user's prompt is a run prompt.
+		if (event.messageType !== "user") return;
 		// D6: an image-only prompt starts a run too (it becomes the current request).
 		if (!event.prompt && !event.images?.length) return;
 		const prompt = event.prompt.slice(0, opts.taskMaxChars);

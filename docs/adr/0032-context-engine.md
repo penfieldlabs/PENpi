@@ -219,6 +219,27 @@ a setting of "ignored" still gets that warning, recommending "counted", when the
 setting of "counted" gets nothing without a verdict. Doctor prints the pairs, the median, the verdict
 and any recommendation. Nothing is persisted, so a run without a warning is unchanged.
 
+### Not adopted (0.6.0): removing replayed reasoning from older assistant messages
+
+Dropping the reasoning Pi replays on every assistant message but the latest was measured as a
+fix for drift (a model picking up an earlier, finished task after a cut), and it is not adopted.
+- On the production session's Oct 24 requests (the D26 probe, GLM-5.3-Flash) it cut 27 to 34% of prompt tokens,
+  and drift fell from 33 of 48 samples to 25 of 48 with the D26 header. That gain did not carry
+  over: without the pin drift rose (30 to 34 of 48), and at the production session's Oct 30 drift point the
+  same removal made drift worse, 9 of 16 samples against the control's 1 of 16 (p = 0.006). A
+  change that makes drift worse at one of the two measured points does not ship as a drift fix.
+- As specified, it breaks the prompt cache on every request: "all but the latest" moves by one
+  message a turn, so each request rewrites the one before it, where the window is otherwise
+  byte-stable between cuts (D26.7, D23).
+- Whether a provider needs the reasoning is not known per model: Anthropic requires signed
+  thinking in the current tool loop, and the replay check above measures counted or ignored,
+  not needed.
+
+If it is raised again, the form to consider strips reasoning only at a cut, from messages older
+than the kept window's last tool loop, per model and off by default, with a paid replay at both
+drift points before it ships. The measurements are the D26 probe (2026-10-25) and the drift replays
+(2026-10-30), in the project's review records.
+
 ### The orientation briefing moves into the system prompt (behaviour change from 0.4)
 
 PENpi 0.4 sent the orientation briefing (the PENpi protocol and Penfield's awaken + reflect) as one
@@ -322,8 +343,11 @@ file against its own. Test reports, E2 scratch and E2 results moved out of `/tmp
 - **Stock Pi** (`scripts/engine-suite-upstream.sh`, CI job `engine-on-upstream`): the suite runs
   against upstream Pi at the recorded base, without PENpi's core patches, apart from the two tests
   that load PENpi's extension. Upstream does not commit its model data (it hydrates it from live
-  catalogs, which drift from v1.1.0's types), so the build uses the fork's committed snapshot: data
-  only, every line of code is upstream's.
+  catalogs, which drift from the base's types), so the build uses the fork's committed snapshot: data
+  only, every line of code is upstream's. From 0.6.0 the snapshot is the base's own data, as
+  published in `@earendil-works/pi-ai` at the base's version (1.4.0), unchanged, so the build is
+  reproducible. (0.5.x carried one price correction, Claude Sonnet 5.5's cache reads at $0.20;
+  Anthropic lists $0.10 now, as upstream does, so 0.6.0 drops it.)
 
 ## Consequences
 

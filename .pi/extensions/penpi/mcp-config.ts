@@ -31,9 +31,9 @@
  *     runs after PENpi's, so the JWT and the config are both in place by the time
  *     it does anything, and the direct tools come back. Connections happen on
  *     first use.
- *   - Clean profile: there is no metadata cache, so adapter 2.12.1 bootstraps
+ *   - Clean profile: there is no metadata cache, so the adapter bootstraps
  *     every server during its session_start discovery — again after PENpi's — and
- *     hot-registers what it finds (2.12.0+).
+ *     hot-registers what it finds (2.12.0 and later).
  *
  * Worth knowing, because it is counter-intuitive and rules out the obvious
  * "just serve the warm start from cache" idea: the adapter's cached metadata is
@@ -43,9 +43,12 @@
  * rejects the entry. Nothing about the warm path can be made to work earlier than
  * session_start; the fix is to stop trying to act before it.
  *
- * Explicit overrides remain supported (`penpi.mcpLifecycle`, PENPI_MCP_LIFECYCLE);
- * choosing `eager` re-enters the race above. Both paths are proven end to end in
- * mcp-integration.test.ts against the real adapter and a real MCP server.
+ * Explicit overrides remain supported (`penpi.mcpLifecycle`, PENPI_MCP_LIFECYCLE).
+ * Since 0.6.0, for `eager` and `keep-alive` PENpi publishes the JWT before the
+ * adapter loads (publishTokenBeforeAdapter in index.ts), from the stored login, and
+ * without one makes the entry `lazy` for the session, so the race above cannot
+ * occur. All of these paths are proven end to end in mcp-integration.test.ts
+ * against the real adapter and a real MCP server.
  *
  * Note this is about the CONSCIOUS layer — the tools the model calls. PENpi's
  * automatic orientation does not go through the adapter at all: it uses its own
@@ -111,6 +114,17 @@ export function globalMcpConfigPath(path?: string): string {
 	return path || process.env.PENPI_MCP_CONFIG_PATH || join(getAgentDir(), "mcp.json");
 }
 
+/**
+ * PENpi's defaults for every server in the adapter config (0.6.0, pi-mcp-adapter 7.x); a server's own value in the
+ * global mcp.json wins, except on the `penfield` entry, which PENpi owns.
+ *
+ * - `roots`: 7.x answers an MCP server's roots/list with the session's working directory (`file://<cwd>`) unless the
+ *   server sets `roots: false`. No server, Penfield included, learns local paths unless the user turns it on.
+ * - `tasks`: the MCP Tasks extension, on by default in 7.x. A task's result arrives after its call returned, as a
+ *   message the context engine has not planned for.
+ */
+export const PENPI_SERVER_DEFAULTS: Readonly<Record<string, unknown>> = Object.freeze({ roots: false, tasks: false });
+
 /** The `penfield` server entry, shared by the persisted file and the embedded adapter. */
 export function penfieldServerEntry(cfg: PenfieldConfig, opts: EnsureMcpOptions = {}): Record<string, unknown> {
 	return {
@@ -120,14 +134,38 @@ export function penfieldServerEntry(cfg: PenfieldConfig, opts: EnsureMcpOptions 
 		directTools: true,
 		idleTimeout: opts.idleTimeout ?? DEFAULT_IDLE_TIMEOUT_MINUTES,
 		lifecycle: opts.lifecycle ?? "lazy",
+		...PENPI_SERVER_DEFAULTS,
 	};
+}
+
+/** A server entry from the global mcp.json with PENpi's server defaults under it; a non-object entry is left as is. */
+function withServerDefaults(entry: unknown): unknown {
+	return isRecord(entry) ? { ...PENPI_SERVER_DEFAULTS, ...entry } : entry;
 }
 
 /** The adapter's in-memory config: what `createMcpAdapter({ config })` receives. */
 export interface AdapterConfig {
 	mcpServers: Record<string, unknown>;
-	settings?: unknown;
+	settings: Record<string, unknown>;
 }
+
+/**
+ * PENpi's defaults for the adapter's `settings`; the global mcp.json's own `settings` win key by key.
+ *
+ * - `allowInstall`, `allowScriptToolSave`: the adapter refuses both actions under a host-supplied config anyway;
+ *   off, the `mcp` tool no longer offers the model an action that fails (pi-mcp-adapter 7.x).
+ * - `semanticSearch`: a `searchMode: "semantic"` search would call a classifier model through Pi's registry, a paid
+ *   call outside the context engine and the bench's cost accounting.
+ * - `sampling`: no MCP server may make the host call a model.
+ *
+ * `elicitation` is left to the adapter: on with a UI (a server's question goes to the user), off without one.
+ */
+export const PENPI_ADAPTER_SETTINGS: Readonly<Record<string, unknown>> = Object.freeze({
+	allowInstall: false,
+	allowScriptToolSave: false,
+	semanticSearch: false,
+	sampling: false,
+});
 
 /**
  * Build the embedded adapter's config from the GLOBAL mcp.json only (Security F1).
@@ -153,7 +191,7 @@ export function buildAdapterConfig(
 ): { config: AdapterConfig; path: string; warning?: string } {
 	const path = globalMcpConfigPath(opts.path);
 	const penfieldOnly = (warning: string) => ({
-		config: { mcpServers: { penfield: penfieldServerEntry(cfg, opts) } },
+		config: { mcpServers: { penfield: penfieldServerEntry(cfg, opts) }, settings: { ...PENPI_ADAPTER_SETTINGS } },
 		path,
 		warning,
 	});
@@ -163,7 +201,13 @@ export function buildAdapterConfig(
 		raw = readFileSync(path, "utf8");
 	} catch (err) {
 		if ((err as NodeJS.ErrnoException)?.code === "ENOENT") {
-			return { config: { mcpServers: { penfield: penfieldServerEntry(cfg, opts) } }, path };
+			return {
+				config: {
+					mcpServers: { penfield: penfieldServerEntry(cfg, opts) },
+					settings: { ...PENPI_ADAPTER_SETTINGS },
+				},
+				path,
+			};
 		}
 		return penfieldOnly(`could not read ${path} (${errText(err)})`);
 	}
@@ -178,9 +222,17 @@ export function buildAdapterConfig(
 		return penfieldOnly(`${path}: mcpServers must be an object`);
 	}
 	const config: AdapterConfig = {
-		mcpServers: { ...(doc.mcpServers ?? {}), penfield: penfieldServerEntry(cfg, opts) },
+		mcpServers: {
+			...Object.fromEntries(
+				Object.entries(doc.mcpServers ?? {}).map(([name, entry]) => [name, withServerDefaults(entry)]),
+			),
+			penfield: penfieldServerEntry(cfg, opts),
+		},
+		settings: { ...PENPI_ADAPTER_SETTINGS, ...(isRecord(doc.settings) ? doc.settings : {}) },
 	};
-	if (doc.settings !== undefined) config.settings = doc.settings;
+	if (doc.settings !== undefined && !isRecord(doc.settings)) {
+		return { config, path, warning: `${path}: settings must be an object; using PENpi's adapter defaults` };
+	}
 	return { config, path };
 }
 

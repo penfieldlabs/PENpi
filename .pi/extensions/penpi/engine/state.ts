@@ -139,6 +139,8 @@ export interface Item {
 	tokens: number;
 	startable: boolean;
 	system: boolean;
+	/** D23: a system message older than the cut, merged into the checkpoint and not sent. */
+	folded?: true;
 }
 
 /** Mode a: the window from the cut onward, kept up to date from the leaf (H7). */
@@ -148,6 +150,8 @@ export interface WindowIndex {
 	total: number;
 	cut?: CutState;
 	checkpoint?: AgentMessage;
+	/** D23: the system messages before the window, as recorded (the checkpoint is rebuilt from them at a cut). */
+	before: AgentMessage[];
 	checkpointTokens: number;
 	header?: AgentMessage;
 	headerTokens: number;
@@ -184,7 +188,8 @@ export function newEngineState(faults: FaultConfig | undefined) {
 		/**
 		 * The request just sent. `seq` numbers every request; `appendOnly` says its message list extends
 		 * the previous request's (request-only notice tails excluded), `appendedText` is the estimate of the
-		 * appended messages without images, `noticeDrop` the estimate of the previous request's notice,
+		 * appended messages without images (`appendedImages` the estimate of their images), `noticeDrop` the
+		 * estimate of the previous request's notice, `noticeAdd` that of this request's own notice,
 		 * `afterLengthStop` that the appended messages include an answer cut at the output limit.
 		 */
 		lastSent: undefined as
@@ -196,7 +201,9 @@ export function newEngineState(faults: FaultConfig | undefined) {
 					appendedText: number;
 					appendedReplay: number;
 					appendedAsText: number;
+					appendedImages: number;
 					noticeDrop: number;
+					noticeAdd: number;
 					afterLengthStop: boolean;
 					/** D24: the append chain this request belongs to, and the text appended along it so far. */
 					chain: number;

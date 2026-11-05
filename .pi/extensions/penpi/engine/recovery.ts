@@ -138,9 +138,24 @@ export const GENERIC_OUTPUT_LIMIT =
 export const MENTIONS_INPUT = /context|input|prompt/i;
 
 /**
+ * Pi 1.4's new HTTP 413 rule (overflow.ts, 73f8de80b): any provider's 413 counts as a context overflow, matched on
+ * formatProviderError's prefix or a raw SDK status. Its documented case is GitHub Copilot's
+ * 'github-copilot API error (413): {"message":"failed to parse request"}', a request too large in bytes.
+ */
+const NEW_413_PATTERN = /^(?:[\w -]+ API error \(413\):|413(?:\s|:|$))/i;
+/** The 413s Pi 1.1.0 already counted as overflows, which 0.5.x recovered from: Anthropic's request_too_large and
+ * Cerebras' bodiless 413 (provider cerebras only, as Pi checks it). */
+const PI_11_REQUEST_SIZE = /request_too_large/i;
+const CEREBRAS_BODYLESS = /^4(?:00|13)\s*(?:status code)?\s*\(no body\)/i;
+/** Wording that names a token overflow; a 413 that says it (Vertex for Anthropic) is a context overflow. */
+const TOKEN_OVERFLOW_WORDING =
+	/prompt is too long|input is too long|context (?:length|window|size)|exceed(?:s|ed)? (?:the )?(?:maximum )?context|tokens?\b/i;
+
+/**
  * G1: classify a provider error before relying on Pi's isContextOverflow, which reads several
  * combined (input + output) errors as overflow. Order: rate limits, explicit output limits,
- * combined errors (output-caused when the input alone fits with room), context overflow (the
+ * combined errors (output-caused when the input alone fits with room), Pi 1.4's new HTTP 413 rule
+ * with no token numbers and no token wording (unknown, left to Pi; 0.6.0), context overflow (the
  * engine's patterns and Pi's), output limits stated without numbers, unknown.
  */
 export function classifyProviderError(errorMessage: string | undefined, provider?: string): ProviderErrorInfo {
@@ -168,6 +183,20 @@ export function classifyProviderError(errorMessage: string | undefined, provider
 		content: [],
 	} as unknown as AssistantMessage;
 	const { limit, requested } = parseOverflow(text);
+	// 0.6.0: Pi 1.4's isContextOverflow also matches any HTTP 413 (Copilot's request-size error). With no token
+	// numbers it states a byte limit (images, a large payload), not a token window: no window is learned from it, and
+	// it is left to Pi, as 0.5.x did with it. The 413s Pi 1.1.0 already counted (Anthropic's request_too_large,
+	// Cerebras' bodiless 413) still recover as overflows, as in 0.5.x.
+	if (
+		NEW_413_PATTERN.test(text) &&
+		!PI_11_REQUEST_SIZE.test(text) &&
+		!(provider === "cerebras" && CEREBRAS_BODYLESS.test(text)) &&
+		!TOKEN_OVERFLOW_WORDING.test(text) &&
+		limit === undefined &&
+		requested === undefined
+	) {
+		return { class: "unknown", rule: "request size without token numbers" };
+	}
 	if (
 		isContextOverflow(probe) ||
 		/prompt is too long|input is too long|exceed(?:s|ed)? (?:the )?(?:maximum )?context/i.test(text)
