@@ -41,6 +41,13 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
   `PI_CODING_AGENT_SESSION_DIR` it searched a folder with no sessions. It now asks Pi for the
   session's folder.
 
+### Changed
+- **The embedded MCP adapter subscribes to nothing on Pi's event bus.** 0.6.0 blocked the four
+  request channels pi-mcp-adapter 7.0.0 listens on; 0.6.1 blocks every subscription, so a
+  channel a later adapter release adds cannot answer other extensions unnoticed. The adapter
+  still emits its status and tool-approval events. `/mcp`, Penfield's tools and the adapter's
+  status work as before.
+
 ## [0.6.0] — 2026-11-05
 
 ### Changed

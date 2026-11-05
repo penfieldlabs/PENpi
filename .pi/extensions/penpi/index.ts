@@ -260,14 +260,16 @@ export const BLOCKED_ADAPTER_EVENTS: ReadonlySet<string> = new Set([
  * adapter registers `/mcp`, which makes Pi leave its built-in MCP out, and does not connect servers
  * from other extensions; Pi reports each of those as registered but not connected.
  *
- * The same holds for the adapter's own event-bus requests (BLOCKED_ADAPTER_EVENTS): its `pi.events.on` for those
- * channels subscribes nothing, so a request another extension emits gets no answer. Its other events (status,
- * tool approval) pass. `onCommand` sees each command the adapter registers, so PENpi knows whether `/mcp` exists.
+ * The same holds for the adapter's event bus: its `pi.events.on` subscribes nothing, on every channel, so a request
+ * another extension emits gets no answer. 0.6.0 blocked the four request channels adapter 7.0.0 listens on
+ * (BLOCKED_ADAPTER_EVENTS, its only subscriptions); 0.6.1 blocks every subscription, so a channel a later adapter
+ * release adds cannot pass unnoticed. Its `emit` (status, tool approval) passes. `onCommand` sees each command the
+ * adapter registers, so PENpi knows whether `/mcp` exists.
  */
 export function withoutPiMcpServers(pi: ExtensionAPI, onCommand?: (name: string) => void): ExtensionAPI {
 	const events: ExtensionAPI["events"] = {
 		emit: (channel, data) => pi.events.emit(channel, data),
-		on: (channel, handler) => (BLOCKED_ADAPTER_EVENTS.has(channel) ? () => {} : pi.events.on(channel, handler)),
+		on: () => () => {},
 	};
 	const registerCommand: ExtensionAPI["registerCommand"] = (name, options) => {
 		onCommand?.(name);

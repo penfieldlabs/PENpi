@@ -1012,7 +1012,7 @@ describe("embedded adapter (ADR 0026)", () => {
 		expect(registerMcpServer).not.toHaveBeenCalled();
 	});
 
-	it("keeps the adapter off its event-bus requests from other extensions, and passes its other events (0.6.0)", () => {
+	it("subscribes the adapter to nothing on the event bus, any channel, and passes what it emits (0.6.1)", () => {
 		const subscribed: string[] = [];
 		const emitted: string[] = [];
 		const f = makeFakePi();
@@ -1027,9 +1027,11 @@ describe("embedded adapter (ADR 0026)", () => {
 		});
 		const seen = withoutPiMcpServers(api as never);
 		for (const channel of BLOCKED_ADAPTER_EVENTS) expect(seen.events.on(channel, () => {})).toBeTypeOf("function");
+		// A channel a later adapter release might add, and one it emits on itself: no subscription either.
+		expect(seen.events.on("pi-mcp-adapter:runtime-something-new:v2", () => {})).toBeTypeOf("function");
 		seen.events.on("pi-mcp-adapter:status:v1", () => {});
 		seen.events.emit("pi-mcp-adapter:status:v1", {});
-		expect(subscribed).toEqual(["pi-mcp-adapter:status:v1"]);
+		expect(subscribed).toEqual([]);
 		expect(emitted).toEqual(["pi-mcp-adapter:status:v1"]);
 		expect([...BLOCKED_ADAPTER_EVENTS].sort()).toEqual([
 			"pi-mcp-adapter:protocol:v1",
@@ -1037,6 +1039,24 @@ describe("embedded adapter (ADR 0026)", () => {
 			"pi-mcp-adapter:runtime-snapshot:v1",
 			"pi-mcp-adapter:runtime-tool-call:v1",
 		]);
+	});
+
+	it("on Pi's own event bus, a request on a channel the adapter would listen to gets no answer (0.6.1)", async () => {
+		const { createEventBus } = await import("@earendil-works/pi-coding-agent");
+		const bus = createEventBus();
+		const f = makeFakePi();
+		const seen = withoutPiMcpServers(Object.assign(f.pi, { events: bus }) as never);
+		const answered: unknown[] = [];
+		for (const channel of [...BLOCKED_ADAPTER_EVENTS, "pi-mcp-adapter:runtime-something-new:v2"])
+			seen.events.on(channel, (data) => answered.push(data));
+		for (const channel of [...BLOCKED_ADAPTER_EVENTS, "pi-mcp-adapter:runtime-something-new:v2"])
+			bus.emit(channel, { from: "another extension" });
+		expect(answered).toEqual([]);
+		// What the adapter emits still reaches other extensions.
+		const heard: unknown[] = [];
+		bus.on("pi-mcp-adapter:status:v1", (data) => heard.push(data));
+		seen.events.emit("pi-mcp-adapter:status:v1", { connected: 1 });
+		expect(heard).toEqual([{ connected: 1 }]);
 	});
 
 	it("reads --penpi-dev from argv, because pi applies flag values only after loading", async () => {
