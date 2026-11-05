@@ -31,6 +31,11 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
   string or as an object with a `source` and resource filters; the installer refused the object
   form ("packages must be an array of strings") and stopped. It now accepts both, and removes a
   stock `pi-mcp-adapter` given either way.
+- **Engine settings that contradict each other are caught.** Each value in the `penpi` block was
+  checked alone, so `lowWater` at or above `highWater`, or `ratioFloor` above `ratioCeiling`,
+  was accepted (with `lowWater: 0.9, highWater: 0.5` a session cut 86 times instead of 8). Such
+  a pair now falls back to the defaults for both, with a warning. A key PENpi does not know,
+  such as a misspelling, is reported with the closest known name.
 
 ## [0.6.0] — 2026-11-05
 

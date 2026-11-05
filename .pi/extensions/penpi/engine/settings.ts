@@ -4,7 +4,7 @@
  * and the default applies (ADR 0030: validate, do not coerce). Settings PENpi 0.4 used for FIFO are reported
  * as no longer used.
  */
-import type { EngineOptions, PinSource, PinUserMessagesOptions } from "./options.ts";
+import { DEFAULTS, type EngineOptions, type PinSource, type PinUserMessagesOptions } from "./options.ts";
 
 /** Numeric settings: name, and the open-closed range a value must fall in. */
 const NUMBERS: Array<[keyof EngineOptions, number, number]> = [
@@ -48,6 +48,75 @@ const BOOLEANS: Array<keyof EngineOptions> = ["calibrate", "notice", "noticeRepe
 const PIN_SOURCES: PinSource[] = ["interactive", "rpc", "extension"];
 /** PENpi 0.4 FIFO settings: no longer read (0.5.0 replaced FIFO with the context engine). */
 export const RETIRED_SETTINGS = ["contextFloor", "contextCeiling", "emergencyCompactionRuns"] as const;
+/**
+ * The `penpi` block's settings that are PENpi's own, not the engine's (config.ts, PenpiSettings). With the engine's
+ * names they are every key the block may hold; any other key is reported (0.6.1), with the closest known name.
+ */
+export const PENPI_OWN_SETTINGS = [
+	"penfield",
+	"saveContextOnShutdown",
+	"injectBriefing",
+	"displayBriefing",
+	"mcpLifecycle",
+] as const;
+/** The engine's settings besides NUMBERS and BOOLEANS. */
+const ENGINE_OTHER_SETTINGS = [
+	"windowCeiling",
+	"limitOverrides",
+	"modelLimits",
+	"serializeAs",
+	"replayedReasoning",
+	"reasoningOnlyContinuation",
+	"pinUserMessages",
+	"faults",
+	"production",
+] as const;
+/** Pairs whose first value must be below the second (0.6.1): each is checked alone, so the pair was not. */
+const ORDERED_PAIRS: Array<[keyof EngineOptions, keyof EngineOptions, string]> = [
+	["lowWater", "highWater", "below"],
+	["ratioFloor", "ratioCeiling", "at most"],
+];
+
+/** Every key the `penpi` block may hold. */
+export function knownSettings(): string[] {
+	return [
+		...NUMBERS.map(([name]) => name as string),
+		...BOOLEANS.map((name) => name as string),
+		...ENGINE_OTHER_SETTINGS,
+		...PENPI_OWN_SETTINGS,
+		...RETIRED_SETTINGS,
+	];
+}
+
+/** Edit distance (insertions, deletions, substitutions, and a swap of two neighbours), case ignored. */
+function distance(a: string, b: string): number {
+	const x = a.toLowerCase();
+	const y = b.toLowerCase();
+	const d: number[][] = Array.from({ length: x.length + 1 }, (_, i) => [i, ...Array<number>(y.length).fill(0)]);
+	for (let j = 1; j <= y.length; j++) d[0][j] = j;
+	for (let i = 1; i <= x.length; i++)
+		for (let j = 1; j <= y.length; j++) {
+			d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (x[i - 1] === y[j - 1] ? 0 : 1));
+			if (i > 1 && j > 1 && x[i - 1] === y[j - 2] && x[i - 2] === y[j - 1])
+				d[i][j] = Math.min(d[i][j], d[i - 2][j - 2] + 1);
+		}
+	return d[x.length][y.length];
+}
+
+/** The known setting closest to `name`, when it is close enough to be a misspelling. */
+export function closestSetting(name: string): string | undefined {
+	let best: string | undefined;
+	let bestDistance = Number.POSITIVE_INFINITY;
+	for (const known of knownSettings()) {
+		const dist = distance(name, known);
+		if (dist < bestDistance) {
+			best = known;
+			bestDistance = dist;
+		}
+	}
+	return best !== undefined && bestDistance <= Math.max(2, Math.floor(name.length / 4)) ? best : undefined;
+}
+
 /** Their environment variables, no longer read either. */
 export const RETIRED_ENV = ["PENPI_CONTEXT_FLOOR", "PENPI_CONTEXT_CEILING", "PENPI_EMERGENCY_COMPACTION_RUNS"] as const;
 
@@ -224,6 +293,28 @@ export function engineOptionsFromSettings(
 			warn(
 				`${label(name)} is no longer used: PENpi 0.5.0 replaced FIFO with the context engine (see docs/CONTEXT_ENGINE.md); remove it from settings.json`,
 			);
+	}
+	// 0.6.1: values valid alone can still contradict each other (the second reviewer: lowWater 0.9 with highWater
+	// 0.5 gave 86 cuts instead of 8). An inconsistent pair falls back to the defaults, both values.
+	const options = out as Record<string, number | undefined>;
+	for (const [lower, upper, relation] of ORDERED_PAIRS) {
+		if (options[lower] === undefined && options[upper] === undefined) continue;
+		const low = options[lower] ?? (DEFAULTS[lower] as number);
+		const high = options[upper] ?? (DEFAULTS[upper] as number);
+		const ok = relation === "below" ? low < high : low <= high;
+		if (ok) continue;
+		warn(
+			`ignoring ${label(lower)}=${low} and ${label(upper)}=${high}: ${lower} must be ${relation} ${upper}; using the defaults for both (${DEFAULTS[lower]} and ${DEFAULTS[upper]})`,
+		);
+		delete options[lower];
+		delete options[upper];
+	}
+	// 0.6.1: a misspelled key was ignored without a word.
+	const known = new Set(knownSettings());
+	for (const key of Object.keys(s)) {
+		if (known.has(key)) continue;
+		const near = closestSetting(key);
+		warn(`ignoring ${label(key)}: not a PENpi setting${near ? `; did you mean ${label(near)}?` : ""}`);
 	}
 	return out;
 }
