@@ -160,7 +160,8 @@ test("uninstall says where the Penfield login is and how to remove it, and leave
 	assert.equal(result.status, 0, result.stderr);
 	assert.match(result.stdout, /Your Penfield login is not removed/);
 	assert.ok(result.stdout.includes(`Found: ${store}`), result.stdout);
-	assert.match(result.stdout, /run \/penpi logout in a PENpi session before uninstalling, or delete the file/);
+	assert.match(result.stdout, /run \/penpi logout in a PENpi session before uninstalling \(it also revokes the login/);
+	assert.match(result.stdout, /or delete the file \(the login then stays valid at Penfield until it expires\)/);
 	assert.equal(existsSync(store), true);
 });
 

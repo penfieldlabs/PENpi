@@ -35,13 +35,21 @@ interface Rotating {
 	port: number;
 	/** Each refresh token the token endpoint was given, in order of arrival. */
 	refreshes: string[];
+	/** Each token the revocation endpoint was given, with its hint (0.6.1). */
+	revoked: Array<{ token: string; hint: string }>;
 	close: () => Promise<void>;
 }
 
 /** A Penfield token endpoint that rotates: each refresh issues RT<n+1> and AT<n>, and RT<n> is refused afterwards. */
-async function startRotating(delayMs = 300): Promise<Rotating> {
+/**
+ * `revoke`: the revocation endpoint (0.6.1) answers 200 and ends the refresh token ("ok"), answers 503 ("down"),
+ * answers after 10 s ("slow"), or is not in the metadata ("none").
+ */
+async function startRotating(delayMs = 300, revoke: "ok" | "down" | "slow" | "none" = "ok"): Promise<Rotating> {
 	let current = 1;
 	const refreshes: string[] = [];
+	const revoked: Array<{ token: string; hint: string }> = [];
+	const dead = new Set<string>();
 	const read = (req: IncomingMessage) =>
 		new Promise<string>((r) => {
 			let s = "";
@@ -60,12 +68,21 @@ async function startRotating(delayMs = 300): Promise<Rotating> {
 			return json(200, {
 				device_authorization_endpoint: "https://auth-dev.penfield.app/device",
 				token_endpoint: "https://auth-dev.penfield.app/token",
+				...(revoke === "none" ? {} : { revocation_endpoint: "https://auth-dev.penfield.app/revoke" }),
 			});
+		if (path === "/revoke" && req.method === "POST") {
+			const form = new URLSearchParams(await read(req));
+			if (revoke === "down") return json(503, { error: "temporarily_unavailable" });
+			if (revoke === "slow") await new Promise((r) => setTimeout(r, 10_000));
+			revoked.push({ token: form.get("token") ?? "", hint: form.get("token_type_hint") ?? "" });
+			if (form.get("token_type_hint") === "refresh_token") dead.add(form.get("token") ?? "");
+			return json(200, {});
+		}
 		if (path === "/token" && req.method === "POST") {
 			const rt = new URLSearchParams(await read(req)).get("refresh_token") ?? "";
 			refreshes.push(rt);
 			// Decide at arrival, as a real server does: the first request with the current token wins.
-			const ok = rt === `RT${current}`;
+			const ok = rt === `RT${current}` && !dead.has(rt);
 			const n = current;
 			if (ok) current++;
 			await new Promise((r) => setTimeout(r, delayMs));
@@ -79,6 +96,7 @@ async function startRotating(delayMs = 300): Promise<Rotating> {
 	return {
 		port: (http.address() as AddressInfo).port,
 		refreshes,
+		revoked,
 		close: () =>
 			new Promise<void>((r) => {
 				http.closeAllConnections();
@@ -90,7 +108,7 @@ async function startRotating(delayMs = 300): Promise<Rotating> {
 /** Runs one child process; resolves with its JSON lines. */
 function runChild(
 	env: Record<string, string>,
-): Promise<Array<{ token?: string; error?: string; loggedOut?: boolean }>> {
+): Promise<Array<{ token?: string; error?: string; loggedOut?: boolean; revocation?: string }>> {
 	return new Promise((resolve, reject) => {
 		const child = spawn(process.execPath, [CHILD], {
 			env: { ...process.env, ...env },
@@ -208,7 +226,7 @@ describe("a logout sticks against another running session (0.6.1 review)", () =>
 		const b = runChild({ ...env, AT_TIMES: `0,${start + 4500},${start + 9000}` });
 		const a = runChild({ ...env, LOGOUT_AT: String(start + 3000) });
 		const [bOut, aOut] = await Promise.all([b, a]);
-		expect(aOut).toEqual([{ loggedOut: true }]);
+		expect(aOut).toEqual([{ loggedOut: true, revocation: "revoked" }]);
 		expect(bOut[0]).toEqual({ token: "AT0" });
 		expect(bOut[1]).toEqual({ error: "Penfield device login required — run /penpi login" });
 		expect(bOut[2]).toEqual({ error: "Penfield device login required — run /penpi login" });
@@ -232,11 +250,98 @@ describe("a logout sticks against another running session (0.6.1 review)", () =>
 		const a = runChild({ ...env, LOGOUT_AT: "0" });
 		const [, aOut] = await Promise.all([b, a]);
 		expect(fx.refreshes).toEqual(["RT1"]);
-		expect(aOut).toEqual([{ loggedOut: true }]);
+		expect(aOut).toEqual([{ loggedOut: true, revocation: "revoked" }]);
 		// Wait for anything still writing, then look.
 		await new Promise((r) => setTimeout(r, 500));
 		expect(existsSync(store)).toBe(false);
 		expect(existsSync(`${store}.lock`)).toBe(false);
+	}, 30_000);
+});
+
+describe("logout revokes the login at Penfield (0.6.1)", () => {
+	let dir: string;
+	let store: string;
+	const fixtures: Rotating[] = [];
+	beforeEach(() => {
+		dir = mkdtempSync(join(tmpdir(), "penpi-revoke-procs-"));
+		store = join(dir, "penfield-tokens-dev.json");
+	});
+	afterEach(async () => {
+		while (fixtures.length) await fixtures.pop()?.close();
+		rmSync(dir, { recursive: true, force: true });
+	});
+	const fixture = async (revoke: "ok" | "down" | "slow" | "none") => {
+		const fx = await startRotating(300, revoke);
+		fixtures.push(fx);
+		return fx;
+	};
+	const seed = (expiresAt: number) =>
+		writeFileSync(store, JSON.stringify({ clientId: "cid", accessToken: "AT0", expiresAt, refreshToken: "RT1" }), {
+			mode: 0o600,
+		});
+	/** A refresh straight at the fixture, as another holder of the refresh token would send it. */
+	const refreshAt = (fx: Rotating, rt: string) =>
+		fetch(`http://127.0.0.1:${fx.port}/token`, {
+			method: "POST",
+			headers: { "content-type": "application/x-www-form-urlencoded" },
+			body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: rt, client_id: "cid" }),
+		}).then((r) => r.status);
+
+	it("revokes the refresh token, then the access token; the old refresh token is refused afterwards", async () => {
+		const fx = await fixture("ok");
+		seed(Date.now() + SKEW_MS + 60_000);
+		const out = await runChild({ STORE: store, PORT: String(fx.port), LOGOUT_AT: "0" });
+		expect(out).toEqual([{ loggedOut: true, revocation: "revoked" }]);
+		expect(fx.revoked).toEqual([
+			{ token: "RT1", hint: "refresh_token" },
+			{ token: "AT0", hint: "access_token" },
+		]);
+		expect(existsSync(store)).toBe(false);
+		expect(await refreshAt(fx, "RT1")).toBe(401);
+	}, 30_000);
+
+	it("another session started before the logout gets login required at its next refresh, not a silent re-login", async () => {
+		const fx = await fixture("ok");
+		const start = Date.now();
+		seed(start + SKEW_MS + 3000);
+		const env = { STORE: store, PORT: String(fx.port) };
+		const b = runChild({ ...env, AT_TIMES: `0,${start + 6000}` });
+		const a = runChild({ ...env, LOGOUT_AT: String(start + 2000) });
+		const [bOut, aOut] = await Promise.all([b, a]);
+		expect(aOut).toEqual([{ loggedOut: true, revocation: "revoked" }]);
+		expect(bOut).toEqual([{ token: "AT0" }, { error: "Penfield device login required — run /penpi login" }]);
+		expect(fx.refreshes).toEqual([]);
+		expect(existsSync(store)).toBe(false);
+		// And had B, or anything else, sent the refresh token it holds, Penfield would refuse it.
+		expect(await refreshAt(fx, "RT1")).toBe(401);
+	}, 30_000);
+
+	it("the revocation endpoint is down: the local logout completes, and says the revocation failed", async () => {
+		const fx = await fixture("down");
+		seed(Date.now() + SKEW_MS + 60_000);
+		const out = await runChild({ STORE: store, PORT: String(fx.port), LOGOUT_AT: "0" });
+		expect(out).toEqual([{ loggedOut: true, revocation: "failed" }]);
+		expect(existsSync(store)).toBe(false);
+		expect(existsSync(`${store}.lock`)).toBe(false);
+	}, 30_000);
+
+	it("the revocation endpoint is slow: the local logout completes within its time limit", async () => {
+		const fx = await fixture("slow");
+		seed(Date.now() + SKEW_MS + 60_000);
+		const t0 = Date.now();
+		const out = await runChild({ STORE: store, PORT: String(fx.port), LOGOUT_AT: "0", REVOKE_TIMEOUT_MS: "1500" });
+		expect(out).toEqual([{ loggedOut: true, revocation: "failed" }]);
+		expect(Date.now() - t0).toBeLessThan(6_000); // the endpoint answers after 10 s
+		expect(existsSync(store)).toBe(false);
+	}, 30_000);
+
+	it("no revocation endpoint in the metadata: logged out here only", async () => {
+		const fx = await fixture("none");
+		seed(Date.now() + SKEW_MS + 60_000);
+		const out = await runChild({ STORE: store, PORT: String(fx.port), LOGOUT_AT: "0" });
+		expect(out).toEqual([{ loggedOut: true, revocation: "no-endpoint" }]);
+		expect(fx.revoked).toEqual([]);
+		expect(existsSync(store)).toBe(false);
 	}, 30_000);
 });
 

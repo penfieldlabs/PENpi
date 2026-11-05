@@ -3,10 +3,12 @@
  * Penfield traffic sent to the test's rotating fixture. Prints one JSON line per getAccessToken() call.
  *
  * Environment: STORE (the token store), PORT (the fixture), AT_TIMES (comma-separated epoch ms at which to call
- * getAccessToken; a past time means at once). With LOGOUT_AT (epoch ms) it is a `/penpi logout` instead: it removes
- * the store at that time (deleteTokenStore, as the command does) and prints whether one was there.
+ * getAccessToken; a past time means at once). With LOGOUT_AT (epoch ms) it is a `/penpi logout` instead: at that time
+ * it revokes and removes the stored login (logoutStoredLogin, as the command does; REVOKE_TIMEOUT_MS bounds the
+ * revocation) and prints whether a store was there and what revoking it came to.
  */
-import { deleteTokenStore, TokenManager } from "../penfield-client.ts";
+import type { PenfieldConfig } from "../config.ts";
+import { logoutStoredLogin, TokenManager } from "../penfield-client.ts";
 
 const port = Number(process.env.PORT);
 const realFetch = globalThis.fetch;
@@ -17,14 +19,7 @@ globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
 	return realFetch(input, init);
 }) as typeof fetch;
 
-if (process.env.LOGOUT_AT) {
-	const wait = Number(process.env.LOGOUT_AT) - Date.now();
-	if (wait > 0) await new Promise((r) => setTimeout(r, wait));
-	console.log(JSON.stringify({ pid: process.pid, loggedOut: await deleteTokenStore(String(process.env.STORE)) }));
-	process.exit(0);
-}
-
-const tm = new TokenManager({
+const cfg: PenfieldConfig = {
 	env: "dev",
 	mcpUrl: "https://mcp-dev.penfield.app/",
 	apiBase: "https://api-dev.penfield.app",
@@ -32,7 +27,20 @@ const tm = new TokenManager({
 	authMode: "deviceCode",
 	tokenStorePath: String(process.env.STORE),
 	scope: "read write offline_access",
-});
+};
+
+if (process.env.LOGOUT_AT) {
+	const wait = Number(process.env.LOGOUT_AT) - Date.now();
+	if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+	const result = await logoutStoredLogin(
+		cfg,
+		process.env.REVOKE_TIMEOUT_MS ? Number(process.env.REVOKE_TIMEOUT_MS) : undefined,
+	);
+	console.log(JSON.stringify({ pid: process.pid, loggedOut: result.existed, revocation: result.revocation.kind }));
+	process.exit(0);
+}
+
+const tm = new TokenManager(cfg);
 
 for (const at of String(process.env.AT_TIMES ?? "0")
 	.split(",")

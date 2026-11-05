@@ -142,6 +142,7 @@ beforeEach(() => {
 	for (const k of Object.keys(process.env)) if (k.startsWith("PENPI_") || k === "PENFIELD_JWT") delete process.env[k];
 });
 afterEach(() => {
+	vi.unstubAllGlobals(); // 0.6.1: the logout tests stub fetch (no live call to Penfield)
 	for (const k of Object.keys(process.env)) if (k.startsWith("PENPI_") || k === "PENFIELD_JWT") delete process.env[k];
 	(globalThis as { __PENPI_LOADED__?: boolean }).__PENPI_LOADED__ = undefined;
 });
@@ -559,36 +560,81 @@ describe("/penpi login command", () => {
 		expect(stub.client.disconnect).toHaveBeenCalled();
 	});
 
-	it("logout removes the stored login and its lock, clears PENFIELD_JWT, and says so (0.6.1)", async () => {
+	/** Penfield's OAuth metadata and a revocation endpoint answering `status`, as fetch sees them (no live call). */
+	function stubPenfield(status: number) {
+		const revoked: string[] = [];
+		const reply = (code: number, body: unknown) =>
+			new Response(JSON.stringify(body), { status: code, headers: { "content-type": "application/json" } });
+		vi.stubGlobal("fetch", async (url: unknown, init?: RequestInit) => {
+			const u = String(url);
+			if (u.includes("oauth-protected-resource"))
+				return reply(200, { authorization_servers: ["https://auth.penfield.app"] });
+			if (u.includes("oauth-authorization-server"))
+				return reply(200, {
+					device_authorization_endpoint: "https://auth.penfield.app/device",
+					token_endpoint: "https://auth.penfield.app/oauth/token",
+					revocation_endpoint: "https://auth.penfield.app/oauth/revoke",
+				});
+			if (u.endsWith("/oauth/revoke")) {
+				revoked.push(new URLSearchParams(String(init?.body)).get("token_type_hint") ?? "");
+				return reply(status, status === 200 ? {} : { error: "temporarily_unavailable" });
+			}
+			return reply(404, {});
+		});
+		return revoked;
+	}
+
+	function seedLogin() {
 		const dir = mkdtempSync(join(tmpdir(), "penpi-logout-"));
 		const store = join(dir, "penfield-tokens-prod.json");
-		writeFileSync(store, JSON.stringify({ accessToken: "a", refreshToken: "r", expiresAt: 0 }), { mode: 0o600 });
+		writeFileSync(store, JSON.stringify({ clientId: "c", accessToken: "a", refreshToken: "r", expiresAt: 0 }), {
+			mode: 0o600,
+		});
+		process.env.PENPI_PENFIELD_TOKEN_STORE = store;
+		process.env.PENFIELD_JWT = "jwt";
+		return { dir, store };
+	}
+
+	it("logout revokes at Penfield, removes the stored login and its lock, clears PENFIELD_JWT, and says so (0.6.1)", async () => {
+		const revoked = stubPenfield(200);
+		const { dir, store } = seedLogin();
 		// A lock left by a crashed process (stale): logout takes it over, as a refresher does, and leaves none.
 		writeFileSync(`${store}.lock`, "1.x", { mode: 0o600 });
 		const old = (Date.now() - 120_000) / 1000;
 		utimesSync(`${store}.lock`, old, old);
-		process.env.PENPI_PENFIELD_TOKEN_STORE = store;
-		process.env.PENFIELD_JWT = "jwt";
 		const { commands, stub } = load({}, { auth: true });
 		const { ctx, notifies } = makeCtx();
 		await commands.penpi("logout", ctx);
+		expect(revoked).toEqual(["refresh_token", "access_token"]);
 		expect(existsSync(store)).toBe(false);
 		expect(existsSync(`${store}.lock`)).toBe(false);
 		expect(process.env.PENFIELD_JWT).toBeUndefined();
-		expect(
-			notifies.some((n) => n.msg.includes(`Removed the stored login at ${store} (access and refresh token)`)),
-		).toBe(true);
-		// 0.6.1 review: it says what stops, and what does not (an open adapter connection).
-		expect(notifies.some((n) => n.msg.includes("your other PENpi sessions stop at their next request"))).toBe(true);
-		expect(
-			notifies.some((n) =>
-				n.msg.includes("keeps working until it reconnects (it then has no login) or its session ends"),
-			),
-		).toBe(true);
+		const said = notifies.at(-1)?.msg ?? "";
+		expect(said).toContain(
+			`Revoked the login at Penfield and removed the stored login at ${store} (access and refresh token)`,
+		);
+		// It says what stops, and what does not: other sessions stop; a token already handed out works until it expires.
+		expect(said).toContain("your other PENpi sessions stop at their next request");
+		expect(said).toContain("An access token already handed out keeps working until it expires (up to 24 hours)");
 		// Again: nothing stored, and it says so.
 		await commands.penpi("logout", ctx);
 		expect(notifies.at(-1)?.msg).toContain(`no stored Penfield login at ${store}`);
+		expect(revoked).toHaveLength(2);
 		expect(stub.client.login).not.toHaveBeenCalled();
+		rmSync(dir, { recursive: true, force: true });
+	});
+
+	it("logout when Penfield cannot revoke: the stored login is removed anyway, and it says the refresh token stays valid (0.6.1)", async () => {
+		stubPenfield(503);
+		const { dir, store } = seedLogin();
+		const { commands } = load({}, { auth: true });
+		const { ctx, notifies } = makeCtx();
+		await commands.penpi("logout", ctx);
+		expect(existsSync(store)).toBe(false);
+		const last = notifies.at(-1);
+		expect(last?.level).toBe("warning");
+		expect(last?.msg).toContain("Could not reach Penfield to revoke the login (HTTP 503 temporarily_unavailable)");
+		expect(last?.msg).toContain("the refresh token stays valid on the server until it expires or is used");
 		rmSync(dir, { recursive: true, force: true });
 	});
 

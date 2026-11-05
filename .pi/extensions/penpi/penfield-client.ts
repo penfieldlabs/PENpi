@@ -25,6 +25,8 @@ import type { PenfieldConfig } from "./config.ts";
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 /** The error a TokenManager gives when there is no login to use (none stored, refused, or logged out: 0.6.1). */
 export const LOGIN_REQUIRED = "Penfield device login required — run /penpi login";
+/** 0.6.1: the device login's code expired before it was approved. */
+export const DEVICE_CODE_EXPIRED = "the Penfield login code expired before it was approved — run /penpi login again";
 
 /** Whether anything is at the token store's path (a symbolic link counts; a logout removes it). */
 function storeExists(path: string): boolean {
@@ -170,18 +172,43 @@ export async function acquireRefreshLock(
 	}
 }
 
+/** What revoking a login at Penfield came to (0.6.1, `/penpi logout`). */
+export type RevokeOutcome =
+	| { kind: "revoked" }
+	| { kind: "no-endpoint" }
+	| { kind: "failed"; reason: string }
+	| { kind: "nothing" };
+
+/** The longest a logout waits for Penfield to revoke the login, discovery included: the local logout always happens. */
+export const REVOKE_TIMEOUT_MS = 20_000;
+
 /**
- * Remove the stored Penfield login (0.6.1, `/penpi logout`): the token store, access and refresh token. It takes the
- * refresh lock first, as a refresher does, so a refresh in another process finishes before the store goes, and one that
- * starts after it finds the store gone and does not refresh. A symbolic link at `path` is removed, not what it points
- * at. Returns whether a store was there.
+ * `/penpi logout` (0.6.1): take the refresh lock (so a refresh in another process finishes first and one that starts
+ * later finds the store gone), revoke the stored refresh token (and access token) at Penfield, then remove the store
+ * whatever the revocation came to. A symbolic link at the store's path is removed, not what it points at. In API-key
+ * mode there is no stored login to revoke. Returns whether a store was there and what revoking it came to.
  */
-export async function deleteTokenStore(path: string): Promise<boolean> {
+export async function logoutStoredLogin(
+	cfg: PenfieldConfig,
+	timeoutMs = REVOKE_TIMEOUT_MS,
+): Promise<{ existed: boolean; revocation: RevokeOutcome }> {
+	const path = cfg.tokenStorePath;
 	const release = await acquireRefreshLock(path);
 	try {
 		const existed = storeExists(path);
+		let stored: StoredTokens | undefined;
+		try {
+			stored = JSON.parse(readFileSync(path, "utf8")) as StoredTokens;
+		} catch {
+			stored = undefined; // no store, or one that does not parse: nothing to revoke
+		}
+		let revocation: RevokeOutcome = { kind: "nothing" };
+		if (cfg.authMode !== "apiKey" && (stored?.refreshToken || stored?.accessToken))
+			revocation = await withTimeout(new TokenManager(cfg).revoke(stored), timeoutMs, "Penfield revocation").catch(
+				(error): RevokeOutcome => ({ kind: "failed", reason: errorText(error) }),
+			);
 		rmSync(path, { force: true });
-		return existed;
+		return { existed, revocation };
 	} finally {
 		release?.();
 	}
@@ -195,6 +222,16 @@ export interface DeviceCodePrompt {
 }
 
 type RefreshError = Error & { oauthError?: string };
+
+/** Penfield's OAuth endpoints from the authorization-server metadata. */
+interface OAuthEndpoints {
+	registrationEndpoint?: string;
+	deviceAuthorizationEndpoint: string;
+	tokenEndpoint: string;
+	revocationEndpoint?: string;
+}
+
+const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 /** Of two token sets, the one whose access token expires last (the more recent refresh). */
 function newest(a: StoredTokens | undefined, b: StoredTokens | undefined): StoredTokens | undefined {
@@ -220,7 +257,7 @@ export class TokenManager {
 	/** Single-flight guard so concurrent callers share one refresh/exchange. */
 	private inflight?: Promise<string>;
 	/** Cached OAuth endpoints discovered from the authorization-server metadata. */
-	private oauthMeta?: { registrationEndpoint?: string; deviceAuthorizationEndpoint: string; tokenEndpoint: string };
+	private oauthMeta?: OAuthEndpoints;
 	/**
 	 * 0.6.1 review: whether this process has seen the token store, by reading it or writing it. Once it has, a missing
 	 * store means a logout (`/penpi logout`, here or in another session): the in-memory pair is dropped, not used to
@@ -346,6 +383,54 @@ export class TokenManager {
 	}
 
 	/**
+	 * 0.6.1, `/penpi logout`: revoke a stored login at Penfield's advertised `revocation_endpoint` (RFC 7009, a public
+	 * client: `client_id` in the body): the refresh token first, then the access token. Penfield ends the refresh token;
+	 * an access token already handed out keeps working until it expires (checked against Penfield for 0.6.1), but it is
+	 * sent too. Never throws: the outcome says what happened.
+	 */
+	async revoke(stored: {
+		refreshToken?: string | null;
+		accessToken?: string;
+		clientId?: string;
+	}): Promise<RevokeOutcome> {
+		let meta: OAuthEndpoints;
+		try {
+			meta = await this.discoverOAuth();
+		} catch (error) {
+			return { kind: "failed", reason: errorText(error) };
+		}
+		if (!meta.revocationEndpoint) return { kind: "no-endpoint" };
+		const send = async (token: string, hint: "refresh_token" | "access_token") => {
+			const res = await credentialFetch(meta.revocationEndpoint as string, {
+				method: "POST",
+				headers: { "Content-Type": "application/x-www-form-urlencoded" },
+				body: new URLSearchParams({
+					token,
+					token_type_hint: hint,
+					...(stored.clientId ? { client_id: stored.clientId } : {}),
+				}),
+			});
+			// RFC 7009 2.2: 200 whether or not the token was valid; an error is 4xx or 5xx with an error code.
+			if (!res.ok) {
+				let code = "";
+				try {
+					code = String(((await res.json()) as { error?: unknown }).error ?? "");
+				} catch {
+					// not JSON
+				}
+				throw new Error(`HTTP ${res.status}${code ? ` ${code}` : ""}`);
+			}
+		};
+		try {
+			if (stored.refreshToken) await send(stored.refreshToken, "refresh_token");
+			if (stored.accessToken) await send(stored.accessToken, "access_token");
+			return { kind: "revoked" };
+		} catch (error) {
+			return { kind: "failed", reason: errorText(error) };
+		}
+	}
+
+	/**
 	 * True when this process had seen the token store and it is gone (logged out); the in-memory pair is dropped then.
 	 * In API-key mode there is no store to log out of.
 	 */
@@ -373,11 +458,7 @@ export class TokenManager {
 	 *      `/.well-known/oauth-authorization-server` advertises the endpoints.
 	 * Falls back to the configured auth host only if step 1 is unavailable.
 	 */
-	private async discoverOAuth(): Promise<{
-		registrationEndpoint?: string;
-		deviceAuthorizationEndpoint: string;
-		tokenEndpoint: string;
-	}> {
+	private async discoverOAuth(): Promise<OAuthEndpoints> {
 		if (this.oauthMeta) return this.oauthMeta;
 		const asMetadataUrl =
 			(await this.discoverAuthServerMetadataUrl()) ?? `${this.cfg.authBase}/.well-known/oauth-authorization-server`;
@@ -392,6 +473,7 @@ export class TokenManager {
 			registration_endpoint?: string;
 			device_authorization_endpoint?: string;
 			token_endpoint?: string;
+			revocation_endpoint?: string;
 		};
 		if (!m.device_authorization_endpoint || !m.token_endpoint) {
 			throw new Error("Penfield OAuth metadata missing device_authorization_endpoint or token_endpoint");
@@ -399,10 +481,13 @@ export class TokenManager {
 		this.assertTrustedEndpoint(m.device_authorization_endpoint, "device_authorization_endpoint");
 		this.assertTrustedEndpoint(m.token_endpoint, "token_endpoint");
 		if (m.registration_endpoint) this.assertTrustedEndpoint(m.registration_endpoint, "registration_endpoint");
+		// 0.6.1: /penpi logout sends the refresh token here, so it is held to the same origins.
+		if (m.revocation_endpoint) this.assertTrustedEndpoint(m.revocation_endpoint, "revocation_endpoint");
 		this.oauthMeta = {
 			registrationEndpoint: m.registration_endpoint,
 			deviceAuthorizationEndpoint: m.device_authorization_endpoint,
 			tokenEndpoint: m.token_endpoint,
+			revocationEndpoint: m.revocation_endpoint,
 		};
 		return this.oauthMeta;
 	}
@@ -488,9 +573,11 @@ export class TokenManager {
 				intervalMs += 5000;
 				continue;
 			}
+			// 0.6.1: Penfield answers an expired device code with invalid_grant (RFC 8628 names it expired_token).
+			if (j.error === "invalid_grant" || j.error === "expired_token") throw new Error(DEVICE_CODE_EXPIRED);
 			throw new Error(`Penfield device-code polling failed: ${j.error ?? res.status}`);
 		}
-		throw new Error("Penfield device-code flow timed out");
+		throw new Error(DEVICE_CODE_EXPIRED);
 	}
 
 	private async refresh(refreshToken: string, clientId?: string): Promise<string> {

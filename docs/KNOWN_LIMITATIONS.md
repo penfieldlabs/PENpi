@@ -23,9 +23,14 @@ a partial one. A store that does not parse (one edited by hand) counts as no log
 left by a process that died during a refresh is taken over after 60 seconds, and a session
 starting in that minute may wait for it. Anything else at the lock's path (a directory, a
 symbolic link), or a stale lock in a folder PENpi cannot write, makes PENpi refresh without the
-lock. `/penpi logout` takes the lock, then removes the store. Other PENpi sessions then stop
+lock. `/penpi logout` takes the lock, revokes the login at Penfield's revocation endpoint (the
+refresh token, then the access token), then removes the store, whether or not Penfield could be
+reached. Penfield ends the refresh token, so nothing can refresh with it again; an access token
+already handed out keeps working until it expires, up to 24 hours. Other PENpi sessions stop
 using their login at their next request, but a Penfield connection the MCP adapter already has
-open keeps its bearer until it reconnects or its session ends: PENpi has no way to close it.
+open keeps its bearer until then, or until it reconnects or its session ends: PENpi has no way
+to close it. If Penfield could not be reached, the refresh token stays valid on the server until
+it expires or is used; the logout message says so.
 Uninstalling PENpi does not remove the store; its output says where it is.
 
 ## Penfield credentials and the programs PENpi starts

@@ -42,8 +42,8 @@ import { installPenpiEngine } from "./engine/entry.ts";
 import type { EngineHandle } from "./engine/index.ts";
 import { type AdapterConfig, buildAdapterConfig, ensurePenfieldMcpEntry, JWT_ENV } from "./mcp-config.ts";
 import {
-	deleteTokenStore,
 	LOGIN_REQUIRED,
+	logoutStoredLogin,
 	PenfieldClient,
 	type PenfieldClientOptions,
 	type ToolResult,
@@ -429,13 +429,14 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps): void | Promise<voi
 				return;
 			}
 			if (sub === "logout") {
-				// 0.6.1: remove the stored login (access and refresh token) and this session's bearer.
+				// 0.6.1: revoke the stored login at Penfield, remove it here, and clear this session's bearer.
 				const cfg = resolvePenfield();
 				await client?.disconnect();
 				client = undefined;
-				let removed: boolean;
+				if (cfg.authMode === "deviceCode") ctx.ui.notify("PENpi: logging out of Penfield…", "info");
+				let result: Awaited<ReturnType<typeof logoutStoredLogin>>;
 				try {
-					removed = await deleteTokenStore(cfg.tokenStorePath);
+					result = await logoutStoredLogin(cfg);
 				} catch (err) {
 					ctx.ui.notify(
 						`PENpi: could not remove the stored Penfield login at ${cfg.tokenStorePath} — ${errLine(err)}`,
@@ -444,19 +445,36 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps): void | Promise<voi
 					return;
 				}
 				delete process.env[JWT_ENV];
-				ctx.ui.notify(
-					[
-						removed
-							? `PENpi: logged out of Penfield (${cfg.env}). Removed the stored login at ${cfg.tokenStorePath} (access and refresh token) and cleared ${JWT_ENV} for this session.`
-							: `PENpi: no stored Penfield login at ${cfg.tokenStorePath}; cleared ${JWT_ENV} for this session.`,
-						cfg.authMode === "apiKey"
-							? "  An API key is configured (settings or PENPI_PENFIELD_API_KEY); it is not removed, so PENpi logs in again with it at the next start."
-							: "  PENpi stops using Penfield here, and your other PENpi sessions stop at their next request: they ask for `/penpi login` instead of refreshing.",
-						// 0.6.1 review: the adapter offers PENpi no handle on its connections, so an open one is not closed.
-						"  A Penfield connection the MCP tools already have open, here or in another session, keeps working until it reconnects (it then has no login) or its session ends.",
-					].join("\n"),
-					"info",
-				);
+				const { existed, revocation } = result;
+				const revoked =
+					revocation.kind === "revoked"
+						? "Revoked the login at Penfield and removed"
+						: revocation.kind === "no-endpoint"
+							? "Penfield advertises no way to revoke a login, so it is logged out here only. Removed"
+							: revocation.kind === "failed"
+								? `Could not reach Penfield to revoke the login (${revocation.reason}): the refresh token stays valid on the server until it expires or is used. Removed`
+								: "Removed";
+				const lines = [
+					existed
+						? `PENpi: logged out of Penfield (${cfg.env}). ${revoked} the stored login at ${cfg.tokenStorePath} (access and refresh token), and cleared ${JWT_ENV} for this session.`
+						: `PENpi: no stored Penfield login at ${cfg.tokenStorePath}; cleared ${JWT_ENV} for this session.`,
+				];
+				if (cfg.authMode === "apiKey")
+					lines.push(
+						"  An API key is configured (settings or PENPI_PENFIELD_API_KEY); there is no stored login to revoke, and the key is not removed, so PENpi logs in again with it at the next start.",
+					);
+				else {
+					lines.push(
+						"  PENpi stops using Penfield here, and your other PENpi sessions stop at their next request: they ask for `/penpi login` instead of refreshing.",
+					);
+					// 0.6.1: Penfield ends the refresh token, not an access token already handed out; the adapter offers PENpi
+					// no handle on its connections, so an open one is not closed either.
+					if (existed)
+						lines.push(
+							"  An access token already handed out keeps working until it expires (up to 24 hours): the MCP tools' open Penfield connection, here or in another session, keeps working until then, or until it reconnects or its session ends.",
+						);
+				}
+				ctx.ui.notify(lines.join("\n"), revocation.kind === "failed" ? "warning" : "info");
 				return;
 			}
 			if (sub === "login") {

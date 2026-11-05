@@ -138,7 +138,8 @@ uninstall)
   echo "   Your Penfield login is not removed. It is stored in $HOME/.config/penpi/penfield-tokens-<env>.json"
   echo "   (or the file penpi.penfield.tokenStore or PENPI_PENFIELD_TOKEN_STORE names)."
   for f in "$HOME"/.config/penpi/penfield-tokens-*.json; do [ -e "$f" ] && echo "   Found: $f"; done
-  echo "   To remove it: run /penpi logout in a PENpi session before uninstalling, or delete the file."
+  echo "   To remove it: run /penpi logout in a PENpi session before uninstalling (it also revokes the login"
+  echo "   at Penfield), or delete the file (the login then stays valid at Penfield until it expires)."
   ;;
 
 status)

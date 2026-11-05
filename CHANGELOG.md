@@ -48,6 +48,9 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
   the bearer (and an API key in `PENPI_PENFIELD_API_KEY`). PENpi now gives each stdio server
   both empty; a server whose own `env` names one keeps what it names. Pi's shell already
   stripped both from the commands the agent runs.
+- **An expired login code is named as such.** When the device login's code expired before it
+  was approved, `/penpi login` reported "device-code polling failed: invalid_grant" (Penfield's
+  answer for an expired code). It now says the code expired and to run `/penpi login` again.
 - **A `penpi` block in a project's settings is reported once.** The warning that it is ignored
   printed several times per start (six in one review); it now prints once.
 - **The docs say what they should.** KNOWN_LIMITATIONS no longer says the token store is written
@@ -55,8 +58,12 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
   runs (`npm run check` and the lockfile check, not `npm test`).
 
 ### Changed
-- **`/penpi logout`** removes the stored Penfield login (access and refresh token) and clears
-  `PENFIELD_JWT` for the session. It takes the refresh lock first, so a refresh running in
+- **`/penpi logout`** revokes the login at Penfield (the refresh token, then the access token, at
+  the revocation endpoint Penfield advertises), removes the stored Penfield login (access and
+  refresh token) and clears `PENFIELD_JWT` for the session. The local logout happens whether or
+  not Penfield could be reached, within 20 seconds, and the message says which. Penfield ends the
+  refresh token; an access token already handed out keeps working until it expires (up to 24
+  hours), and the message says so. Logout takes the refresh lock first, so a refresh running in
   another session finishes before the store goes, and nothing writes the store back afterwards.
   Your other PENpi sessions find the store gone at their next request and ask for `/penpi
   login` instead of refreshing. A Penfield connection the MCP tools already have open keeps
