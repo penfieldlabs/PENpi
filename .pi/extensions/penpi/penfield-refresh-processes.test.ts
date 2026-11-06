@@ -45,9 +45,9 @@ interface Rotating {
  * `revoke`: the revocation endpoint (0.6.1) answers 200 and ends the refresh token ("ok"), answers 503 ("down"),
  * answers after 10 s ("slow"), or is not in the metadata ("none"). "untrusted": the metadata names a revocation host
  * PENpi does not trust (revoke.penfield.app); "at-down": the access token's revocation answers 503, the refresh token's
- * succeeds (0.6.1 review, R1 and R2).
+ * succeeds (0.6.1 review, R1 and R2); "at-slow": the access token's revocation answers after 8 s (P1).
  */
-type RevokeMode = "ok" | "down" | "slow" | "none" | "untrusted" | "at-down";
+type RevokeMode = "ok" | "down" | "slow" | "none" | "untrusted" | "at-down" | "at-slow";
 
 async function startRotating(delayMs = 300, revoke: RevokeMode = "ok"): Promise<Rotating> {
 	let current = 1;
@@ -86,6 +86,8 @@ async function startRotating(delayMs = 300, revoke: RevokeMode = "ok"): Promise<
 			if (revoke === "down" || (revoke === "at-down" && form.get("token_type_hint") === "access_token"))
 				return json(503, { error: "temporarily_unavailable" });
 			if (revoke === "slow") await new Promise((r) => setTimeout(r, 10_000));
+			if (revoke === "at-slow" && form.get("token_type_hint") === "access_token")
+				await new Promise((r) => setTimeout(r, 8_000));
 			revoked.push({ token: form.get("token") ?? "", hint: form.get("token_type_hint") ?? "" });
 			if (form.get("token_type_hint") === "refresh_token") dead.add(form.get("token") ?? "");
 			return json(200, {});
@@ -398,6 +400,15 @@ describe("logout revokes the login at Penfield (0.6.1)", () => {
 		expect(out).toEqual([{ loggedOut: true, revocation: "revoked" }]);
 		expect(fx.revoked).toEqual([{ token: "RT1", hint: "refresh_token" }]); // the 503 is not recorded as revoked
 		expect(await refreshAt(fx, "RT1")).toBe(401);
+	}, 30_000);
+
+	it("0.6.1 review RV3: the limit fires while the access token's revocation hangs, after the refresh token's: revoked", async () => {
+		const fx = await fixture("at-slow");
+		seed(Date.now() + SKEW_MS + 60_000);
+		const out = await runChild({ STORE: store, PORT: String(fx.port), LOGOUT_AT: "0", REVOKE_TIMEOUT_MS: "3000" });
+		expect(out).toEqual([{ loggedOut: true, revocation: "revoked" }]);
+		expect(await refreshAt(fx, "RT1")).toBe(401); // RT1 is dead
+		expect(existsSync(store)).toBe(false);
 	}, 30_000);
 
 	it("0.6.1 review F1: no lock to be had, a refresh in flight elsewhere, then a logout: the refresh does not bring the store back", async () => {

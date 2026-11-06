@@ -11,15 +11,14 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
 ### Fixed
 - **Penfield login across several PENpi processes.** Penfield issues a new refresh token on every
   refresh and refuses one that was already used. Each PENpi process kept the refresh token it had
-  read, so when several sessions refreshed at once, or one refreshed after another already had, all
-  but one were told to run `/penpi login`. A process now reads the token store again before it
-  refreshes and uses a token another process already stored. Refreshing and saving happen under a
-  lock file beside the token store (`penfield-tokens-<env>.json.lock`, mode 600), which is taken
-  over after 70 seconds (four times the Penfield request timeout plus 10 seconds) if the process
-  holding it died. Anything else at the lock's path (a
-  directory, a symbolic link) or a stale lock that cannot be removed makes PENpi refresh without
-  the lock rather than wait. After a refused refresh token, PENpi reads the store once more
-  before asking for a login.
+  read, so when several sessions refreshed at once, or one refreshed after another already had,
+  all but one were told to run `/penpi login`. A process now reads the token store again before
+  it refreshes and uses a token another process already stored. Refreshing and saving happen
+  under a lock file beside the token store (`penfield-tokens-<env>.json.lock`, mode 600), which
+  is taken over after 70 seconds (four times the Penfield request timeout plus 10 seconds) if the
+  process holding it died. Anything else at the lock's path (a directory, a symbolic link) or a
+  stale lock that cannot be removed makes PENpi refresh without the lock rather than wait. After
+  a refused refresh token, PENpi reads the store once more before asking for a login.
 - **`context_recall` on a tool call returns its result.** Recalling the entry of a tool call
   (the id `context_search` lists for a hit on a file name) returned only the call, such as
   `read({"path":"ops/freeze-window.yaml"})`, and a model could take that for the whole answer.
@@ -69,17 +68,17 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
   refresh token) and clears `PENFIELD_JWT` for the session. The local logout happens whether or
   not the revocation worked. Logout may first wait for another session's refresh to finish (the
   refresh lock: up to 80 seconds by default), then gives the revocation at most 20 seconds. The
-  message says whether the login was revoked, Penfield refused (an HTTP error), Penfield could not
-  be reached, or the revocation endpoint Penfield advertises is not on an address PENpi trusts (it
-  is then not used; refresh and login are not affected). Penfield ends the
-  refresh token; an access token already handed out keeps working until it expires (up to 24
-  hours), and the message says so. Logout takes the refresh lock first, so a refresh running in
-  another session finishes before the store goes, and nothing writes the store back afterwards.
-  Your other PENpi sessions find the store gone at their next request and ask for `/penpi
-  login` instead of refreshing. A Penfield connection the MCP tools already have open keeps
-  working until it reconnects or its session ends, and the message says so. Uninstalling PENpi leaves
-  the login in place, so a reinstall keeps it, and its output now says where the token store is
-  and that `/penpi logout` removes it.
+  message says whether the login was revoked, Penfield refused (an HTTP error), Penfield could
+  not be reached, or the revocation endpoint Penfield advertises is not on an address PENpi
+  trusts (it is then not used; refresh and login are not affected). Penfield ends the refresh
+  token; an access token already handed out keeps working until it expires (up to 24 hours), and
+  the message says so. Logout takes the refresh lock first, so a refresh running in another
+  session finishes before the store goes, and no PENpi 0.6.1 session writes the store back
+  afterwards. Your other PENpi sessions find the store gone at their next request and ask for
+  `/penpi login` instead of refreshing. A Penfield connection the MCP tools already have open
+  keeps working until it reconnects, its session ends or its access token expires (up to 24
+  hours), and the message says so. Uninstalling PENpi leaves the login in place, so a reinstall
+  keeps it, and its output now says where the token store is and that `/penpi logout` removes it.
 - **The embedded MCP adapter subscribes to nothing on Pi's event bus.** 0.6.0 blocked the four
   request channels pi-mcp-adapter 7.0.0 listens on; 0.6.1 blocks every subscription, so a
   channel a later adapter release adds cannot answer other extensions unnoticed. The adapter

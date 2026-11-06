@@ -226,10 +226,15 @@ export async function logoutStoredLogin(
 			stored = undefined; // no store, or one that does not parse: nothing to revoke
 		}
 		let revocation: RevokeOutcome = { kind: "nothing" };
-		if (cfg.authMode !== "apiKey" && (stored?.refreshToken || stored?.accessToken))
-			revocation = await withTimeout(new TokenManager(cfg).revoke(stored), timeoutMs, "Penfield revocation").catch(
-				(error): RevokeOutcome => ({ kind: "unreachable", reason: errorText(error) }),
+		if (cfg.authMode !== "apiKey" && (stored?.refreshToken || stored?.accessToken)) {
+			const tm = new TokenManager(cfg);
+			// 0.6.1 review (P1): the limit can fire while the access token's best-effort request hangs, after the refresh
+			// token was revoked; that is a revoked login, not an unreachable Penfield.
+			revocation = await withTimeout(tm.revoke(stored), timeoutMs, "Penfield revocation").catch(
+				(error): RevokeOutcome =>
+					tm.refreshTokenRevoked ? { kind: "revoked" } : { kind: "unreachable", reason: errorText(error) },
 			);
+		}
 		rmSync(path, { force: true });
 		return { existed, revocation };
 	} finally {
@@ -290,6 +295,8 @@ export class TokenManager {
 	 * every write failed) has only its in-memory pair, and keeps using it.
 	 */
 	private storeSeen = false;
+	/** Set by revoke() once Penfield accepted the refresh token's revocation (logoutStoredLogin reads it: P1). */
+	refreshTokenRevoked = false;
 
 	constructor(cfg: PenfieldConfig, onDeviceCode?: (p: DeviceCodePrompt) => void) {
 		this.cfg = cfg;
@@ -459,6 +466,7 @@ export class TokenManager {
 			} catch (error) {
 				return failed(error);
 			}
+			this.refreshTokenRevoked = true;
 			if (stored.accessToken) await send(stored.accessToken, "access_token").catch(() => undefined);
 			return { kind: "revoked" };
 		}
