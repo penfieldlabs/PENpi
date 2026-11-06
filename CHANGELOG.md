@@ -6,7 +6,7 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
 
 ## [Unreleased]
 
-## [0.6.1] — Unreleased
+## [0.6.1] — 2026-11-06
 
 ### Fixed
 - **Penfield login across several PENpi processes.** Penfield issues a new refresh token on every
