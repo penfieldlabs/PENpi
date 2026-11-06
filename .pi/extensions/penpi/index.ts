@@ -41,7 +41,13 @@ import {
 import { installPenpiEngine } from "./engine/entry.ts";
 import type { EngineHandle } from "./engine/index.ts";
 import { type AdapterConfig, buildAdapterConfig, ensurePenfieldMcpEntry, JWT_ENV } from "./mcp-config.ts";
-import { PenfieldClient, type PenfieldClientOptions, type ToolResult } from "./penfield-client.ts";
+import {
+	LOGIN_REQUIRED,
+	logoutStoredLogin,
+	PenfieldClient,
+	type PenfieldClientOptions,
+	type ToolResult,
+} from "./penfield-client.ts";
 import { searchTranscripts, sessionDirForCwd } from "./transcript-search.ts";
 
 const STATE_CUSTOM_TYPE = "penpi-state";
@@ -260,14 +266,16 @@ export const BLOCKED_ADAPTER_EVENTS: ReadonlySet<string> = new Set([
  * adapter registers `/mcp`, which makes Pi leave its built-in MCP out, and does not connect servers
  * from other extensions; Pi reports each of those as registered but not connected.
  *
- * The same holds for the adapter's own event-bus requests (BLOCKED_ADAPTER_EVENTS): its `pi.events.on` for those
- * channels subscribes nothing, so a request another extension emits gets no answer. Its other events (status,
- * tool approval) pass. `onCommand` sees each command the adapter registers, so PENpi knows whether `/mcp` exists.
+ * The same holds for the adapter's event bus: its `pi.events.on` subscribes nothing, on every channel, so a request
+ * another extension emits gets no answer. 0.6.0 blocked the four request channels adapter 7.0.0 listens on
+ * (BLOCKED_ADAPTER_EVENTS, its only subscriptions); 0.6.1 blocks every subscription, so a channel a later adapter
+ * release adds cannot pass unnoticed. Its `emit` (status, tool approval) passes. `onCommand` sees each command the
+ * adapter registers, so PENpi knows whether `/mcp` exists.
  */
 export function withoutPiMcpServers(pi: ExtensionAPI, onCommand?: (name: string) => void): ExtensionAPI {
 	const events: ExtensionAPI["events"] = {
 		emit: (channel, data) => pi.events.emit(channel, data),
-		on: (channel, handler) => (BLOCKED_ADAPTER_EVENTS.has(channel) ? () => {} : pi.events.on(channel, handler)),
+		on: () => () => {},
 	};
 	const registerCommand: ExtensionAPI["registerCommand"] = (name, options) => {
 		onCommand?.(name);
@@ -412,12 +420,68 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps): void | Promise<voi
 	// /penpi [login] — status, or run the Penfield device-code login ceremony.
 	pi.registerCommand("penpi", {
 		description:
-			"PENpi status, `/penpi login` to authenticate Penfield (device code), `/penpi doctor` for the context engine's window and limits, `/penpi reset-limits` to forget learned limits",
+			"PENpi status, `/penpi login` to authenticate Penfield (device code), `/penpi logout` to remove the stored login, `/penpi doctor` for the context engine's window and limits, `/penpi reset-limits` to forget learned limits",
 		handler: async (args, ctx) => {
 			const sub = args.trim();
 			if (sub === "doctor" || sub === "reset-limits") {
 				if (engine) await engine.command(sub, ctx);
 				else ctx.ui.notify("PENpi: the context engine is not installed in this session.", "warning");
+				return;
+			}
+			if (sub === "logout") {
+				// 0.6.1: revoke the stored login at Penfield, remove it here, and clear this session's bearer.
+				const cfg = resolvePenfield();
+				await client?.disconnect();
+				client = undefined;
+				if (cfg.authMode === "deviceCode") ctx.ui.notify("PENpi: logging out of Penfield…", "info");
+				let result: Awaited<ReturnType<typeof logoutStoredLogin>>;
+				try {
+					result = await logoutStoredLogin(cfg);
+				} catch (err) {
+					ctx.ui.notify(
+						`PENpi: could not remove the stored Penfield login at ${cfg.tokenStorePath} — ${errLine(err)}`,
+						"error",
+					);
+					return;
+				}
+				delete process.env[JWT_ENV];
+				const { existed, revocation } = result;
+				const revoked =
+					revocation.kind === "revoked"
+						? "Revoked the login at Penfield and removed"
+						: revocation.kind === "no-endpoint"
+							? "Penfield advertises no way to revoke a login, so it is logged out here only. Removed"
+							: revocation.kind === "refused"
+								? `Penfield refused to revoke the login (${revocation.reason}): the refresh token stays valid on the server until it expires or is used. Removed`
+								: revocation.kind === "unreachable"
+									? `Could not reach Penfield to revoke the login (${revocation.reason}): the refresh token stays valid on the server until it expires or is used. Removed`
+									: revocation.kind === "untrusted"
+										? `Did not revoke the login: Penfield's metadata names a revocation endpoint PENpi does not trust (${revocation.reason}), so nothing was sent, and the refresh token stays valid on the server until it expires or is used. Removed`
+										: "Removed";
+				const lines = [
+					existed
+						? `PENpi: logged out of Penfield (${cfg.env}). ${revoked} the stored login at ${cfg.tokenStorePath} (access and refresh token), and cleared ${JWT_ENV} for this session.`
+						: `PENpi: no stored Penfield login at ${cfg.tokenStorePath}; cleared ${JWT_ENV} for this session.`,
+				];
+				if (cfg.authMode === "apiKey")
+					lines.push(
+						"  An API key is configured (settings or PENPI_PENFIELD_API_KEY); there is no stored login to revoke, and the key is not removed, so PENpi logs in again with it at the next start.",
+					);
+				else {
+					// 0.6.1 review (N2): exactly what stops and what keeps working.
+					lines.push(
+						`  Stops now: PENpi's own use of Penfield in this session, and in your other PENpi sessions at their next request (they ask for \`/penpi login\`)${revocation.kind === "revoked" ? "; any refresh with the old refresh token, which Penfield has revoked" : ""}.`,
+					);
+					// Penfield ends the refresh token, not an access token already handed out; the adapter offers PENpi no
+					// handle on its connections, so an open one is not closed either.
+					if (existed)
+						lines.push(
+							"  Keeps working: a Penfield connection the MCP tools already have open, here or in another session, keeps its bearer until it reconnects (it then has no login) or the access token expires. Penfield does not end an access token on revocation, so that is up to 24 hours.",
+						);
+				}
+				const notRevoked =
+					revocation.kind === "refused" || revocation.kind === "unreachable" || revocation.kind === "untrusted";
+				ctx.ui.notify(lines.join("\n"), notRevoked ? "warning" : "info");
 				return;
 			}
 			if (sub === "login") {
@@ -459,7 +523,7 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps): void | Promise<voi
 					`  Orientation: ${status.injecting === false ? "skipped (raw diagnostic)" : status.injecting ? "automatic" : "?"} (briefing ${penpiCfg.displayBriefing ? "shown" : "hidden"})`,
 					`  Context: ${engine ? "context engine (run /penpi doctor for the window, calibration and limits)" : "context engine not installed"}`,
 					`  saveContextOnShutdown: ${penpiCfg.saveContextOnShutdown}`,
-					"  (run `/penpi login` if unauthenticated; `--penpi-raw` diagnoses behavior without automatic orientation)",
+					"  (run `/penpi login` if unauthenticated, `/penpi logout` to remove the stored login; `--penpi-raw` diagnoses behavior without automatic orientation)",
 				].join("\n"),
 				"info",
 			);
@@ -485,7 +549,10 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps): void | Promise<voi
 			),
 		}),
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-			const dir = sessionDirForCwd(ctx.cwd);
+			// 0.6.1: the folder Pi itself writes this project's sessions to (sessionDir, --session-dir,
+			// PI_CODING_AGENT_SESSION_DIR), not one rebuilt from the cwd; an in-memory session has none.
+			const own = sessionDirForCwd(ctx.cwd);
+			const dir = ctx.sessionManager.getSessionDir() || own;
 			// Deliberately searches ALL session logs including the live one: after a cut the
 			// messages that rolled out of the context window are in the CURRENT session's
 			// transcript, which is precisely what Tier 3 exists to reach. (Cost: a query can
@@ -494,6 +561,8 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps): void | Promise<voi
 			const res = await searchTranscripts(dir, params.query, {
 				limit: params.limit ?? 10,
 				hiddenCustomTypes: [BRIEFING_CUSTOM_TYPE, ...(engine?.options.hiddenCustomTypes ?? [])],
+				// 0.6.1 review: a folder that is not this project's own holds other projects' sessions too.
+				...(resolve(dir) === resolve(own) ? {} : { onlyCwd: ctx.cwd }),
 			});
 			if (res.matches.length === 0) {
 				return {
@@ -924,8 +993,10 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps): void | Promise<voi
 			.then((t) => {
 				process.env[JWT_ENV] = t;
 			})
-			.catch(() => {
-				/* keep the previous token; next call retries */
+			.catch((err) => {
+				// 0.6.1 review: logged out (here or in another session): the adapter must not reconnect with the old
+				// bearer. Any other failure keeps the previous token; the next call retries.
+				if ((err as Error)?.message === LOGIN_REQUIRED) delete process.env[JWT_ENV];
 			});
 	}
 }

@@ -99,6 +99,7 @@ SSH tunnel.
 ```bash
 pi
 /penpi login                 # authenticate with Penfield using the device-code flow
+/penpi logout                # remove the stored Penfield login
 ```
 
 ## Install

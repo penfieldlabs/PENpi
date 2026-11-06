@@ -126,9 +126,12 @@ Three more points from the external review of PR #42 (0.6.0):
 - **The adapter's event bus.** Adapter 7.x also answers requests from any extension on
   `pi.events`: register a server and connect it on use, read one back, call any MCP tool
   (Penfield's included), and open a raw MCP session to a configured server. PENpi uses
-  none of them. The `ExtensionAPI` view the adapter gets subscribes nothing on those four
-  channels (`BLOCKED_ADAPTER_EVENTS`), so such a request gets no answer; the adapter's
-  status and tool-approval events pass. So no MCP server from another extension is
+  none of them. The `ExtensionAPI` view the adapter gets subscribes nothing on the event
+  bus, on any channel (0.6.0 blocked the four request channels adapter 7.0.0 listens on,
+  `BLOCKED_ADAPTER_EVENTS`, which are its only subscriptions; 0.6.1 blocks every
+  subscription, so a channel a later adapter release adds cannot pass unnoticed). Such a
+  request gets no answer; the adapter's own status and tool-approval events, which it
+  emits, pass. So no MCP server from another extension is
   connected, whether it comes through `pi.registerMcpServer()` or the adapter's bus, and
   no extension calls Penfield's tools through the adapter. A probe extension in the
   integration suite sends all four and gets no answer, no server and no tool call.

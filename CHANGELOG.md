@@ -6,6 +6,91 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
 
 ## [Unreleased]
 
+## [0.6.1] — 2026-11-06
+
+### Fixed
+- **Penfield login across several PENpi processes.** Penfield issues a new refresh token on every
+  refresh and refuses one that was already used. Each PENpi process kept the refresh token it had
+  read, so when several sessions refreshed at once, or one refreshed after another already had,
+  all but one were told to run `/penpi login`. A process now reads the token store again before
+  it refreshes and uses a token another process already stored. Refreshing and saving happen
+  under a lock file beside the token store (`penfield-tokens-<env>.json.lock`, mode 600), which
+  is taken over after 70 seconds (four times the Penfield request timeout plus 10 seconds) if the
+  process holding it died. Anything else at the lock's path (a directory, a symbolic link) or a
+  stale lock that cannot be removed makes PENpi refresh without the lock rather than wait. After
+  a refused refresh token, PENpi reads the store once more before asking for a login. After
+  upgrading, restart the PENpi sessions still running 0.6.0: they take no lock and do not read
+  the store again, so they can still be told to run `/penpi login`, and can write the store back
+  after a logout.
+- **`context_recall` on a tool call returns its result.** Recalling the entry of a tool call
+  (the id `context_search` lists for a hit on a file name) returned only the call, such as
+  `read({"path":"ops/freeze-window.yaml"})`, and a model could take that for the whole answer.
+  The result now follows the call: in full when it fits the page, otherwise a line naming the
+  result's entry to recall. The page keeps its limits: each result is measured in tokens at its
+  own density, the pointer lines count too, and when not even a pointer fits, one line says how
+  many more results there are.
+- **The engine says when it steps aside.** When a request's messages do not match the engine's
+  record of the session, the engine sends them uncut and does not manage the window. Another
+  extension that adds or removes messages in Pi's `context` event causes this on every request,
+  and nothing told the user. The engine now warns once per session (on stderr in print and json
+  mode), `/penpi doctor` shows the count, and KNOWN_LIMITATIONS lists the incompatibility. An
+  extension that rewrites a message's content and keeps the roles is not detected: the engine
+  sends its own copy, so the rewrite is undone without a warning (KNOWN_LIMITATIONS).
+- **The installer accepts packages written as objects.** Pi's settings allow a package as a
+  string or as an object with a `source` and resource filters; the installer refused the object
+  form ("packages must be an array of strings") and stopped. It now accepts both, and removes a
+  stock `pi-mcp-adapter` given either way.
+- **Engine settings that contradict each other are caught.** Each value in the `penpi` block was
+  checked alone, so `lowWater` at or above `highWater`, or `ratioFloor` above `ratioCeiling`,
+  was accepted (with `lowWater: 0.9, highWater: 0.5` a session cut 86 times instead of 8). Such
+  a pair now falls back to the defaults for both, with a warning. A key PENpi does not know,
+  such as a misspelling, is reported with the closest known name.
+- **`search_transcript` searches the session folder Pi uses.** It built the folder from the
+  working directory, so with `sessionDir` in settings, `--session-dir` or
+  `PI_CODING_AGENT_SESSION_DIR` it searched a folder with no sessions. It now asks Pi for the
+  session's folder. A custom folder holds every project's sessions, so there it reads only the
+  sessions whose header names this project's folder, as Pi's own session list does.
+- **Stdio MCP servers no longer get the Penfield credentials.** PENpi keeps the Penfield bearer
+  in its environment as `PENFIELD_JWT` for the MCP adapter, and the adapter starts a stdio
+  server with that whole environment, so every stdio server in the global `mcp.json` received
+  the bearer (and an API key in `PENPI_PENFIELD_API_KEY`). PENpi now gives each stdio server
+  both empty; a server whose own `env` names one keeps what it names. Pi's shell already
+  stripped both from the commands the agent runs.
+- **An expired login code is named as such.** When the device login's code expired before it
+  was approved, `/penpi login` reported "device-code polling failed: invalid_grant" (Penfield's
+  answer for an expired code). It now says the code expired and to run `/penpi login` again.
+- **A `penpi` block in a project's settings is reported once.** The warning that it is ignored
+  printed several times per start (six in one review); it now prints once.
+- **The docs say what they should.** KNOWN_LIMITATIONS no longer says the token store is written
+  in place (it is written to a temporary file and renamed); AGENTS.md says what the commit hook
+  runs (`npm run check` and the lockfile check, not `npm test`).
+
+### Changed
+- **`/penpi logout`** revokes the login at Penfield (the refresh token, then the access token, at
+  the revocation endpoint Penfield advertises), removes the stored Penfield login (access and
+  refresh token) and clears `PENFIELD_JWT` for the session. The local logout happens whether or
+  not the revocation worked. Logout may first wait for another session's refresh to finish (the
+  refresh lock: up to 80 seconds by default), then gives the revocation at most 20 seconds. The
+  message says whether the login was revoked, Penfield refused (an HTTP error), Penfield could
+  not be reached, or the revocation endpoint Penfield advertises is not on an address PENpi
+  trusts (it is then not used; refresh and login are not affected). Penfield ends the refresh
+  token; an access token already handed out keeps working until it expires (up to 24 hours), and
+  the message says so. Logout takes the refresh lock first, so a refresh running in another
+  session finishes before the store goes, and no PENpi 0.6.1 session writes the store back
+  afterwards. Your other PENpi sessions find the store gone at their next request and ask for
+  `/penpi login` instead of refreshing. A Penfield connection the MCP tools already have open
+  keeps working until it reconnects, its session ends or its access token expires (up to 24
+  hours), and the message says so. After logging in as a different account, restart the PENpi
+  sessions that were running: a session that was idle through the logout and the new login finds
+  a store again and keeps the old account's access token (up to 24 hours), so its memory goes to
+  the old account. Uninstalling PENpi leaves the login in place, so a reinstall keeps it, and its
+  output now says where the token store is and that `/penpi logout` removes it.
+- **The embedded MCP adapter subscribes to nothing on Pi's event bus.** 0.6.0 blocked the four
+  request channels pi-mcp-adapter 7.0.0 listens on; 0.6.1 blocks every subscription, so a
+  channel a later adapter release adds cannot answer other extensions unnoticed. The adapter
+  still emits its status and tool-approval events. `/mcp`, Penfield's tools and the adapter's
+  status work as before.
+
 ## [0.6.0] — 2026-11-05
 
 ### Changed

@@ -81,15 +81,24 @@ function piAgentDir(): string {
 	return process.env.PI_CODING_AGENT_DIR?.trim() || join(homedir(), ".pi", "agent");
 }
 
+/** Project settings files whose ignored `penpi` block was already reported (0.6.1: once per process, not per read). */
+const reportedProjectBlocks = new Set<string>();
+
 /**
  * Read `penpi` from the global agent settings only. A `penpi` block in the project
  * .pi/settings.json is ignored, with a warning so a user who put settings there
- * learns why they have no effect.
+ * learns why they have no effect. PENpi reads its settings several times while it
+ * starts (six in 0.6.0), so the warning is given once per file.
  */
 export function loadPenpiSettings(): PenpiSettings {
 	const globalPath = resolve(piAgentDir(), "settings.json");
 	const projectPath = resolve(process.cwd(), ".pi", "settings.json");
-	if (projectPath !== globalPath && readJson(projectPath)?.penpi !== undefined) {
+	if (
+		projectPath !== globalPath &&
+		!reportedProjectBlocks.has(projectPath) &&
+		readJson(projectPath)?.penpi !== undefined
+	) {
+		reportedProjectBlocks.add(projectPath);
 		console.error(
 			`[PENpi] ignoring the "penpi" block in ${projectPath} — PENpi settings are global-only ` +
 				`(${globalPath}), so a repository cannot reconfigure PENpi.`,

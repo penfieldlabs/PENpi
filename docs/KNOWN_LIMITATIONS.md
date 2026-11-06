@@ -12,12 +12,51 @@ dependencies in the root lock are integrity-hashed. Versions and generated-lock 
 reduce accidental drift, and CI runs npm signature verification, but the missing hashes
 leave weaker artifact verification for the inherited core packages.
 
-## Penfield token-store crash recovery
+## The Penfield token store
 
-The OAuth token store is permission-restricted (`0700` directory, `0600` file) but written
-directly rather than through temporary-file-plus-rename replacement. A process or machine
-failure during that write can leave malformed JSON. PENpi then fails closed and requires a
-fresh `/penpi login`; it does not attempt to recover a partially written refresh token.
+PENpi keeps the Penfield login (access and refresh token) in
+`~/.config/penpi/penfield-tokens-<env>.json`, or the file `penpi.penfield.tokenStore` or
+`PENPI_PENFIELD_TOKEN_STORE` names: mode `0600` in a `0700` folder. It writes a temporary file in
+the same folder and renames it over the store, so a crash leaves the old or the new file, never
+a partial one. A store that does not parse (one edited by hand) counts as no login: run
+`/penpi login`. Since 0.6.1 a refresh holds a lock file beside the store (`<store>.lock`); one
+left by a process that died during a refresh is taken over after 70 seconds (four times the
+Penfield request timeout, `PENPI_PENFIELD_TIMEOUT_MS`, plus 10 seconds), and a session
+starting in that minute may wait for it. Anything else at the lock's path (a directory, a
+symbolic link), or a stale lock in a folder PENpi cannot write, makes PENpi refresh without the
+lock. `/penpi logout` takes the lock, revokes the login at Penfield's revocation endpoint (the
+refresh token, then the access token), then removes the store, whether or not Penfield could be
+reached. Penfield ends the refresh token, so nothing can refresh with it again; an access token
+already handed out keeps working until it expires, up to 24 hours. Other PENpi sessions stop
+using their login at their next request, but a Penfield connection the MCP adapter already has
+open keeps its bearer until then, or until it reconnects or its session ends: PENpi has no way
+to close it. If Penfield refused the revocation, could not be reached within the revocation's 20
+seconds, or advertises a revocation endpoint outside the Penfield addresses PENpi trusts (it is
+then not used, and refresh and login carry on), the refresh token stays valid on the server
+until it expires or is used; the logout message says which. Before revoking, logout waits for
+the refresh lock if another session holds it, up to 80 seconds by default.
+Uninstalling PENpi does not remove the store; its output says where it is.
+
+A session checks only whether the store exists, not whose login it holds. After `/penpi logout`
+and a `/penpi login` as a different account, a session that was idle through both finds a store
+again and keeps the old account's access token, up to 24 hours, so its memory goes to the old
+account. After logging in as a different account, restart the PENpi sessions that were running.
+
+## Penfield credentials and the programs PENpi starts
+
+PENpi publishes the Penfield bearer in its own process environment as `PENFIELD_JWT`, where the
+embedded MCP adapter reads it for the `penfield` entry. Pi's shell strips it, and
+`PENPI_PENFIELD_API_KEY`, from the commands the agent runs. Since 0.6.1 every stdio MCP server in
+the global `mcp.json` gets both empty in its environment; a server whose own `env` names one of
+them keeps what it names. The variables are set to an empty string, not removed: the MCP
+adapter starts a stdio server with PENpi's whole environment and lays the server's `env` over
+it, and offers no way to remove a variable (its `inheritEnv: false` would also remove `PATH`
+and `HOME`). A server that checks only whether `PENFIELD_JWT` is present, not its value, sees it
+present and empty. The full fix is to keep the bearer out of the environment altogether (a
+header PENpi resolves itself), which is a larger change than 0.6.1 makes. A program started some
+other way with PENpi's whole environment, by another extension for example, still sees them.
+The MCP adapter itself does this in two places: the commands it runs for `!command` secret
+values and for request headers get PENpi's whole environment, `PENFIELD_JWT` included.
 
 ## Global uninstall scope
 
@@ -26,7 +65,9 @@ override, and shell-profile block. It does not remove the runtime-generated
 `mcpServers.penfield` entry from `~/.pi/agent/mcp.json`, because that file is shared with
 user-managed MCP servers. The entry contains endpoint/configuration metadata and an
 environment-variable name, not the token itself. Remove only that JSON entry manually if
-complete configuration cleanup is required.
+complete configuration cleanup is required. Uninstall also leaves the Penfield login in the
+token store, so a reinstall keeps it; run `/penpi logout` before uninstalling to remove it
+(the uninstall output says where it is).
 
 ## Settings-file permissions
 
@@ -71,6 +112,22 @@ the same. Such a truncation goes unseen until a larger one follows. In E2 one wa
 tokens (2.3%); on the 0.5.x corpus it made research.glm.32k.silent-messages fail C6 (lag 4). E2
 accepts such misses inside C8's band (0.02 plus the estimate error, at most 5%); outside the band,
 a truncated answer must be named.
+
+## Extensions that change messages in Pi's `context` event
+
+The context engine plans each request against its own record of the session, and checks Pi's
+messages against it by their roles. Another extension that adds or removes messages in Pi's
+`context` event makes the request's messages differ from that record. The engine then sends
+Pi's messages uncut: it does not manage the window for those requests, and a long session can
+outgrow it until the provider refuses the request as too long. Since 0.6.1 the engine says so
+once per session (in print and json mode on stderr), and `/penpi doctor` counts the requests
+("requests not matching the engine's record").
+
+An extension that rewrites a message's content and keeps the roles and the number of messages
+is not detected: the engine sends its own copy of the message, so the rewrite is undone without
+a warning. Both kinds of extension are not compatible with the engine; remove them, or make
+them change messages another way. Making the engine stay in step with such extensions is a
+0.7.0 question (ROADMAP).
 
 ## `pi mcp list` and a trusted project's MCP servers
 

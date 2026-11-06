@@ -86,7 +86,8 @@ The context engine's settings (`windowCeiling`, `highWater` / `lowWater`, `limit
 `pinUserMessages` and the rest) go in the same `penpi` block and have no env vars; see
 [docs/CONTEXT_ENGINE.md](../../../docs/CONTEXT_ENGINE.md#settings). PENpi 0.4's FIFO settings
 (`contextFloor`, `contextCeiling`, `emergencyCompactionRuns`) and their env vars are no
-longer read; PENpi warns at startup when one is set.
+longer read; PENpi warns at startup when one is set, and when the block holds a key it does
+not know (naming the closest known one).
 
 Other env: `PENPI_DEBUG=1` (verbose hook logging); `PENPI_ENGINE_LOG=<path>` (the context
 engine's log, off by default); `PENFIELD_JWT` (set by PENpi for the adapter — do not set
@@ -100,6 +101,10 @@ manually).
 - **`/penpi`** — status: Penfield auth/connection, automatic orientation, and whether the
   context engine is installed.
 - **`/penpi login`** — run the Penfield device-code login (RFC 8628).
+- **`/penpi logout`** — revoke the Penfield login at Penfield, remove the stored login (access
+  and refresh token, in the token store) and clear `PENFIELD_JWT` for the session. A Penfield
+  connection the MCP tools already have open keeps working until it reconnects or its access
+  token expires (up to 24 hours). An API key in settings or the environment is not removed.
 - **`/penpi doctor`** — the context engine's effective window and output limit and where
   they come from, the cut band, the calibration ratio, learned limits with their evidence,
   answers produced from truncated input, and the settings that apply.

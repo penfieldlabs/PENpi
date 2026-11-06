@@ -96,7 +96,16 @@ function makeSnippet(text: string, idx: number, query: number): string {
 export async function searchTranscripts(
 	dir: string,
 	query: string,
-	opts: { limit?: number; excludeFile?: string; hiddenCustomTypes?: string[] } = {},
+	opts: {
+		limit?: number;
+		excludeFile?: string;
+		hiddenCustomTypes?: string[];
+		/**
+		 * 0.6.1 review: search only sessions whose header `cwd` is this one. For a folder that is not the cwd's own
+		 * (a custom `sessionDir`, which Pi keeps flat for every project), as Pi's `SessionManager.list` filters it.
+		 */
+		onlyCwd?: string;
+	} = {},
 ): Promise<TranscriptSearchResult> {
 	// Custom messages never sent to the model (PENpi 0.4's briefing messages in resumed sessions): their text is
 	// Penfield memory, which must not come back as tool output outside the fence.
@@ -125,9 +134,20 @@ export async function searchTranscripts(
 		}
 		filesSearched++;
 		const stream = createReadStream(resolve(dir, file), "utf8");
+		// With onlyCwd, the first line (the session header) decides whether this file is read at all.
+		let checked = opts.onlyCwd === undefined;
+		let skipped = false;
 		try {
 			const rl = createInterface({ input: stream, crlfDelay: Number.POSITIVE_INFINITY });
 			for await (const line of rl) {
+				if (!checked) {
+					if (!line.trim()) continue;
+					checked = true;
+					if (!headerMatches(line, opts.onlyCwd as string)) {
+						skipped = true;
+						break;
+					}
+				}
 				if (matches.length >= limit) {
 					truncated = true;
 					break; // closes the readline iterator + stops reading this file
@@ -155,8 +175,25 @@ export async function searchTranscripts(
 		} finally {
 			stream.destroy();
 		}
+		// Another project's session (or one with no header) was not searched.
+		if (!checked || skipped) filesSearched--;
 	}
 	return { matches, filesSearched, dir, truncated };
+}
+
+/** Whether a session file's first line is a header whose `cwd` resolves to `cwd` (Pi's sessionCwdMatches). */
+function headerMatches(line: string, cwd: string): boolean {
+	try {
+		const header = JSON.parse(line) as { type?: unknown; cwd?: unknown };
+		return (
+			header.type === "session" &&
+			typeof header.cwd === "string" &&
+			header.cwd !== "" &&
+			resolve(header.cwd) === resolve(cwd)
+		);
+	} catch {
+		return false;
+	}
 }
 
 function safeMtime(p: string): number {

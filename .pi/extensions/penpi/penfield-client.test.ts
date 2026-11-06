@@ -188,6 +188,53 @@ describe("token refresh + OAuth discovery", () => {
 	});
 });
 
+describe("device login (0.6.1)", () => {
+	const STORE = "/tmp/penpi-device-login-test.json";
+	afterEach(() => rmSync(STORE, { force: true }));
+
+	for (const error of ["invalid_grant", "expired_token"])
+		it(`a code that expired before approval (${error}) says so and to run /penpi login again`, async () => {
+			const json = (status: number, obj: unknown) => ({
+				ok: status < 400,
+				status,
+				json: async () => obj,
+				text: async () => JSON.stringify(obj),
+			});
+			vi.stubGlobal(
+				"fetch",
+				vi.fn(async (url: unknown) => {
+					const u = String(url);
+					if (u.includes("oauth-protected-resource"))
+						return json(200, { authorization_servers: ["https://auth-dev.penfield.app"] });
+					if (u.includes("oauth-authorization-server"))
+						return json(200, {
+							device_authorization_endpoint: "https://auth-dev.penfield.app/device",
+							token_endpoint: "https://auth-dev.penfield.app/token",
+						});
+					if (u.endsWith("/device"))
+						return json(200, {
+							device_code: "d",
+							user_code: "U",
+							verification_uri: "https://x",
+							expires_in: 600,
+							interval: 0.01,
+						});
+					return json(400, { error }); // Penfield answers an expired device code with invalid_grant
+				}),
+			);
+			const tm = new TokenManager({
+				...cfg,
+				authMode: "deviceCode",
+				apiKey: undefined,
+				clientId: "cid",
+				tokenStorePath: STORE,
+			});
+			await expect(tm.login()).rejects.toThrow(
+				"the Penfield login code expired before it was approved — run /penpi login again",
+			);
+		});
+});
+
 describe("PenfieldClient connect + callTool (SDK mocked)", () => {
 	it("connects, parses a JSON tool result, and disconnects", async () => {
 		const c = new PenfieldClient({ ...cfg });

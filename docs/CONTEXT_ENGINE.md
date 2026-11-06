@@ -86,7 +86,7 @@ warning, and the default applies (ADR 0030).
 | setting | default | meaning |
 |---|---|---|
 | `windowCeiling` | `200000` | plan against min(model window, this); `0` or `null` disables it |
-| `highWater` / `lowWater` | `0.75` / `0.45` | cut above this fraction of the input budget, down to that one |
+| `highWater` / `lowWater` | `0.75` / `0.45` | cut above this fraction of the input budget, down to that one; `lowWater` must be below `highWater`, or both fall back to their defaults |
 | `maxUnitFraction` | `0.25` | the most of the input budget one tool result or user message may use |
 | `outputReserveFraction` | `0.2` | the share of the window reserved for output, capped by the model's max output |
 | `limitOverrides` | `{}` | per model (`"provider/modelId"`): `contextWindow`, `maxTokens`; an explicit window bypasses `windowCeiling` |
@@ -97,7 +97,7 @@ warning, and the default applies (ADR 0030).
 | `notice` | `false` | `true` adds a request-only notice shortly before a cut, naming what will leave view |
 | `serializeAs` | — | per model or API name: which of Pi's converters its requests go through, for providers registered under their own API name |
 
-`engine/options.ts` lists every option with its documentation. The detector's thresholds and the
+A value of the wrong type or out of range is ignored with a warning, as is a pair that contradicts itself (`lowWater` not below `highWater`, `ratioFloor` above `ratioCeiling`: both fall back to their defaults) and a key PENpi does not know (the warning names the closest known one). `engine/options.ts` lists every option with its documentation. The detector's thresholds and the
 retry bounds are settings too, but they are tuning values, not user settings.
 
 PENpi 0.4's FIFO settings (`contextFloor`, `contextCeiling`, `emergencyCompactionRuns`) and their

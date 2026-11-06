@@ -33,7 +33,9 @@ window, and a model with no declared window is planned against a default of 32,7
   project's `.mcp.json` or `.pi/mcp.json` ([ADR 0026](adr/0026-global-only-configuration.md)).
 
 Both share **one token** ([ADR 0009](adr/0009-single-shared-jwt.md)): PENpi owns auth and
-hands the JWT to the adapter via `PENFIELD_JWT` + a generated `mcp.json` entry.
+hands the JWT to the adapter via `PENFIELD_JWT` + a generated `mcp.json` entry. Pi's shell strips
+`PENFIELD_JWT` from the commands the agent runs, and since 0.6.1 stdio MCP servers get it empty
+(KNOWN_LIMITATIONS, "Penfield credentials and the programs PENpi starts").
 
 ## Hooks (the extension)
 

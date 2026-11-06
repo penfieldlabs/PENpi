@@ -894,6 +894,48 @@ describe("integration: Penfield direct tools across both startup paths", () => {
 	);
 
 	it.skipIf(!ready)(
+		"a stdio server from the global mcp.json does not get the Penfield bearer, and Penfield's tools still work (0.6.1)",
+		async () => {
+			// PENpi publishes PENFIELD_JWT in process.env for the adapter's penfield entry, and the adapter starts a stdio
+			// server with all of process.env. The server records only whether the variable reached it, never its value.
+			const profile = cleanProfile();
+			const tokenStore = join(profile, "penfield-tokens-dev.json");
+			writeFileSync(tokenStore, JSON.stringify({ accessToken: SEEDED_TOKEN, expiresAt: Date.now() + 3_600_000 }), {
+				mode: 0o600,
+			});
+			const marker = join(profile, "stdio-saw-jwt");
+			const probe = `const v = process.env.PENFIELD_JWT; require("fs").writeFileSync(${JSON.stringify(marker)}, v === undefined ? "unset" : v === "" ? "empty" : "set")`;
+			writeFileSync(
+				join(profile, "mcp.json"),
+				JSON.stringify({
+					mcpServers: { envprobe: { command: process.execPath, args: ["-e", probe], lifecycle: "eager" } },
+				}),
+			);
+			const fixture = await startFixturePenfield(SEEDED_TOKEN);
+			const previousDispatcher = redirectTo(fixture);
+			const restoreEnv = [...sessionEnv(profile, tokenStore), setEnv("PENPI_MCP_LIFECYCLE", "eager")];
+			let session: Session | undefined;
+			try {
+				session = await startSession(profile);
+				await session.runner.emit({ type: "session_start", reason: "startup" });
+				expect(process.env.PENFIELD_JWT, "PENpi published the bearer before the adapter started its servers").toBe(
+					SEEDED_TOKEN,
+				);
+				await waitFor(() => existsSync(marker));
+				expect(readFileSync(marker, "utf8")).toBe("empty");
+				await waitFor(() => session?.active.has("penfield_recall") === true);
+				await session.runner.emit({ type: "session_shutdown", reason: "quit" });
+			} finally {
+				await session?.dispose();
+				for (const restore of restoreEnv) restore();
+				setGlobalDispatcher(previousDispatcher);
+				await fixture.close();
+			}
+		},
+		90_000,
+	);
+
+	it.skipIf(!ready)(
 		"Pi's built-in MCP stays out: no second Penfield client, nothing from a trusted project, other extensions' servers not connected",
 		async () => {
 			// pi-mcp-adapter 7.x leaves `/mcp` to Pi when it sees `pi.registerMcpServer` under a host-supplied config,

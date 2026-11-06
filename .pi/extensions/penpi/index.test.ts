@@ -1,5 +1,14 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readdirSync,
+	readFileSync,
+	rmSync,
+	utimesSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -133,6 +142,7 @@ beforeEach(() => {
 	for (const k of Object.keys(process.env)) if (k.startsWith("PENPI_") || k === "PENFIELD_JWT") delete process.env[k];
 });
 afterEach(() => {
+	vi.unstubAllGlobals(); // 0.6.1: the logout tests stub fetch (no live call to Penfield)
 	for (const k of Object.keys(process.env)) if (k.startsWith("PENPI_") || k === "PENFIELD_JWT") delete process.env[k];
 	(globalThis as { __PENPI_LOADED__?: boolean }).__PENPI_LOADED__ = undefined;
 });
@@ -144,6 +154,56 @@ function load(flags: Record<string, boolean> = {}, clientOver: Record<string, an
 	penpiCore(f.pi as never, { makeClient: () => stub.client, ensureMcpEntry: () => "/tmp/penpi-test-mcp.json" });
 	return { ...f, stub };
 }
+
+describe("search_transcript (0.6.1)", () => {
+	const line = (o: unknown) => `${JSON.stringify(o)}\n`;
+	const session = (cwd: string, text: string) =>
+		line({ type: "session", version: 3, id: "s", timestamp: "2026-11-05T10:00:00.000Z", cwd }) +
+		line({ type: "message", id: "m", message: { role: "user", content: [{ type: "text", text }], timestamp: 1 } });
+	const search = async (folder: string, cwd: string, query: string) => {
+		const { tools } = load();
+		const tool = tools.search_transcript as {
+			execute: (...a: unknown[]) => Promise<{ content: Array<{ text: string }> }>;
+		};
+		return (
+			await tool.execute("t1", { query }, undefined, undefined, {
+				cwd,
+				sessionManager: { getSessionDir: () => folder },
+			})
+		).content[0].text;
+	};
+
+	it("searches the session folder Pi uses (a custom sessionDir), not one rebuilt from the cwd", async () => {
+		const custom = mkdtempSync(join(tmpdir(), "penpi-custom-sessions-"));
+		const cwd = mkdtempSync(join(tmpdir(), "penpi-project-"));
+		writeFileSync(join(custom, "2026-11-05T10-00-00-000Z_s1.jsonl"), session(cwd, "the vault code is QUARTZ-17"));
+		const text = await search(custom, cwd, "quartz-17");
+		expect(text).toContain("1 match(es)");
+		expect(text).toContain("the vault code is QUARTZ-17");
+		rmSync(custom, { recursive: true, force: true });
+	});
+
+	it("in a custom folder shared by every project, another project's session is not searched (0.6.1 review, F1)", async () => {
+		const custom = mkdtempSync(join(tmpdir(), "penpi-flat-sessions-"));
+		writeFileSync(
+			join(custom, "2026-11-05T10-00-00-000Z_other.jsonl"),
+			session("/work/other-project", "other project: the deploy password is TOPAZ-9"),
+		);
+		writeFileSync(
+			join(custom, "2026-11-05T11-00-00-000Z_this.jsonl"),
+			session("/work/this-project", "this project: the password is OPAL-3"),
+		);
+		writeFileSync(
+			join(custom, "2026-11-05T12-00-00-000Z_noheader.jsonl"),
+			line({ type: "message", message: { role: "user", content: "password" } }),
+		);
+		const text = await search(custom, "/work/this-project", "password");
+		expect(text).toContain("OPAL-3");
+		expect(text).not.toContain("TOPAZ-9");
+		expect(text).toContain("across 1 session file(s)");
+		rmSync(custom, { recursive: true, force: true });
+	});
+});
 
 describe("penpiCore registration", () => {
 	it("registers its five hooks, command, two flags, and transcript tool (the context engine registers its own)", () => {
@@ -523,6 +583,106 @@ describe("/penpi login command", () => {
 		await commands.penpi("login", ctx);
 		expect(notifies.some((n) => n.level === "error" && /denied/i.test(n.msg))).toBe(true);
 		expect(stub.client.disconnect).toHaveBeenCalled();
+	});
+
+	/** Penfield's OAuth metadata and a revocation endpoint answering `status`, as fetch sees them (no live call). */
+	function stubPenfield(status: number) {
+		const revoked: string[] = [];
+		const reply = (code: number, body: unknown) =>
+			new Response(JSON.stringify(body), { status: code, headers: { "content-type": "application/json" } });
+		vi.stubGlobal("fetch", async (url: unknown, init?: RequestInit) => {
+			const u = String(url);
+			if (u.includes("oauth-protected-resource"))
+				return reply(200, { authorization_servers: ["https://auth.penfield.app"] });
+			if (u.includes("oauth-authorization-server"))
+				return reply(200, {
+					device_authorization_endpoint: "https://auth.penfield.app/device",
+					token_endpoint: "https://auth.penfield.app/oauth/token",
+					revocation_endpoint: "https://auth.penfield.app/oauth/revoke",
+				});
+			if (u.endsWith("/oauth/revoke")) {
+				revoked.push(new URLSearchParams(String(init?.body)).get("token_type_hint") ?? "");
+				return reply(status, status === 200 ? {} : { error: "temporarily_unavailable" });
+			}
+			return reply(404, {});
+		});
+		return revoked;
+	}
+
+	function seedLogin() {
+		const dir = mkdtempSync(join(tmpdir(), "penpi-logout-"));
+		const store = join(dir, "penfield-tokens-prod.json");
+		writeFileSync(store, JSON.stringify({ clientId: "c", accessToken: "a", refreshToken: "r", expiresAt: 0 }), {
+			mode: 0o600,
+		});
+		process.env.PENPI_PENFIELD_TOKEN_STORE = store;
+		process.env.PENFIELD_JWT = "jwt";
+		return { dir, store };
+	}
+
+	it("logout revokes at Penfield, removes the stored login and its lock, clears PENFIELD_JWT, and says so (0.6.1)", async () => {
+		const revoked = stubPenfield(200);
+		const { dir, store } = seedLogin();
+		// A lock left by a crashed process (stale): logout takes it over, as a refresher does, and leaves none.
+		writeFileSync(`${store}.lock`, "1.x", { mode: 0o600 });
+		const old = (Date.now() - 120_000) / 1000;
+		utimesSync(`${store}.lock`, old, old);
+		const { commands, stub } = load({}, { auth: true });
+		const { ctx, notifies } = makeCtx();
+		await commands.penpi("logout", ctx);
+		expect(revoked).toEqual(["refresh_token", "access_token"]);
+		expect(existsSync(store)).toBe(false);
+		expect(existsSync(`${store}.lock`)).toBe(false);
+		expect(process.env.PENFIELD_JWT).toBeUndefined();
+		const said = notifies.at(-1)?.msg ?? "";
+		expect(said).toContain(
+			`Revoked the login at Penfield and removed the stored login at ${store} (access and refresh token)`,
+		);
+		// It says what stops, and what does not: other sessions stop; a token already handed out works until it expires.
+		expect(said).toContain(
+			"Stops now: PENpi's own use of Penfield in this session, and in your other PENpi sessions at their next request (they ask for `/penpi login`); any refresh with the old refresh token, which Penfield has revoked.",
+		);
+		expect(said).toContain(
+			"Keeps working: a Penfield connection the MCP tools already have open, here or in another session, keeps its bearer until it reconnects (it then has no login) or the access token expires. Penfield does not end an access token on revocation, so that is up to 24 hours.",
+		);
+		// Again: nothing stored, and it says so.
+		await commands.penpi("logout", ctx);
+		expect(notifies.at(-1)?.msg).toContain(`no stored Penfield login at ${store}`);
+		expect(revoked).toHaveLength(2);
+		expect(stub.client.login).not.toHaveBeenCalled();
+		rmSync(dir, { recursive: true, force: true });
+	});
+
+	it("logout when Penfield cannot revoke: the stored login is removed anyway, and it says the refresh token stays valid (0.6.1)", async () => {
+		stubPenfield(503);
+		const { dir, store } = seedLogin();
+		const { commands } = load({}, { auth: true });
+		const { ctx, notifies } = makeCtx();
+		await commands.penpi("logout", ctx);
+		expect(existsSync(store)).toBe(false);
+		const last = notifies.at(-1);
+		expect(last?.level).toBe("warning");
+		// 0.6.1 review (R2): Penfield was reached and said no, so "refused", not "could not reach".
+		expect(last?.msg).toContain("Penfield refused to revoke the login (HTTP 503 temporarily_unavailable)");
+		expect(last?.msg).toContain("the refresh token stays valid on the server until it expires or is used");
+		expect(last?.msg).not.toContain("which Penfield has revoked");
+		rmSync(dir, { recursive: true, force: true });
+	});
+
+	it("a logout in another session: the next request clears this session's PENFIELD_JWT; another failure keeps it (0.6.1 review)", async () => {
+		const { LOGIN_REQUIRED } = await import("./penfield-client.ts");
+		let failure = new Error("Penfield token refresh failed: 503");
+		const { handlers } = load({}, { auth: true, getAccessToken: vi.fn(async () => Promise.reject(failure)) });
+		await handlers.session_start({ reason: "startup" }, makeCtx().ctx);
+		const settle = () => new Promise((r) => setTimeout(r, 0));
+		process.env.PENFIELD_JWT = "old-bearer";
+		await handlers.context({ messages: [] }, makeCtx().ctx);
+		await settle();
+		expect(process.env.PENFIELD_JWT).toBe("old-bearer");
+		failure = new Error(LOGIN_REQUIRED);
+		await handlers.context({ messages: [] }, makeCtx().ctx);
+		await settle();
+		expect(process.env.PENFIELD_JWT).toBeUndefined();
 	});
 
 	it("status (no arg) reports injection and context management without throwing", async () => {
@@ -956,7 +1116,8 @@ describe("embedded adapter (ADR 0026)", () => {
 		const { installed } = await loadEmbedded();
 		expect(installed[0].config).toEqual({
 			mcpServers: {
-				search: { ...PENPI_SERVER_DEFAULTS, command: "ddg" },
+				// 0.6.1: a stdio server gets PENpi's Penfield credentials empty.
+				search: { ...PENPI_SERVER_DEFAULTS, command: "ddg", env: { PENFIELD_JWT: "", PENPI_PENFIELD_API_KEY: "" } },
 				penfield: {
 					url: "https://mcp.penfield.app/",
 					auth: "bearer",
@@ -987,7 +1148,7 @@ describe("embedded adapter (ADR 0026)", () => {
 		expect(registerMcpServer).not.toHaveBeenCalled();
 	});
 
-	it("keeps the adapter off its event-bus requests from other extensions, and passes its other events (0.6.0)", () => {
+	it("subscribes the adapter to nothing on the event bus, any channel, and passes what it emits (0.6.1)", () => {
 		const subscribed: string[] = [];
 		const emitted: string[] = [];
 		const f = makeFakePi();
@@ -1002,9 +1163,11 @@ describe("embedded adapter (ADR 0026)", () => {
 		});
 		const seen = withoutPiMcpServers(api as never);
 		for (const channel of BLOCKED_ADAPTER_EVENTS) expect(seen.events.on(channel, () => {})).toBeTypeOf("function");
+		// A channel a later adapter release might add, and one it emits on itself: no subscription either.
+		expect(seen.events.on("pi-mcp-adapter:runtime-something-new:v2", () => {})).toBeTypeOf("function");
 		seen.events.on("pi-mcp-adapter:status:v1", () => {});
 		seen.events.emit("pi-mcp-adapter:status:v1", {});
-		expect(subscribed).toEqual(["pi-mcp-adapter:status:v1"]);
+		expect(subscribed).toEqual([]);
 		expect(emitted).toEqual(["pi-mcp-adapter:status:v1"]);
 		expect([...BLOCKED_ADAPTER_EVENTS].sort()).toEqual([
 			"pi-mcp-adapter:protocol:v1",
@@ -1012,6 +1175,24 @@ describe("embedded adapter (ADR 0026)", () => {
 			"pi-mcp-adapter:runtime-snapshot:v1",
 			"pi-mcp-adapter:runtime-tool-call:v1",
 		]);
+	});
+
+	it("on Pi's own event bus, a request on a channel the adapter would listen to gets no answer (0.6.1)", async () => {
+		const { createEventBus } = await import("@earendil-works/pi-coding-agent");
+		const bus = createEventBus();
+		const f = makeFakePi();
+		const seen = withoutPiMcpServers(Object.assign(f.pi, { events: bus }) as never);
+		const answered: unknown[] = [];
+		for (const channel of [...BLOCKED_ADAPTER_EVENTS, "pi-mcp-adapter:runtime-something-new:v2"])
+			seen.events.on(channel, (data) => answered.push(data));
+		for (const channel of [...BLOCKED_ADAPTER_EVENTS, "pi-mcp-adapter:runtime-something-new:v2"])
+			bus.emit(channel, { from: "another extension" });
+		expect(answered).toEqual([]);
+		// What the adapter emits still reaches other extensions.
+		const heard: unknown[] = [];
+		bus.on("pi-mcp-adapter:status:v1", (data) => heard.push(data));
+		seen.events.emit("pi-mcp-adapter:status:v1", { connected: 1 });
+		expect(heard).toEqual([{ connected: 1 }]);
 	});
 
 	it("reads --penpi-dev from argv, because pi applies flag values only after loading", async () => {

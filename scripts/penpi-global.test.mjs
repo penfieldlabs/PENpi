@@ -100,6 +100,43 @@ test("install removes a stock pi-mcp-adapter package left by an earlier install"
 	assert.deepEqual(JSON.parse(readFileSync(path, "utf8")).packages, ["npm:pi-web-tools@1.0.0"]);
 });
 
+test("install accepts package objects (Pi's schema) and removes a stock adapter given as one (0.6.1)", () => {
+	const testHome = home();
+	const path = settingsPath(testHome);
+	const web = { source: "npm:pi-web-tools@1.0.0", autoload: false, extensions: ["web.ts"] };
+	write(
+		path,
+		JSON.stringify({ packages: ["npm:pi-a@1.0.0", web, { source: "npm:pi-mcp-adapter@2.12.1", skills: [] }, "npm:pi-mcp-adapter"] }),
+	);
+	const result = run(testHome, "install");
+	assert.equal(result.status, 0, result.stderr);
+	assert.deepEqual(JSON.parse(readFileSync(path, "utf8")).packages, ["npm:pi-a@1.0.0", web]);
+});
+
+test("install keeps package objects unchanged when there is no stock adapter (0.6.1)", () => {
+	const testHome = home();
+	const path = settingsPath(testHome);
+	const packages = [{ source: "git:github.com/example/pi-tools@v2", prompts: ["review.md"] }, "npm:pi-b@2.0.0"];
+	write(path, JSON.stringify({ packages }));
+	const result = run(testHome, "install");
+	assert.equal(result.status, 0, result.stderr);
+	assert.deepEqual(JSON.parse(readFileSync(path, "utf8")).packages, packages);
+	const removed = run(testHome, "uninstall");
+	assert.equal(removed.status, 0, removed.stderr);
+	assert.deepEqual(JSON.parse(readFileSync(path, "utf8")).packages, packages);
+});
+
+test("install still refuses a package entry that is neither a string nor an object with a source", () => {
+	const testHome = home();
+	const path = settingsPath(testHome);
+	const original = JSON.stringify({ packages: [{ autoload: true }] });
+	write(path, original);
+	const result = run(testHome, "install");
+	assert.notEqual(result.status, 0);
+	assert.match(result.stderr, /packages must be an array of package sources/);
+	assert.equal(readFileSync(path, "utf8"), original);
+});
+
 test("install refuses a symbolic-link settings file", () => {
 	const testHome = home();
 	const target = join(testHome, "sensitive.json");
@@ -112,6 +149,20 @@ test("install refuses a symbolic-link settings file", () => {
 	assert.match(result.stderr, /symbolic-link settings/i);
 	assert.equal(lstatSync(path).isSymbolicLink(), true);
 	assert.equal(readFileSync(target, "utf8"), '{"refresh_token":"synthetic-review-marker"}');
+});
+
+test("uninstall says where the Penfield login is and how to remove it, and leaves it (0.6.1)", () => {
+	const testHome = home();
+	assert.equal(run(testHome, "install").status, 0);
+	const store = join(testHome, ".config", "penpi", "penfield-tokens-prod.json");
+	write(store, "{}");
+	const result = run(testHome, "uninstall");
+	assert.equal(result.status, 0, result.stderr);
+	assert.match(result.stdout, /Your Penfield login is not removed/);
+	assert.ok(result.stdout.includes(`Found: ${store}`), result.stdout);
+	assert.match(result.stdout, /run \/penpi logout in a PENpi session before uninstalling \(it also revokes the login/);
+	assert.match(result.stdout, /or delete the file \(the login then stays valid at Penfield until it expires\)/);
+	assert.equal(existsSync(store), true);
 });
 
 test("uninstall refuses an incomplete profile block before changing installation state", () => {

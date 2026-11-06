@@ -246,6 +246,12 @@ export function newEngineState(faults: FaultConfig | undefined) {
 		 */
 		replayShares: new Map<string, number[]>(),
 		replayWarned: new Set<string>(),
+		/**
+		 * 0.6.1: requests whose messages did not line up with the engine's index (another extension adding or changing
+		 * messages in Pi's `context` event), sent uncut; and whether the user was told, once per session.
+		 */
+		alignMismatches: 0,
+		alignWarned: false,
 		/** RC6: the tool-call repair kinds already logged (each is logged once). */
 		repairsLogged: new Set<string>(),
 		/** D24: the upstream provider named by the current response's stream (provider_stream_event), if any. */
@@ -494,6 +500,8 @@ export function installState(core: EngineCore): void {
 		}
 		st.replayShares = new Map();
 		st.replayWarned = new Set();
+		st.alignMismatches = 0;
+		st.alignWarned = false;
 		// D1: fault injection is decided when the engine is created (PENPI_FAULTS, PENPI_PRODUCTION); a
 		// refusal was printed then, an active switch is printed here.
 		const banner = core.faultBanner();

@@ -221,7 +221,48 @@ describe("buildAdapterConfig — global-only adapter config (ADR 0026)", () => {
 		roots: false,
 		tasks: false,
 	};
-	const search = { ...PENPI_SERVER_DEFAULTS, command: "ddg" };
+	// 0.6.1: a stdio server gets PENFIELD_JWT empty, so it does not inherit the Penfield bearer.
+	const search = { ...PENPI_SERVER_DEFAULTS, command: "ddg", env: { PENFIELD_JWT: "", PENPI_PENFIELD_API_KEY: "" } };
+
+	it("a stdio server's own env is kept, PENpi's credentials blanked unless it names them; other servers are left alone (0.6.1)", () => {
+		const path = tmpPath();
+		writeFileSync(
+			path,
+			JSON.stringify({
+				mcpServers: {
+					withEnv: { command: "tool", env: { API_KEY: "x" } },
+					namesIt: { command: "tool", env: { PENFIELD_JWT: "$env:PENFIELD_JWT" } },
+					http: { url: "https://mcp.example/" },
+				},
+			}),
+		);
+		const { mcpServers } = buildAdapterConfig(cfg, { path }).config;
+		expect(mcpServers.withEnv).toEqual({
+			...PENPI_SERVER_DEFAULTS,
+			command: "tool",
+			env: { PENFIELD_JWT: "", PENPI_PENFIELD_API_KEY: "", API_KEY: "x" },
+		});
+		expect(mcpServers.namesIt).toEqual({
+			...PENPI_SERVER_DEFAULTS,
+			command: "tool",
+			env: { PENFIELD_JWT: "$env:PENFIELD_JWT", PENPI_PENFIELD_API_KEY: "" },
+		});
+		expect(mcpServers.http).toEqual({ ...PENPI_SERVER_DEFAULTS, url: "https://mcp.example/" });
+		expect(mcpServers.penfield).toEqual(penfield);
+	});
+
+	it("a stdio server whose env is not an object gets the credentials blanked, not the whole environment (0.6.1)", () => {
+		const path = tmpPath();
+		writeFileSync(
+			path,
+			JSON.stringify({
+				mcpServers: { nullEnv: { command: "tool", env: null }, stringEnv: { command: "tool", env: "x" } },
+			}),
+		);
+		const { mcpServers } = buildAdapterConfig(cfg, { path }).config;
+		expect(mcpServers.nullEnv).toEqual({ ...PENPI_SERVER_DEFAULTS, command: "tool", env: search.env });
+		expect(mcpServers.stringEnv).toEqual({ ...PENPI_SERVER_DEFAULTS, command: "tool", env: search.env });
+	});
 
 	it("returns the global servers plus the penfield entry", () => {
 		const path = tmpPath();

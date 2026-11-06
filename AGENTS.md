@@ -12,9 +12,13 @@ A Pi extension (`.pi/extensions/penpi/`) plus a few fork-level defaults. See
 ## Hard rules
 - **Decisions get ADRs.** Any architectural/behavioral decision is recorded in
   `docs/adr/` (see [ADR 0001](docs/adr/0001-record-architecture-decisions.md)). No silent decisions.
-- **The gate is law.** `npm run check` and `npm test` must pass before every commit
-  (husky enforces; CI re-runs). The extension is covered by `npm run check:penpi` (tsc)
-  and biome.
+- **The gate is law.** `npm run check` and `npm test` must pass before every commit; CI
+  re-runs both. The husky pre-commit hook runs the lockfile check
+  (`scripts/check-lockfile-commit.mjs`) and `npm run check` (formatting, lint, the dependency
+  and lockfile checks, `docs/UPSTREAM_PATCHES.txt`, tsc and `check:penpi`), and the browser
+  smoke check when `packages/ai`, `packages/web-ui` or the root package files are staged. It
+  does not run `npm test`: run it yourself. The extension is covered by
+  `npm run check:penpi` (tsc) and biome.
 - **Erasable TypeScript only** in checked code: no parameter properties, `enum`,
   `namespace`, `import =`. Use explicit fields + constructor assignment.
 - **Pin external deps exactly; bump consciously** ([ADR 0014](docs/adr/0014-pin-third-party-dependencies.md)).

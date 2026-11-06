@@ -26,6 +26,7 @@ base: 4a080252f06caf63a525d7873c5d94d3c23887e0 (upstream Pi v1.4.0)
 .pi/extensions/import-repro.ts	deleted: upstream in-repo dev extension, would load in PENpi sessions
 .pi/extensions/penpi/README.md	PENpi extension
 .pi/extensions/penpi/__fixtures__/penfield-server.ts	PENpi extension
+.pi/extensions/penpi/__fixtures__/refresh-child.ts	PENpi extension
 .pi/extensions/penpi/config.test.ts	PENpi extension
 .pi/extensions/penpi/config.ts	PENpi extension
 .pi/extensions/penpi/engine-only.ts	PENpi: context engine (ADR 0032)
@@ -63,6 +64,7 @@ base: 4a080252f06caf63a525d7873c5d94d3c23887e0 (upstream Pi v1.4.0)
 .pi/extensions/penpi/penfield-client.test.ts	PENpi extension
 .pi/extensions/penpi/penfield-client.ts	PENpi extension
 .pi/extensions/penpi/penfield-credentials.test.ts	PENpi extension
+.pi/extensions/penpi/penfield-refresh-processes.test.ts	PENpi extension
 .pi/extensions/penpi/transcript-search.test.ts	PENpi extension
 .pi/extensions/penpi/transcript-search.ts	PENpi extension
 .pi/extensions/penpi/tsconfig.json	PENpi extension
@@ -309,6 +311,9 @@ packages/coding-agent/test/suite/context-engine/v060-custom-triggered-run.test.t
 packages/coding-agent/test/suite/context-engine/v060-d24-notice.test.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/context-engine/v060-error-image-caption.test.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/context-engine/v060-request-size-413.test.ts	PENpi: context engine behaviour suite (ADR 0032)
+packages/coding-agent/test/suite/context-engine/v061-align-mismatch-warning.test.ts	PENpi: context engine behaviour suite (ADR 0032)
+packages/coding-agent/test/suite/context-engine/v061-recall-page.test.ts	PENpi: context engine behaviour suite (ADR 0032)
+packages/coding-agent/test/suite/context-engine/v061-recall-tool-call.test.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/context-engine/vitest.config.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/regressions/copilot-request-size-overflow.test.ts	upstream test adapted to PENpi's compaction-off default
 packages/coding-agent/test/suite/virtual-models.test.ts	upstream test adapted to PENpi's compaction-off default

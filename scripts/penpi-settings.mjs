@@ -35,6 +35,20 @@ function isRecord(value) {
 	return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+// Pi's settings schema (PackageSourceSchema) allows a package as a string or as an object with a
+// string `source` and optional resource filters (0.6.1: the installer refused the object form).
+function isPackageSource(value) {
+	return typeof value === "string" || (isRecord(value) && typeof value.source === "string");
+}
+
+function packageSource(value) {
+	return typeof value === "string" ? value : value.source;
+}
+
+function withoutStockAdapter(packages) {
+	return packages.filter((x) => !STOCK_ADAPTER.test(packageSource(x)));
+}
+
 function readSettings() {
 	if (!existsSync(settingsPath)) return { exists: false, value: {} };
 	if (lstatSync(settingsPath).isSymbolicLink()) {
@@ -50,8 +64,10 @@ function readSettings() {
 	if (!isRecord(value)) {
 		throw new Error(`refusing to rewrite settings file ${settingsPath}: JSON root must be an object`);
 	}
-	if (value.packages !== undefined && (!Array.isArray(value.packages) || !value.packages.every((x) => typeof x === "string"))) {
-		throw new Error(`refusing to rewrite settings file ${settingsPath}: packages must be an array of strings`);
+	if (value.packages !== undefined && (!Array.isArray(value.packages) || !value.packages.every(isPackageSource))) {
+		throw new Error(
+			`refusing to rewrite settings file ${settingsPath}: packages must be an array of package sources (a string, or an object with a string "source")`,
+		);
 	}
 	if (value.extensions !== undefined && (!Array.isArray(value.extensions) || !value.extensions.every((x) => typeof x === "string"))) {
 		throw new Error(`refusing to rewrite settings file ${settingsPath}: extensions must be an array of strings`);
@@ -78,12 +94,12 @@ function writeSettings(value, existed) {
 try {
 	const { exists, value: settings } = readSettings();
 	if (action === "install") {
-		if (settings.packages !== undefined) settings.packages = settings.packages.filter((x) => !STOCK_ADAPTER.test(x));
+		if (settings.packages !== undefined) settings.packages = withoutStockAdapter(settings.packages);
 		settings.compaction = { ...(settings.compaction ?? {}), enabled: false };
 		settings.extensions = [...(settings.extensions ?? []).filter((x) => !BUILTIN_MCP_TOGGLE.test(x)), DISABLE_BUILTIN_MCP];
 		writeSettings(settings, exists);
 	} else if (exists) {
-		if (settings.packages !== undefined) settings.packages = settings.packages.filter((x) => !STOCK_ADAPTER.test(x));
+		if (settings.packages !== undefined) settings.packages = withoutStockAdapter(settings.packages);
 		if (settings.extensions !== undefined) {
 			settings.extensions = settings.extensions.filter((x) => x !== DISABLE_BUILTIN_MCP);
 			if (settings.extensions.length === 0) delete settings.extensions;

@@ -1,6 +1,15 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { resolveOptions } from "./options.ts";
-import { engineOptionsFromSettings, RETIRED_ENV, RETIRED_SETTINGS, retiredEnvWarnings } from "./settings.ts";
+import {
+	closestSetting,
+	engineOptionsFromSettings,
+	PENPI_OWN_SETTINGS,
+	RETIRED_ENV,
+	RETIRED_SETTINGS,
+	retiredEnvWarnings,
+} from "./settings.ts";
 
 function read(settings: Record<string, unknown>) {
 	const warnings: string[] = [];
@@ -103,5 +112,50 @@ describe("engine settings (penpi block)", () => {
 		const none: string[] = [];
 		retiredEnvWarnings({ PENPI_ENGINE_LOG: "/tmp/x" }, (m) => none.push(m));
 		expect(none).toEqual([]);
+	});
+
+	it("0.6.1: lowWater not below highWater falls back to the defaults for both, with a warning", () => {
+		const { options, warnings } = read({ lowWater: 0.9, highWater: 0.5 });
+		expect(options).toEqual({});
+		expect(warnings).toEqual([
+			"penpi.lowWater=0.9 and penpi.highWater=0.5 contradict each other (lowWater must be below highWater): both fall back to the defaults (0.45 and 0.75)",
+		]);
+		// One value set alone is checked against the other's default.
+		expect(read({ lowWater: 0.8 }).warnings[0]).toContain("penpi.lowWater=0.8 and penpi.highWater=0.75");
+		expect(read({ lowWater: 0.5, highWater: 0.7 })).toEqual({
+			options: { lowWater: 0.5, highWater: 0.7 },
+			warnings: [],
+		});
+	});
+
+	it("0.6.1: ratioFloor above ratioCeiling falls back to the defaults for both, with a warning", () => {
+		const { options, warnings } = read({ ratioFloor: 3, ratioCeiling: 2 });
+		expect(options).toEqual({});
+		expect(warnings).toEqual([
+			"penpi.ratioFloor=3 and penpi.ratioCeiling=2 contradict each other (ratioFloor must be at most ratioCeiling): both fall back to the defaults (0.8 and 6)",
+		]);
+		expect(read({ ratioFloor: 2, ratioCeiling: 2 }).warnings).toEqual([]);
+	});
+
+	it("0.6.1: an unknown key is reported, naming the closest known one", () => {
+		const { options, warnings } = read({ highwater: 0.7, lowWatr: 0.4, notices: true, somethingElse: 1 });
+		expect(options).toEqual({});
+		expect(warnings).toEqual([
+			"ignoring penpi.highwater: not a PENpi setting; did you mean penpi.highWater?",
+			"ignoring penpi.lowWatr: not a PENpi setting; did you mean penpi.lowWater?",
+			"ignoring penpi.notices: not a PENpi setting; did you mean penpi.notice?",
+			"ignoring penpi.somethingElse: not a PENpi setting",
+		]);
+		expect(closestSetting("saveContextOnShutdwn")).toBe("saveContextOnShutdown");
+	});
+
+	it("0.6.1: PENpi's own keys are the ones config.ts reads (PenpiSettings)", () => {
+		const source = readFileSync(join(import.meta.dirname, "..", "config.ts"), "utf8");
+		const block = source.slice(
+			source.indexOf("interface PenpiSettings {"),
+			source.indexOf("}\n", source.indexOf("interface PenpiSettings {")),
+		);
+		const keys = [...block.matchAll(/^\t(\w+)\?:/gm)].map((m) => m[1]);
+		expect(keys.sort()).toEqual([...PENPI_OWN_SETTINGS].sort());
 	});
 });
