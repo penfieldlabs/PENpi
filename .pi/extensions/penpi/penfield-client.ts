@@ -188,10 +188,19 @@ export async function acquireRefreshLock(
 
 /** What revoking a login at Penfield came to (0.6.1, `/penpi logout`). */
 export type RevokeOutcome =
+	/** The refresh token was revoked (the access token's revocation is sent too, best effort: Penfield ignores it). */
 	| { kind: "revoked" }
 	| { kind: "no-endpoint" }
-	| { kind: "failed"; reason: string }
+	/** The metadata names a revocation endpoint outside PENpi's trusted origins: nothing was sent (0.6.1 review, R1). */
+	| { kind: "untrusted"; reason: string }
+	/** Penfield answered with an HTTP error. */
+	| { kind: "refused"; reason: string }
+	/** Penfield could not be reached (a network error, or the time limit). */
+	| { kind: "unreachable"; reason: string }
 	| { kind: "nothing" };
+
+/** A revocation answered with an HTTP error: Penfield was reached and said no. */
+class RevokeRefused extends Error {}
 
 /** The longest a logout waits for Penfield to revoke the login, discovery included: the local logout always happens. */
 export const REVOKE_TIMEOUT_MS = 20_000;
@@ -219,7 +228,7 @@ export async function logoutStoredLogin(
 		let revocation: RevokeOutcome = { kind: "nothing" };
 		if (cfg.authMode !== "apiKey" && (stored?.refreshToken || stored?.accessToken))
 			revocation = await withTimeout(new TokenManager(cfg).revoke(stored), timeoutMs, "Penfield revocation").catch(
-				(error): RevokeOutcome => ({ kind: "failed", reason: errorText(error) }),
+				(error): RevokeOutcome => ({ kind: "unreachable", reason: errorText(error) }),
 			);
 		rmSync(path, { force: true });
 		return { existed, revocation };
@@ -243,6 +252,8 @@ interface OAuthEndpoints {
 	deviceAuthorizationEndpoint: string;
 	tokenEndpoint: string;
 	revocationEndpoint?: string;
+	/** Why an advertised revocation endpoint was not used (not on a trusted origin). */
+	revocationRefused?: string;
 }
 
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
@@ -411,8 +422,9 @@ export class TokenManager {
 		try {
 			meta = await this.discoverOAuth();
 		} catch (error) {
-			return { kind: "failed", reason: errorText(error) };
+			return { kind: "unreachable", reason: errorText(error) };
 		}
+		if (meta.revocationRefused) return { kind: "untrusted", reason: meta.revocationRefused };
 		if (!meta.revocationEndpoint) return { kind: "no-endpoint" };
 		const send = async (token: string, hint: "refresh_token" | "access_token") => {
 			const res = await credentialFetch(meta.revocationEndpoint as string, {
@@ -432,15 +444,30 @@ export class TokenManager {
 				} catch {
 					// not JSON
 				}
-				throw new Error(`HTTP ${res.status}${code ? ` ${code}` : ""}`);
+				throw new RevokeRefused(`HTTP ${res.status}${code ? ` ${code}` : ""}`);
 			}
 		};
+		const failed = (error: unknown): RevokeOutcome =>
+			error instanceof RevokeRefused
+				? { kind: "refused", reason: errorText(error) }
+				: { kind: "unreachable", reason: errorText(error) };
+		// 0.6.1 review (R2): the refresh token is what ends the login. Once it is revoked the outcome is "revoked";
+		// the access token's revocation follows as best effort (Penfield does not end access tokens: checked for 0.6.1).
+		if (stored.refreshToken) {
+			try {
+				await send(stored.refreshToken, "refresh_token");
+			} catch (error) {
+				return failed(error);
+			}
+			if (stored.accessToken) await send(stored.accessToken, "access_token").catch(() => undefined);
+			return { kind: "revoked" };
+		}
+		if (!stored.accessToken) return { kind: "nothing" };
 		try {
-			if (stored.refreshToken) await send(stored.refreshToken, "refresh_token");
-			if (stored.accessToken) await send(stored.accessToken, "access_token");
+			await send(stored.accessToken, "access_token");
 			return { kind: "revoked" };
 		} catch (error) {
-			return { kind: "failed", reason: errorText(error) };
+			return failed(error);
 		}
 	}
 
@@ -496,12 +523,24 @@ export class TokenManager {
 		this.assertTrustedEndpoint(m.token_endpoint, "token_endpoint");
 		if (m.registration_endpoint) this.assertTrustedEndpoint(m.registration_endpoint, "registration_endpoint");
 		// 0.6.1: /penpi logout sends the refresh token here, so it is held to the same origins.
-		if (m.revocation_endpoint) this.assertTrustedEndpoint(m.revocation_endpoint, "revocation_endpoint");
+		// Only logout uses the revocation endpoint, so an untrusted one is dropped, not thrown: refresh and login use this
+		// same discovery and must not fail over it (0.6.1 review, R1). Logout reports the reason.
+		let revocationEndpoint = m.revocation_endpoint;
+		let revocationRefused: string | undefined;
+		if (revocationEndpoint) {
+			try {
+				this.assertTrustedEndpoint(revocationEndpoint, "revocation_endpoint");
+			} catch (error) {
+				revocationRefused = errorText(error);
+				revocationEndpoint = undefined;
+			}
+		}
 		this.oauthMeta = {
 			registrationEndpoint: m.registration_endpoint,
 			deviceAuthorizationEndpoint: m.device_authorization_endpoint,
 			tokenEndpoint: m.token_endpoint,
-			revocationEndpoint: m.revocation_endpoint,
+			revocationEndpoint,
+			revocationRefused,
 		};
 		return this.oauthMeta;
 	}

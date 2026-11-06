@@ -43,9 +43,13 @@ interface Rotating {
 /** A Penfield token endpoint that rotates: each refresh issues RT<n+1> and AT<n>, and RT<n> is refused afterwards. */
 /**
  * `revoke`: the revocation endpoint (0.6.1) answers 200 and ends the refresh token ("ok"), answers 503 ("down"),
- * answers after 10 s ("slow"), or is not in the metadata ("none").
+ * answers after 10 s ("slow"), or is not in the metadata ("none"). "untrusted": the metadata names a revocation host
+ * PENpi does not trust (revoke.penfield.app); "at-down": the access token's revocation answers 503, the refresh token's
+ * succeeds (0.6.1 review, R1 and R2).
  */
-async function startRotating(delayMs = 300, revoke: "ok" | "down" | "slow" | "none" = "ok"): Promise<Rotating> {
+type RevokeMode = "ok" | "down" | "slow" | "none" | "untrusted" | "at-down";
+
+async function startRotating(delayMs = 300, revoke: RevokeMode = "ok"): Promise<Rotating> {
 	let current = 1;
 	const refreshes: string[] = [];
 	const revoked: Array<{ token: string; hint: string }> = [];
@@ -68,11 +72,19 @@ async function startRotating(delayMs = 300, revoke: "ok" | "down" | "slow" | "no
 			return json(200, {
 				device_authorization_endpoint: "https://auth-dev.penfield.app/device",
 				token_endpoint: "https://auth-dev.penfield.app/token",
-				...(revoke === "none" ? {} : { revocation_endpoint: "https://auth-dev.penfield.app/revoke" }),
+				...(revoke === "none"
+					? {}
+					: {
+							revocation_endpoint:
+								revoke === "untrusted"
+									? "https://revoke.penfield.app/revoke"
+									: "https://auth-dev.penfield.app/revoke",
+						}),
 			});
 		if (path === "/revoke" && req.method === "POST") {
 			const form = new URLSearchParams(await read(req));
-			if (revoke === "down") return json(503, { error: "temporarily_unavailable" });
+			if (revoke === "down" || (revoke === "at-down" && form.get("token_type_hint") === "access_token"))
+				return json(503, { error: "temporarily_unavailable" });
 			if (revoke === "slow") await new Promise((r) => setTimeout(r, 10_000));
 			revoked.push({ token: form.get("token") ?? "", hint: form.get("token_type_hint") ?? "" });
 			if (form.get("token_type_hint") === "refresh_token") dead.add(form.get("token") ?? "");
@@ -297,8 +309,8 @@ describe("logout revokes the login at Penfield (0.6.1)", () => {
 		while (fixtures.length) await fixtures.pop()?.close();
 		rmSync(dir, { recursive: true, force: true });
 	});
-	const fixture = async (revoke: "ok" | "down" | "slow" | "none") => {
-		const fx = await startRotating(300, revoke);
+	const fixture = async (revoke: RevokeMode, delayMs = 300) => {
+		const fx = await startRotating(delayMs, revoke);
 		fixtures.push(fx);
 		return fx;
 	};
@@ -345,11 +357,11 @@ describe("logout revokes the login at Penfield (0.6.1)", () => {
 		expect(await refreshAt(fx, "RT1")).toBe(401);
 	}, 30_000);
 
-	it("the revocation endpoint is down: the local logout completes, and says the revocation failed", async () => {
+	it("the revocation endpoint answers 503: the local logout completes, and says Penfield refused", async () => {
 		const fx = await fixture("down");
 		seed(Date.now() + SKEW_MS + 60_000);
 		const out = await runChild({ STORE: store, PORT: String(fx.port), LOGOUT_AT: "0" });
-		expect(out).toEqual([{ loggedOut: true, revocation: "failed" }]);
+		expect(out).toEqual([{ loggedOut: true, revocation: "refused" }]);
 		expect(existsSync(store)).toBe(false);
 		expect(existsSync(`${store}.lock`)).toBe(false);
 	}, 30_000);
@@ -362,8 +374,50 @@ describe("logout revokes the login at Penfield (0.6.1)", () => {
 		const t0 = Date.now();
 		child.go();
 		const out = await child.done;
-		expect(out).toEqual([{ loggedOut: true, revocation: "failed" }]);
+		expect(out).toEqual([{ loggedOut: true, revocation: "unreachable" }]);
 		expect(Date.now() - t0).toBeLessThan(6_000); // the endpoint answers after 10 s
+		expect(existsSync(store)).toBe(false);
+	}, 30_000);
+
+	it("0.6.1 review RV1: an untrusted revocation endpoint does not stop refresh; logout reports it and sends nothing", async () => {
+		const fx = await fixture("untrusted");
+		const env = { STORE: store, PORT: String(fx.port) };
+		seed(Date.now() - 1000);
+		expect(await runChild({ ...env, AT_TIMES: "0" })).toEqual([{ token: "AT1" }]);
+		expect(fx.refreshes).toEqual(["RT1"]);
+		const out = await runChild({ ...env, LOGOUT_AT: "0" });
+		expect(out).toEqual([{ loggedOut: true, revocation: "untrusted" }]);
+		expect(fx.revoked).toEqual([]);
+		expect(existsSync(store)).toBe(false);
+	}, 30_000);
+
+	it("0.6.1 review RV2: the refresh token revoked and the access token's revocation refused: reported as revoked", async () => {
+		const fx = await fixture("at-down");
+		seed(Date.now() + SKEW_MS + 60_000);
+		const out = await runChild({ STORE: store, PORT: String(fx.port), LOGOUT_AT: "0" });
+		expect(out).toEqual([{ loggedOut: true, revocation: "revoked" }]);
+		expect(fx.revoked).toEqual([{ token: "RT1", hint: "refresh_token" }]); // the 503 is not recorded as revoked
+		expect(await refreshAt(fx, "RT1")).toBe(401);
+	}, 30_000);
+
+	it("0.6.1 review F1: no lock to be had, a refresh in flight elsewhere, then a logout: the refresh does not bring the store back", async () => {
+		// A directory at the lock path: neither process gets the lock, so only persist()'s logged-out guard stands
+		// between the refresh's result and the deleted store.
+		mkdirSync(`${store}.lock`);
+		const fx = await fixture("ok", 3_000);
+		const env = { STORE: store, PORT: String(fx.port) };
+		const b = startChild({ ...env, AT_TIMES: "0" });
+		const a = startChild({ ...env, LOGOUT_AT: "0" });
+		await Promise.all([a.ready, b.ready]);
+		seed(Date.now() - 1000);
+		b.go();
+		while (fx.refreshes.length === 0) await new Promise((r) => setTimeout(r, 20));
+		a.go();
+		const aOut = await a.done; // done before B's refresh answers: the fixture holds it 3 s
+		expect(aOut).toEqual([{ loggedOut: true, revocation: "revoked" }]);
+		expect(existsSync(store)).toBe(false);
+		const bOut = await b.done;
+		expect(bOut).toEqual([{ error: "Penfield device login required — run /penpi login" }]);
 		expect(existsSync(store)).toBe(false);
 	}, 30_000);
 

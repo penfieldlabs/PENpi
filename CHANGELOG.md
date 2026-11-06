@@ -67,7 +67,11 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
 - **`/penpi logout`** revokes the login at Penfield (the refresh token, then the access token, at
   the revocation endpoint Penfield advertises), removes the stored Penfield login (access and
   refresh token) and clears `PENFIELD_JWT` for the session. The local logout happens whether or
-  not Penfield could be reached, within 20 seconds, and the message says which. Penfield ends the
+  not the revocation worked. Logout may first wait for another session's refresh to finish (the
+  refresh lock: up to 80 seconds by default), then gives the revocation at most 20 seconds. The
+  message says whether the login was revoked, Penfield refused (an HTTP error), Penfield could not
+  be reached, or the revocation endpoint Penfield advertises is not on an address PENpi trusts (it
+  is then not used; refresh and login are not affected). Penfield ends the
   refresh token; an access token already handed out keeps working until it expires (up to 24
   hours), and the message says so. Logout takes the refresh lock first, so a refresh running in
   another session finishes before the store goes, and nothing writes the store back afterwards.

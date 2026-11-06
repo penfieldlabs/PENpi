@@ -662,7 +662,8 @@ describe("/penpi login command", () => {
 		expect(existsSync(store)).toBe(false);
 		const last = notifies.at(-1);
 		expect(last?.level).toBe("warning");
-		expect(last?.msg).toContain("Could not reach Penfield to revoke the login (HTTP 503 temporarily_unavailable)");
+		// 0.6.1 review (R2): Penfield was reached and said no, so "refused", not "could not reach".
+		expect(last?.msg).toContain("Penfield refused to revoke the login (HTTP 503 temporarily_unavailable)");
 		expect(last?.msg).toContain("the refresh token stays valid on the server until it expires or is used");
 		expect(last?.msg).not.toContain("which Penfield has revoked");
 		rmSync(dir, { recursive: true, force: true });

@@ -30,8 +30,11 @@ reached. Penfield ends the refresh token, so nothing can refresh with it again; 
 already handed out keeps working until it expires, up to 24 hours. Other PENpi sessions stop
 using their login at their next request, but a Penfield connection the MCP adapter already has
 open keeps its bearer until then, or until it reconnects or its session ends: PENpi has no way
-to close it. If Penfield could not be reached, the refresh token stays valid on the server until
-it expires or is used; the logout message says so.
+to close it. If Penfield refused the revocation, could not be reached within the revocation's 20
+seconds, or advertises a revocation endpoint outside the Penfield addresses PENpi trusts (it is
+then not used, and refresh and login carry on), the refresh token stays valid on the server
+until it expires or is used; the logout message says which. Before revoking, logout waits for
+the refresh lock if another session holds it, up to 80 seconds by default.
 Uninstalling PENpi does not remove the store; its output says where it is.
 
 ## Penfield credentials and the programs PENpi starts

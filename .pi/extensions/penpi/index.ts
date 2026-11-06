@@ -451,9 +451,13 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps): void | Promise<voi
 						? "Revoked the login at Penfield and removed"
 						: revocation.kind === "no-endpoint"
 							? "Penfield advertises no way to revoke a login, so it is logged out here only. Removed"
-							: revocation.kind === "failed"
-								? `Could not reach Penfield to revoke the login (${revocation.reason}): the refresh token stays valid on the server until it expires or is used. Removed`
-								: "Removed";
+							: revocation.kind === "refused"
+								? `Penfield refused to revoke the login (${revocation.reason}): the refresh token stays valid on the server until it expires or is used. Removed`
+								: revocation.kind === "unreachable"
+									? `Could not reach Penfield to revoke the login (${revocation.reason}): the refresh token stays valid on the server until it expires or is used. Removed`
+									: revocation.kind === "untrusted"
+										? `Did not revoke the login: Penfield's metadata names a revocation endpoint PENpi does not trust (${revocation.reason}), so nothing was sent, and the refresh token stays valid on the server until it expires or is used. Removed`
+										: "Removed";
 				const lines = [
 					existed
 						? `PENpi: logged out of Penfield (${cfg.env}). ${revoked} the stored login at ${cfg.tokenStorePath} (access and refresh token), and cleared ${JWT_ENV} for this session.`
@@ -475,7 +479,9 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps): void | Promise<voi
 							"  Keeps working: a Penfield connection the MCP tools already have open, here or in another session, keeps its bearer until it reconnects (it then has no login) or the access token expires. Penfield does not end an access token on revocation, so that is up to 24 hours.",
 						);
 				}
-				ctx.ui.notify(lines.join("\n"), revocation.kind === "failed" ? "warning" : "info");
+				const notRevoked =
+					revocation.kind === "refused" || revocation.kind === "unreachable" || revocation.kind === "untrusted";
+				ctx.ui.notify(lines.join("\n"), notRevoked ? "warning" : "info");
 				return;
 			}
 			if (sub === "login") {

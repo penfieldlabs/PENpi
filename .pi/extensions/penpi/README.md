@@ -101,7 +101,7 @@ manually).
 - **`/penpi`** — status: Penfield auth/connection, automatic orientation, and whether the
   context engine is installed.
 - **`/penpi login`** — run the Penfield device-code login (RFC 8628).
-- **`/penpi logout`**: revoke the Penfield login at Penfield, remove the stored login (access
+- **`/penpi logout`** — revoke the Penfield login at Penfield, remove the stored login (access
   and refresh token, in the token store) and clear `PENFIELD_JWT` for the session. A Penfield
   connection the MCP tools already have open keeps working until it reconnects or its access
   token expires (up to 24 hours). An API key in settings or the environment is not removed.
