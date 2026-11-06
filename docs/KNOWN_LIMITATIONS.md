@@ -37,6 +37,11 @@ until it expires or is used; the logout message says which. Before revoking, log
 the refresh lock if another session holds it, up to 80 seconds by default.
 Uninstalling PENpi does not remove the store; its output says where it is.
 
+A session checks only whether the store exists, not whose login it holds. After `/penpi logout`
+and a `/penpi login` as a different account, a session that was idle through both finds a store
+again and keeps the old account's access token, up to 24 hours, so its memory goes to the old
+account. After logging in as a different account, restart the PENpi sessions that were running.
+
 ## Penfield credentials and the programs PENpi starts
 
 PENpi publishes the Penfield bearer in its own process environment as `PENFIELD_JWT`, where the
@@ -50,6 +55,8 @@ and `HOME`). A server that checks only whether `PENFIELD_JWT` is present, not it
 present and empty. The full fix is to keep the bearer out of the environment altogether (a
 header PENpi resolves itself), which is a larger change than 0.6.1 makes. A program started some
 other way with PENpi's whole environment, by another extension for example, still sees them.
+The MCP adapter itself does this in two places: the commands it runs for `!command` secret
+values and for request headers get PENpi's whole environment, `PENFIELD_JWT` included.
 
 ## Global uninstall scope
 

@@ -18,7 +18,10 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
   is taken over after 70 seconds (four times the Penfield request timeout plus 10 seconds) if the
   process holding it died. Anything else at the lock's path (a directory, a symbolic link) or a
   stale lock that cannot be removed makes PENpi refresh without the lock rather than wait. After
-  a refused refresh token, PENpi reads the store once more before asking for a login.
+  a refused refresh token, PENpi reads the store once more before asking for a login. After
+  upgrading, restart the PENpi sessions still running 0.6.0: they take no lock and do not read
+  the store again, so they can still be told to run `/penpi login`, and can write the store back
+  after a logout.
 - **`context_recall` on a tool call returns its result.** Recalling the entry of a tool call
   (the id `context_search` lists for a hit on a file name) returned only the call, such as
   `read({"path":"ops/freeze-window.yaml"})`, and a model could take that for the whole answer.
@@ -77,8 +80,11 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
   afterwards. Your other PENpi sessions find the store gone at their next request and ask for
   `/penpi login` instead of refreshing. A Penfield connection the MCP tools already have open
   keeps working until it reconnects, its session ends or its access token expires (up to 24
-  hours), and the message says so. Uninstalling PENpi leaves the login in place, so a reinstall
-  keeps it, and its output now says where the token store is and that `/penpi logout` removes it.
+  hours), and the message says so. After logging in as a different account, restart the PENpi
+  sessions that were running: a session that was idle through the logout and the new login finds
+  a store again and keeps the old account's access token (up to 24 hours), so its memory goes to
+  the old account. Uninstalling PENpi leaves the login in place, so a reinstall keeps it, and its
+  output now says where the token store is and that `/penpi logout` removes it.
 - **The embedded MCP adapter subscribes to nothing on Pi's event bus.** 0.6.0 blocked the four
   request channels pi-mcp-adapter 7.0.0 listens on; 0.6.1 blocks every subscription, so a
   channel a later adapter release adds cannot answer other extensions unnoticed. The adapter

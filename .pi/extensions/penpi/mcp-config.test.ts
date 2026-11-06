@@ -251,6 +251,19 @@ describe("buildAdapterConfig — global-only adapter config (ADR 0026)", () => {
 		expect(mcpServers.penfield).toEqual(penfield);
 	});
 
+	it("a stdio server whose env is not an object gets the credentials blanked, not the whole environment (0.6.1)", () => {
+		const path = tmpPath();
+		writeFileSync(
+			path,
+			JSON.stringify({
+				mcpServers: { nullEnv: { command: "tool", env: null }, stringEnv: { command: "tool", env: "x" } },
+			}),
+		);
+		const { mcpServers } = buildAdapterConfig(cfg, { path }).config;
+		expect(mcpServers.nullEnv).toEqual({ ...PENPI_SERVER_DEFAULTS, command: "tool", env: search.env });
+		expect(mcpServers.stringEnv).toEqual({ ...PENPI_SERVER_DEFAULTS, command: "tool", env: search.env });
+	});
+
 	it("returns the global servers plus the penfield entry", () => {
 		const path = tmpPath();
 		writeFileSync(

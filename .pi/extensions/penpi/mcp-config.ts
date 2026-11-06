@@ -152,8 +152,8 @@ export const STDIO_BLANKED_ENV = [JWT_ENV, "PENPI_PENFIELD_API_KEY"] as const;
 function withServerDefaults(entry: unknown): unknown {
 	if (!isRecord(entry)) return entry;
 	const merged: Record<string, unknown> = { ...PENPI_SERVER_DEFAULTS, ...entry };
-	if (typeof entry.command === "string" && (entry.env === undefined || isRecord(entry.env))) {
-		const own = isRecord(entry.env) ? entry.env : {};
+	if (typeof entry.command === "string") {
+		const own = isRecord(entry.env) ? entry.env : {}; // a non-object env (null, a string) gets the blanked set alone
 		merged.env = { ...Object.fromEntries(STDIO_BLANKED_ENV.map((name) => [name, ""])), ...own };
 	}
 	return merged;

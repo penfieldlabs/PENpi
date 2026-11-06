@@ -75,8 +75,9 @@ Before implementation:
 
 ## Considered for 0.7.0 (left out of 0.6.1 on purpose)
 
-Status: candidates, from the 0.6.1 review. Each was left out of 0.6.1 to keep that release's
-changes small; none is a known failure in normal use.
+Status: candidates, from the 0.6.1 reviews. Each was left out of 0.6.1 to keep that release's
+changes small; none is a known failure in normal use, apart from switching Penfield accounts
+while sessions are running (KNOWN_LIMITATIONS says to restart them).
 
 - **Stay in step with extensions that change messages in `context`.** Pair Pi's messages with
   the engine's record by identity or content, pass messages another extension added through
@@ -96,3 +97,17 @@ changes small; none is a known failure in normal use.
 - **Keep the Penfield bearer out of the process environment.** Stdio MCP servers get
   `PENFIELD_JWT` set to an empty string since 0.6.1; resolving the bearer as a header inside
   PENpi would remove the variable altogether.
+- **Adopt a token store that changed under a session.** A session checks only whether the store
+  exists, so after a logout and a login as another account an idle session keeps the old
+  account's access token (up to 24 hours). Noticing that the store changed and taking its login
+  would end that; KNOWN_LIMITATIONS asks for a restart instead.
+- **Release the refresh lock on exit.** A process that quits during a refresh leaves its lock,
+  and other sessions wait for the stale time (70 seconds) before taking it over. An exit handler
+  would remove the lock on an ordinary quit; a crash would still need the stale time or a
+  dead-owner check.
+- **A refresh lock dated in the future.** The stale check compares the lock's age with the stale
+  time, so a lock whose time is ahead of the clock is never taken over. Counting such a lock as
+  stale is a one-line change.
+- **Name the default in the settings pair warning.** With only `highWater: 0.4` set, the warning
+  names `lowWater=0.45` without saying it is the default. The text is in the engine, so it waits
+  for a release that changes the engine anyway.
