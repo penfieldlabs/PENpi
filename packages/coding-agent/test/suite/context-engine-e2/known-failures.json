@@ -3,7 +3,14 @@
 		"run": "data.o200k.1m.silent-messages",
 		"criterion": "C6 detection-lag",
 		"maxLag": 4,
-		"until": "0.7.0",
-		"reason": "New with the upstream v1.4.0 corpus (0.6.0): the run's truncations at calls 30, 31, 45 and 46 are too small for any usage rule to see, and detection comes at call 47, from one strong sample (lag 4 against the limit 3). The code is not the cause: 0.6.0's engine on the v1.1.0 corpus (E2_CORPUS_REV=abe508e1b) passes this run at lag 2, exactly as 0.5.1 does (the 0.6.0 gate's decomposition). Accepted for 0.6.0 by decision; F1 targets slow detection after weak evidence, which this run does not have (its first evidence is strong)."
+		"until": "0.8.0",
+		"reason": "Measured on the upstream v1.5.0 corpus (f9a263655): truncations at calls 30, 31, 48 and 49; calls 30 and 31 are no evidence, call 48 is evidence and call 49 a strong sample, so detection comes at call 50 (lag 4 against the limit 3). New with the upstream v1.4.0 corpus (0.6.0; there calls 30, 31, 45 and 46, detection at call 47); 0.6.0's engine on the v1.1.0 corpus (E2_CORPUS_REV=abe508e1b) passes the run at lag 2, as 0.5.1 does. Accepted for 0.6.0 until 0.7.0 and for 0.7.0 until 0.8.0 by decision; 0.8.0's first engine item targets it."
+	},
+	{
+		"run": "research.glm.32k.silent-messages",
+		"criterion": "C6 detection-lag",
+		"maxLag": 4,
+		"until": "0.8.0",
+		"reason": "New with the upstream v1.5.0 corpus and runtime, measured on that corpus (f9a263655): truncations at calls 11, 18, 22 and 27; call 18 is evidence, call 22 is truncated but reports a new largest usage (16,218) and clears it, and call 27 is a strong sample, so detection comes at call 28 (lag 4 against the limit 3). Pi 1.5.0's shorter system prompt moves the run, not PENpi's code: 0.6.1's engine on Pi 1.4.0 with the same corpus passes it at lag 3, its call 22 at 16,380 tokens, 4 under the server's limit of 16,384; with Pi 1.5.0 call 22 is 16,618 tokens and is truncated. Accepted for 0.7.0 until 0.8.0 by decision."
 	}
 ]
