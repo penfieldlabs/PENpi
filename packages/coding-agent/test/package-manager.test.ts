@@ -890,7 +890,16 @@ Content`,
 
 			expect(runCommandSpy).toHaveBeenCalledWith(
 				"npm",
-				["install", "@scope/pkg", "--prefix", realNpmRoot, "--legacy-peer-deps", "--no-audit", "--no-fund"],
+				[
+					"install",
+					"@scope/pkg",
+					"--prefix",
+					realNpmRoot,
+					"--legacy-peer-deps",
+					"--save-exact",
+					"--no-audit",
+					"--no-fund",
+				],
 				undefined,
 			);
 			expect(runCommandSpy).toHaveBeenCalledWith(
