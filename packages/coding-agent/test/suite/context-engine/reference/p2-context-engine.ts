@@ -39,7 +39,7 @@
  *      `notice: false` switches the pre-cut notice off.
  */
 import type { AssistantMessage, ImageContent, TextContent } from "@earendil-works/pi-ai";
-import { getCurrentSystemMessage, isContextOverflow, Type } from "@earendil-works/pi-ai";
+import { getCurrentSystemMessage, isContextOverflow } from "@earendil-works/pi-ai";
 import type {
 	ExtensionAPI,
 	ExtensionContext,
@@ -49,6 +49,7 @@ import type {
 	SessionBoundaryDraft,
 	SessionEntry,
 } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 
 type AgentMessage = Parameters<typeof estimateTokens>[0];
 

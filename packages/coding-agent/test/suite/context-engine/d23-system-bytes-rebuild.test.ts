@@ -26,7 +26,8 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getCurrentSystemMessage, getSystemMessageText, type Message, Type } from "@earendil-works/pi-ai";
+import { getCurrentSystemMessage, getSystemMessageText, type Message } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import type { EngineHandle } from "../../../../../.pi/extensions/penpi/engine/index.ts";
 import type { ExtensionAPI, ExtensionFactory } from "../../../src/index.ts";

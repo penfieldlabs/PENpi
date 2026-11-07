@@ -1,4 +1,4 @@
-import { Type } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
 import type { EngineCore } from "../core.ts";
 import { NOTES_TOOL } from "../options.ts";
 

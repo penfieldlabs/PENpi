@@ -1,6 +1,6 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
-import { Type } from "@earendil-works/pi-ai";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 import type { EngineCore } from "../core.ts";
 import { type AgentMessage, textOfContent } from "../estimator.ts";
 import { RECALL_TOOL, SEARCH_TOOL } from "../options.ts";

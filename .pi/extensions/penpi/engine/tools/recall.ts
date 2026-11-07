@@ -1,5 +1,5 @@
 import type { ImageContent } from "@earendil-works/pi-ai";
-import { Type } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
 import type { EngineCore } from "../core.ts";
 import { type Block, textOfContent, textTokens } from "../estimator.ts";
 import { RECALL_TOOL, SEARCH_TOOL } from "../options.ts";
