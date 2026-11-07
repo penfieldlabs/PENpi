@@ -2,7 +2,7 @@
 # scripts/check-upstream-patches.mjs fails when `git diff --name-only <base>` (index) is not
 # exactly this set. Add a line when PENpi changes or adds a file; remove it when the file
 # matches upstream again. Update the base after each upstream merge.
-base: 4a080252f06caf63a525d7873c5d94d3c23887e0 (upstream Pi v1.4.0)
+base: f9a26365568127461c47a07a37dcb42c140a3ac5 (upstream Pi v1.5.0)
 .github/APPROVED_CONTRIBUTORS	deleted: upstream contributor gate
 .github/ISSUE_TEMPLATE/bug.yml	PENpi links and wording; no upstream auto-close gate
 .github/ISSUE_TEMPLATE/contribution.yml	PENpi links; no upstream contributor gate
@@ -19,6 +19,7 @@ base: 4a080252f06caf63a525d7873c5d94d3c23887e0 (upstream Pi v1.4.0)
 .github/workflows/nix.yml	deleted: PENpi has no Nix packaging
 .github/workflows/npm-audit.yml	weekly schedule, job timeout, no persisted credentials; runs upstream's npm-audit.mjs
 .github/workflows/pr-gate.yml	deleted: upstream contributor gate
+.github/workflows/preview-packages.yml	deleted: upstream preview-package publishing (pkg.earendil.com); PENpi ships source only
 .github/workflows/publish-model-catalog.yml	deleted: PENpi publishes no model catalog
 .github/workflows/release.yml	PENpi source-only manual release, first-parent tag check
 .github/workflows/remove-inprogress-on-close.yml	deleted: upstream issue automation
@@ -121,7 +122,6 @@ docs/adr/0032-context-engine.md	PENpi decision record
 docs/adr/README.md	PENpi decision record
 package-lock.json	follows package.json (PENpi workspace and pins); pi-mcp-adapter installed with --legacy-peer-deps (CONTRIBUTING.md); overrides include recheck 4.6.2 (pi-mcp-adapter pins 4.6.0-beta.3) and miniflare's undici 7.30.1
 package.json	PENpi version, workspace, checks and pins, context engine suite and tokenizer scripts; no npm publishing or model-catalog scripts
-packages/agent/package.json	vitest 4.1.12 security update (as upstream 2685de7a1)
 packages/ai/package.json	build uses the committed model-data snapshot (offline); vitest 4.1.12 security update (as upstream 2685de7a1)
 packages/ai/src/providers/data/.manifest.json	committed model-data snapshot (offline builds)
 packages/ai/src/providers/data/amazon-bedrock.json	committed model-data snapshot (offline builds)
@@ -166,17 +166,9 @@ packages/ai/src/providers/data/xiaomi-token-plan-sgp.json	committed model-data s
 packages/ai/src/providers/data/xiaomi.json	committed model-data snapshot (offline builds)
 packages/ai/src/providers/data/zai-coding-cn.json	committed model-data snapshot (offline builds)
 packages/ai/src/providers/data/zai.json	committed model-data snapshot (offline builds)
-packages/chord/package.json	vitest 4.1.12 security update (as upstream 2685de7a1); shx 0.4.0 (drops glob 7 and its minimatch 3.1.5, GHSA-g3hv-75wg-m249)
-packages/codemode/package.json	vitest 4.1.12 security update (as upstream 2685de7a1); shx 0.4.0 (drops glob 7 and its minimatch 3.1.5, GHSA-g3hv-75wg-m249)
 packages/coding-agent/README.md	upstream README plus a PENpi note
 packages/coding-agent/docs/settings.md	documents PENpi's compaction-off default
-packages/coding-agent/examples/extensions/gondolin/package-lock.json	gondolin 0.14.0 and undici 6.29.1 security update (as upstream 2685de7a1)
-packages/coding-agent/examples/extensions/gondolin/package.json	gondolin 0.14.0 security update, drops node-forge (as upstream 2685de7a1)
-packages/coding-agent/examples/extensions/sandbox/index.ts	declares its config type itself: types only, for zod 4 (GHSA-mrhx-c7xc-m3w5)
-packages/coding-agent/examples/extensions/sandbox/package-lock.json	shell-quote 1.12.0 security update; zod 4.6.6 (GHSA-mrhx-c7xc-m3w5)
-packages/coding-agent/examples/extensions/sandbox/package.json	zod 4.6.6 override (GHSA-mrhx-c7xc-m3w5); sandbox-runtime's range is ^3
 packages/coding-agent/install-lock/package-lock.json	generated from packages/coding-agent/package.json: undici 8.12.3 security update; minimatch 11.0.3 security update (GHSA-g3hv-75wg-m249) in place of 10.2.6, with its new dependency @isaacs/nonrecursive-glob-match 1.0.3
-packages/coding-agent/package.json	vitest 4.1.12 security update (as upstream 2685de7a1); undici 8.12.3 security update, ahead of upstream (still 8.10.2); minimatch 11.0.3 security update (GHSA-g3hv-75wg-m249, no 10.x fix); shx 0.4.0 (drops glob 7 and its minimatch 3.1.5, GHSA-g3hv-75wg-m249)
 packages/coding-agent/schemas/settings.schema.json	generated: compaction.enabled defaults to false (settings-defaults.ts)
 packages/coding-agent/src/cli/args.ts	core patch: hidden extension CLI flags
 packages/coding-agent/src/core/extensions/loader.ts	core patch: hidden extension CLI flags
@@ -318,12 +310,7 @@ packages/coding-agent/test/suite/context-engine/vitest.config.ts	PENpi: context 
 packages/coding-agent/test/suite/regressions/copilot-request-size-overflow.test.ts	upstream test adapted to PENpi's compaction-off default
 packages/coding-agent/test/suite/virtual-models.test.ts	upstream test adapted to PENpi's compaction-off default
 packages/coding-agent/vitest.config.ts	the context engine suite runs with its own config (ADR 0032)
-packages/durable/package.json	vitest 4.1.12 security update (as upstream 2685de7a1); shx 0.4.0 (drops glob 7 and its minimatch 3.1.5, GHSA-g3hv-75wg-m249)
-packages/env/package.json	vitest 4.1.12 security update (as upstream 2685de7a1); shx 0.4.0 (drops glob 7 and its minimatch 3.1.5, GHSA-g3hv-75wg-m249)
 packages/env/vitest.config.ts	skip daemon tests when the pi-env daemon is not built
-packages/evals/package.json	vitest 4.1.12 security update (as upstream 2685de7a1); shx 0.4.0 (drops glob 7 and its minimatch 3.1.5, GHSA-g3hv-75wg-m249)
-packages/mcp/package.json	vitest 4.1.12 security update (as upstream 2685de7a1); shx 0.4.0 (drops glob 7 and its minimatch 3.1.5, GHSA-g3hv-75wg-m249)
-packages/telemetry/package.json	vitest 4.1.12 security update (as upstream 2685de7a1)
 scripts/check-lockfile-versions.mjs	PENpi version-surface check; fails on a registry pi-ai (pi-mcp-adapter 7.x peer range)
 scripts/check-lockfile-versions.test.mjs	PENpi: test of the registry pi-ai check
 scripts/check-release-assets.mjs	PENpi release asset interlock

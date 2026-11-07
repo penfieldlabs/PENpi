@@ -29,6 +29,7 @@
 			"scripts/model-catalog-protocol.test.ts",
 			"packages/*/src/**/*.ts",
 			"packages/*/test/**/*.ts",
+			"packages/ai/catalog/**/*.ts",
 			"packages/coding-agent/examples/**/*.ts",
 			".pi/extensions/penpi/**/*.ts",
 			"packages/agent/examples/**/*.ts",
