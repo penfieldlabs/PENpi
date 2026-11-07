@@ -38,7 +38,12 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
   - `pi.exec` bounds its output, sends its SIGKILL fallback, and keeps split UTF-8 intact;
   - a stored OAuth token is no longer sent as an explicit API key in summaries of SDK sessions;
   - the `pi-ai` command-line tool writes its auth file with mode 0600;
-  - managed package installs skip npm's audit advice, which could install a second Pi.
+  - managed package installs skip npm's audit advice, which could install a second Pi;
+  - managed package installs from a symlinked agent directory no longer write nested lock
+    entries;
+  - a `contentIndex` in a streamed message is checked, so a `__proto__` key or a huge index
+    cannot corrupt the message;
+  - on macOS, aborting a shell command no longer lets the next command in a list run.
   PENpi keeps its own changes on top (exact pins for managed installs, hidden extension flags,
   the held proxy CONNECT, compaction off, no update banner, every continuation printed in
   `pi -p`, credentials kept out of shell commands); upstream fixed none of them.
