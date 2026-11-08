@@ -306,7 +306,8 @@ describe("a system prompt section changes only at a cut (E8.14)", () => {
 		const fallback = t.prompts.at(-1)!;
 		expect(fallback.merged).toBe(planned.merged);
 		expect(fallback.firstRole).toBe("system");
-		expect(fallback.first.startsWith("You are an expert coding assistant")).toBe(true);
+		// Pi's own preamble, whatever its wording (Pi 1.5.0 reworded it).
+		expect(fallback.first.startsWith(buildSystemPromptSections({ cwd: "/work" }).preamble)).toBe(true);
 		expect(fallback.first).toBe(planned.first);
 	});
 

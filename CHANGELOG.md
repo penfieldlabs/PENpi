@@ -6,6 +6,72 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-11-08
+
+### Changed
+- **PENpi is on upstream Pi v1.5.0** (from v1.4.0). See Pi's own changelog
+  (`packages/coding-agent/CHANGELOG.md`). What PENpi users notice:
+  - Pi's default system prompt is shorter and reworded: about 580 characters (125 to 145 tokens)
+    less per request, and the edit tool's guidance now asks for one call per file with short,
+    unique matches.
+  - Tool arguments are checked with Pi's new schema validator, which converts what it can: a
+    number or a boolean given as a string, and a single value where a list is expected. This
+    applies to MCP tools too, Penfield's included: a model's `"3"` for a limit or one tag for a
+    list of tags now reaches Penfield as a number or a list (checked against Penfield). A value
+    that cannot be converted is refused before the call, and the message now reads
+    `- path: message`.
+  - The model catalog comes from models.dev's v2 catalog. PENpi's model data is v1.5.0's own,
+    generated with its generator: 100 models added (such as GPT-6.1 Terra), 71 removed (among
+    them realtime, image and classifier models), 496 changed. GLM-5.3 Flash and DeepSeek V4.1
+    Flash on OpenRouter, DeepSeek's own models, Claude Sonnet 4.5 and Gemini 2.5 Flash are
+    unchanged.
+  - A session write that fails is rolled back, so later entries never point at an entry that is
+    not on disk.
+- **Security fixes PENpi gains from v1.5.0:**
+  - a saved "Do not trust" decision for a project is kept, also for a project with only an
+    `AGENTS.md`;
+  - terminal titles and the sign-in, device-code and info URLs in the login dialog are shown
+    without control characters, so they cannot inject terminal escapes;
+  - OAuth URLs that are not web URLs (for example `search-ms:`) are no longer handed to the
+    operating system, including ones from an MCP server's OAuth flow in Pi's own MCP client;
+  - ANSI stripping removes private-prefix sequences from tool and `!` output;
+  - `pi.exec` bounds its output, sends its SIGKILL fallback, and keeps split UTF-8 intact;
+  - a stored OAuth token is no longer sent as an explicit API key in summaries of SDK sessions;
+  - the `pi-ai` command-line tool writes its auth file with mode 0600;
+  - managed package installs skip npm's audit advice, which could install a second Pi;
+  - managed package installs from a symlinked agent directory no longer write nested lock
+    entries;
+  - a `contentIndex` in a streamed message is checked, so a `__proto__` key or a huge index
+    cannot corrupt the message;
+  - on macOS, aborting a shell command no longer lets the next command in a list run.
+  PENpi keeps its own changes on top (exact pins for managed installs, hidden extension flags,
+  the held proxy CONNECT, compaction off, no update banner, every continuation printed in
+  `pi -p`, credentials kept out of shell commands); upstream fixed none of them.
+- **Fewer dependencies:** upstream dropped `shx`, `autoevals` and the sandbox example (with
+  `@anthropic-ai/sandbox-runtime`), so PENpi's pins for them are gone; the vitest, undici and
+  minimatch updates PENpi carried are now upstream's own.
+
+### Fixed
+- **CI's check of the engine on stock upstream Pi finds its base again.** 0.6.0's squash left no
+  upstream history on `main`, so the job could not fetch the upstream base. The release branch
+  records the upstream merges again, and the base is tagged on GitHub.
+
+### Known issues
+- **E2: two runs detect silent truncation one call late** (C6, lag 4 against the limit 3). Both are
+  accepted until 0.8.0, measured on the upstream v1.5.0 corpus:
+  - data.o200k.1m.silent-messages, accepted since 0.6.0;
+  - research.glm.32k.silent-messages, new: Pi 1.5.0's shorter system prompt keeps one call just
+    over the test server's limit (on Pi 1.4.0 the run passes at lag 3).
+
+  Every other run passes, with no false detections.
+- **After a cut, an agent can pick up an earlier task that is already finished, or report it as
+  done**, as in 0.6.x.
+
+### Release gate
+- **GLM gate: REPEAT RUN (reference drift), not rerun. DeepSeek report run: PASS.** 0.7.0 ships
+  on the evidence, without a gate pass. On the same GLM night it matched 0.6.1: facts 293 against
+  290 of 300, and t1 rules 27 against 27 of 30. The figures are in PR #44.
+
 ## [0.6.1] — 2026-11-06
 
 ### Fixed

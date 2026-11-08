@@ -700,7 +700,9 @@ describe("D25: the memory section is re-capped before the first request after th
 			t.model.push(finalTurn("again"));
 			await t.harness.session.prompt("task 2: a short question.");
 			await reads(3);
-			for (let i = 0; i < 20; i++) t.model.push(toolTurn(6_000, 600 + i));
+			// 24 turns, not 20: with 20 the batch crossed the 64k model's high-water mark by about 100 tokens, and Pi
+			// 1.5.0's shorter system prompt left it just below (no cut). The same margin applies in cases 5 and 10.
+			for (let i = 0; i < 24; i++) t.model.push(toolTurn(6_000, 600 + i));
 			t.model.push(finalTurn("batch done"));
 			await t.harness.session.prompt("task 3: process the batch.");
 			expect(t.engine.stats.cuts.length, "a cut applied MEMORY-B").toBeGreaterThan(0);
@@ -724,7 +726,7 @@ describe("D25: the memory section is re-capped before the first request after th
 			if (!file) throw new Error("no session file");
 			first.model.push(finalTurn("ready"));
 			await first.harness.session.prompt("task 1: a short question.");
-			for (let i = 0; i < 20; i++) first.model.push(toolTurn(6_000, 700 + i));
+			for (let i = 0; i < 24; i++) first.model.push(toolTurn(6_000, 700 + i));
 			first.model.push(finalTurn("batch done"));
 			await first.harness.session.prompt("task 2: process the batch.");
 			expect(first.engine.stats.cuts.length).toBeGreaterThan(0);
@@ -801,7 +803,7 @@ describe("D25: the memory section is re-capped before the first request after th
 			if (!file) throw new Error("no session file");
 			first.model.push(finalTurn("ready"));
 			await first.harness.session.prompt("task 1: a short question.");
-			for (let i = 0; i < 20; i++) first.model.push(toolTurn(6_000, 900 + i));
+			for (let i = 0; i < 24; i++) first.model.push(toolTurn(6_000, 900 + i));
 			first.model.push(finalTurn("batch done"));
 			await first.harness.session.prompt("task 2: process the batch.");
 			expect(first.engine.stats.cuts.length, "a cut on 64k").toBeGreaterThan(0);

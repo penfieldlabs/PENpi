@@ -102,6 +102,9 @@ jobs:
       - name: TypeScript compile
         run: npx tsc --noEmit
 
+      - name: Examples type check
+        run: npx tsc --noEmit -p packages/coding-agent/examples/tsconfig.json
+
       - name: PENpi type check
         run: npm run check:penpi
 
