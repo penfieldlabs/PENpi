@@ -6,7 +6,7 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
 
 ## [Unreleased]
 
-## [0.7.0] — Unreleased
+## [0.7.0] — 2026-11-08
 
 ### Changed
 - **PENpi is on upstream Pi v1.5.0** (from v1.4.0). See Pi's own changelog
@@ -66,6 +66,11 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
   Every other run passes, with no false detections.
 - **After a cut, an agent can pick up an earlier task that is already finished, or report it as
   done**, as in 0.6.x.
+
+### Release gate
+- **GLM gate: REPEAT RUN (reference drift), not rerun. DeepSeek report run: PASS.** 0.7.0 ships
+  on the evidence, without a gate pass. On the same GLM night it matched 0.6.1: facts 293 against
+  290 of 300, and t1 rules 27 against 27 of 30. The figures are in PR #44.
 
 ## [0.6.1] — 2026-11-06
 
