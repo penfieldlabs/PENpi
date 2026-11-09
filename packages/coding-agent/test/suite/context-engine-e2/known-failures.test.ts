@@ -101,18 +101,11 @@ describe("E2 known failures", () => {
 		expect(validateKnownFailures(loadKnownFailures())).toEqual([]);
 	});
 
-	it("the repository's two entries are KNOWN at 0.7.0 and EXPIRED at 0.8.0", () => {
-		// 0.7.0, both measured on the upstream v1.5.0 corpus: data.o200k.1m.silent-messages (new with the v1.4.0
-		// corpus, accepted since 0.6.0) and research.glm.32k.silent-messages (new with v1.5.0's shorter system
-		// prompt), both until 0.8.0.
-		const entries = loadKnownFailures();
-		expect(entries).toHaveLength(2);
-		for (const name of ["data.o200k.1m.silent-messages", "research.glm.32k.silent-messages"]) {
-			const r = run(name, { failing: ["C6"], lag: 4 });
-			expect(knownFailure(r, entries, "0.7.0")?.status).toBe("known");
-			expect(knownFailure(r, entries, "0.8.0")?.status).toBe("expired");
-			expect(knownFailure(run(name, { failing: ["C6"], lag: 5 }), entries, "0.7.0")?.status).not.toBe("known");
-		}
+	it("the repository has no entry since 0.8.0", () => {
+		// 0.7.0 accepted two C6 failures on the upstream v1.5.0 corpus (f9a263655) until 0.8.0:
+		// data.o200k.1m.silent-messages and research.glm.32k.silent-messages. 0.8.0's marginal pair (ADR 0033) detects
+		// them at lag 3 and 2, and the entries are gone.
+		expect(loadKnownFailures()).toEqual([]);
 	});
 
 	it("covers its run failing C6 alone within the bound, below its version", () => {

@@ -6,6 +6,19 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
 
 ## [Unreleased]
 
+## [0.8.0] — Unreleased
+
+### Fixed
+- **Silent truncation that first reads only a little short is detected sooner.** The context engine
+  compares the usage growth a provider reports with what each request appended. Growth below a
+  quarter of the append is evidence; growth below half was only a warning sign and counted for
+  nothing. Now such a sample and one evidence sample within 30 requests detect together, in
+  either order (ADR 0033). Two such samples alone never do, since honest output such as
+  `git diff --stat` bars can read that low. On the upstream v1.5.0 corpus (`f9a263655`), E2's two
+  known failures pass: research.glm.32k.silent-messages at lag 2 and
+  data.o200k.1m.silent-messages at lag 3 (both lag 4 before, against the limit 3). Their
+  known-failure entries are gone.
+
 ## [0.7.0] — 2026-11-08
 
 ### Changed

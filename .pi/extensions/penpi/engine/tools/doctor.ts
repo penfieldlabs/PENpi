@@ -160,6 +160,7 @@ export function installDoctor(core: EngineCore): void {
 			state.history = [];
 			state.recent = [];
 			state.suspects = [];
+			state.marginals = [];
 			state.providerParked = undefined;
 			if (clearedParts.length > 0) {
 				cleared.push(`${key}: ${clearedParts.join(", ")}`);

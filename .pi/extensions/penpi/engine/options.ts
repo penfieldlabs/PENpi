@@ -117,6 +117,11 @@ export interface EngineOptions {
 	silentSuspects: number;
 	/** Weak evidence older than this many samples is forgotten. */
 	silentEvidenceSpan: number;
+	/**
+	 * ADR 0033: a marginal sample (growth below silentMarginal) and an evidence sample within the evidence span count
+	 * as two suspects, in either order; two marginal samples never do. Internal, for tests; no user setting.
+	 */
+	silentMarginalPair: boolean;
 	/** H3: clean requests near a learned limit before a re-probe, and confirmations that end probing. */
 	probeAfterParsed: number;
 	probeAfterUnparsed: number;
@@ -348,6 +353,7 @@ export const DEFAULTS: EngineOptions = {
 	silentSettledSamples: 5,
 	silentSuspects: 2,
 	silentEvidenceSpan: 30,
+	silentMarginalPair: true,
 	probeAfterParsed: 16,
 	probeAfterUnparsed: 8,
 	probeConfirmations: 2,

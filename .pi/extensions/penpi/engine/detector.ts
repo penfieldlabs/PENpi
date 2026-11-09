@@ -4,6 +4,30 @@ import type { EngineCore } from "./core.ts";
 import { STATE_TYPE, type TruncatedTurn } from "./options.ts";
 import type { ModelState } from "./state.ts";
 
+/**
+ * ADR 0033: whether a judged sample completes a marginal pair. An evidence sample does with a marginal sample in the
+ * evidence span, and a marginal sample does with an evidence sample in it. Two marginal samples never do: honest
+ * content can read marginal (the `+` bars of `git diff --stat` read about 0.5 of the estimate), and twice in a row.
+ */
+export function completesMarginalPair(kind: "evidence" | "marginal", evidence: number, marginals: number): boolean {
+	return kind === "evidence" ? marginals > 0 : evidence > 0;
+}
+
+/**
+ * ADR 0033: whether a clean sample forgets the marginal samples. As for evidence: a clean sample above everything
+ * reported so far, marginal samples included, by more than `flatness` (the provider processed more than they did).
+ */
+export function clearsMarginals(
+	reported: number,
+	maxReported: number,
+	marginals: Array<{ reported: number }>,
+	flatness: number,
+): boolean {
+	return (
+		marginals.length > 0 && reported > Math.max(maxReported, ...marginals.map((e) => e.reported)) * (1 + flatness)
+	);
+}
+
 /** The replay check decides from this many request pairs on (spec: 20 or more). */
 export const REPLAY_CHECK_PAIRS = 20;
 /** A pair counts only when its replayed reasoning is at least this many tokens and this share of the text. */
@@ -160,12 +184,14 @@ export function installDetector(core: EngineCore): void {
 				maxReported: state.maxReported,
 				maxExpected: state.maxExpected,
 				suspects: state.suspects,
+				marginals: state.marginals,
 			});
 			const back = parked.get(servedBy);
 			parked.delete(servedBy);
 			state.maxReported = back?.maxReported ?? 0;
 			state.maxExpected = back?.maxExpected;
 			state.suspects = back?.suspects ?? [];
+			state.marginals = back?.marginals ?? [];
 			const last = state.providerLast?.get(servedBy);
 			reference = last && last.chain === sent.chain ? last : undefined;
 			log(
@@ -197,6 +223,8 @@ export function installDetector(core: EngineCore): void {
 			Math.abs(expected - (state.maxExpected ?? 0)) >= 0.005 * expected;
 		// A sample whose growth falls short but not far enough to be evidence never clears evidence.
 		let marginal = false;
+		// ADR 0033: marginal by its growth (not a length stop or an unjudged switch), with its log text.
+		let short: string | undefined;
 		// Only judged samples (the growth rule or the exact-repeat rule compared them) can be suspects;
 		// unjudged ones (small appends, the sample after a length stop, warm-up after a model switch, no
 		// append-only predecessor) are skipped and do not reset the count.
@@ -233,7 +261,10 @@ export function installDetector(core: EngineCore): void {
 					// (the estimator's classes stay within 0.85-1.12 of o200k and GLM; a chars/4 count
 					// within 3x).
 					strong = grow >= opts.silentStrongGrowth && delta < opts.silentStrongShortfall * grow;
-				} else if (delta < opts.silentMarginal * grow) marginal = true;
+				} else if (delta < opts.silentMarginal * grow) {
+					marginal = true;
+					short = `${shown} (marginal)`;
+				}
 			}
 		}
 		if (
@@ -247,6 +278,17 @@ export function installDetector(core: EngineCore): void {
 		) {
 			suspect = `reported exactly the previous maximum ${reported} again, expected about ${Math.round(expected)}`;
 		}
+		// ADR 0033: marginal samples older than the evidence span are forgotten, as weak evidence is.
+		const inSpan = (e: { sample: number }) => state.samples - e.sample < opts.silentEvidenceSpan;
+		const marginals = opts.silentMarginalPair ? (state.marginals ?? []).filter(inSpan) : [];
+		state.marginals = marginals;
+		// A marginal sample with an evidence sample in the span is the pair's second suspect: quarantined like evidence.
+		const pairs =
+			!suspect &&
+			short !== undefined &&
+			opts.silentMarginalPair &&
+			completesMarginalPair("marginal", state.suspects.filter(inSpan).length, marginals.length);
+		if (pairs) suspect = short;
 		if (!suspect && !sent.afterLengthStop && !switched && prev && prev.seq === sent.seq - 1 && sent.appendOnly)
 			checkReplay(key, sent, reported - prev.reported, ctx);
 		state.lastSample = { seq: sent.seq, reported };
@@ -265,7 +307,22 @@ export function installDetector(core: EngineCore): void {
 			{ at: assistant.timestamp, expected, reported, ratio: state.ratio, suspect, provider: state.servedBy },
 		];
 		if (suspect) {
+			// ADR 0033: a lone evidence sample (not strong: that one acts alone; not a second: that one detects anyway) with
+			// marginal samples earlier in the span. They were not quarantined when judged, since nothing marked them then;
+			// they join the evidence now, and detection restores the ratio from before the first of them.
+			const alone = state.suspects.filter(inSpan).length === 0;
+			const joining =
+				!pairs && !strong && alone && completesMarginalPair("evidence", 0, marginals.length) ? marginals : [];
+			for (const m of joining) {
+				const r = state.recent.find((s) => s.at === m.at && s.reported === m.reported);
+				if (r) r.suspect = m.why;
+			}
+			if (pairs) log("silent truncation: a marginal sample with evidence earlier in the span");
+			if (joining.length > 0)
+				log(`silent truncation: ${joining.length} marginal sample(s) earlier in the span join this evidence`);
+			state.marginals = [];
 			state.suspects = [
+				...joining,
 				...state.suspects.filter((e) => state.samples - e.sample < opts.silentEvidenceSpan),
 				{ reported, at: assistant.timestamp, sample: state.samples, why: suspect },
 			];
@@ -289,6 +346,18 @@ export function installDetector(core: EngineCore): void {
 		) {
 			log(`silent truncation evidence cleared: ${reported} reported`);
 			state.suspects = [];
+		}
+		// ADR 0033: the same rule forgets marginal samples; a marginal sample is kept for a pair.
+		if (!marginal && clearsMarginals(reported, state.maxReported, marginals, opts.plateauFlatness)) {
+			log(`silent truncation marginal samples cleared: ${reported} reported`);
+			state.marginals = [];
+		}
+		if (short !== undefined && opts.silentMarginalPair) {
+			state.marginals = [
+				...state.marginals,
+				{ reported, at: assistant.timestamp, sample: state.samples, why: short },
+			];
+			log(`silent truncation marginal sample: ${short}; kept for a pair with evidence`);
 		}
 		if (reported > state.maxReported) {
 			state.maxReported = reported;
@@ -400,6 +469,7 @@ export function installDetector(core: EngineCore): void {
 		st.pendingPlateau = { key, window, max, samples: affected, probing };
 		state.recent = [];
 		state.suspects = [];
+		state.marginals = [];
 		state.history = [];
 	}
 
