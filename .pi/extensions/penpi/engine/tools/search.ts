@@ -81,6 +81,7 @@ export function installSearch(core: EngineCore): void {
 		query: string,
 		scope: "out-of-view" | "all",
 		limit: number,
+		offset = 0,
 	): { text: string; details: Record<string, unknown> } {
 		const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
 		if (terms.length === 0) throw new Error("Give at least one word to search for.");
@@ -218,7 +219,8 @@ export function installSearch(core: EngineCore): void {
 		const lines: string[] = [];
 		let used = 0;
 		const shown: Hit[] = [];
-		for (const hit of matched) {
+		// 0.8.0: `offset` skips that many matches in the same order, so the model can page past the cap.
+		for (const hit of matched.slice(offset)) {
 			if (shown.length >= limit) break;
 			const where = hit.inView ? (hit.capped ? "in view, shown capped" : "in view") : "out of view";
 			const result = hit.results.length ? ` · result: ${hit.results.join(", ")}` : "";
@@ -231,13 +233,22 @@ export function installSearch(core: EngineCore): void {
 			used += clipped.length;
 			shown.push(hit);
 		}
+		const rest = Math.max(0, matched.length - offset - shown.length);
+		const range =
+			offset > 0
+				? shown.length > 0
+					? ` (matches ${offset + 1} to ${offset + shown.length})`
+					: ` (offset ${offset} is past the last match)`
+				: "";
 		const head =
 			(partial
 				? `[${SEARCH_TOOL} "${query}" (${scope}): no entry has every word; ${matched.length} ${matched.length === 1 ? "entry has" : "entries have"} some of them` +
-					(matched.length > 0 ? `; ${shown.length} shown, most words first` : "")
+					(matched.length > 0 ? `; ${shown.length} shown${range}, most words first` : "")
 				: `[${SEARCH_TOOL} "${query}" (${scope}): ${matched.length} ${matched.length === 1 ? "entry matches" : "entries match"}` +
-					(matched.length > 0 ? `; ${shown.length} shown, newest first` : "")) +
-			(matched.length > shown.length ? `; ${matched.length - shown.length} more not shown: narrow the query` : "") +
+					(matched.length > 0 ? `; ${shown.length} shown${range}, newest first` : "")) +
+			(rest > 0
+				? `; ${rest} more not shown: narrow the query, or pass offset ${offset + shown.length} for the next ones`
+				: "") +
 			(shown.length > 0 ? `. Read one with ${RECALL_TOOL}({ "entry": "<id>" }).]` : ".]");
 		return {
 			text: [head, ...lines].join("\n"),
@@ -245,6 +256,7 @@ export function installSearch(core: EngineCore): void {
 				query,
 				scope,
 				total: matched.length,
+				...(offset > 0 ? { offset } : {}),
 				...(partial ? { partial: true } : {}),
 				shown: shown.map(({ snippet: _s, ...rest }) => rest),
 			},
@@ -266,11 +278,15 @@ export function installSearch(core: EngineCore): void {
 				}),
 			),
 			limit: Type.Optional(Type.Number({ description: "At most this many results." })),
+			offset: Type.Optional(
+				Type.Number({ description: "Skip this many matches, to see the ones after a reply's last (default 0)." }),
+			),
 		}),
 		execute: async (_id, params, _signal, _onUpdate, ctx) => {
 			const scope = params.scope === "all" ? "all" : "out-of-view";
 			const limit = Math.max(1, Math.min(opts.searchMaxResults, Math.floor(params.limit ?? opts.searchMaxResults)));
-			const { text, details } = searchEntries(ctx, params.query, scope, limit);
+			const offset = Math.max(0, Math.floor(params.offset ?? 0));
+			const { text, details } = searchEntries(ctx, params.query, scope, limit, offset);
 			return { content: [{ type: "text", text }], details };
 		},
 	});

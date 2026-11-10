@@ -5,13 +5,16 @@
  * request must be identical: the messages as serialized for the provider (header text included), the
  * number of requests, and the engine's cut records. Entry ids are deterministic (deterministic-ids.ts) and
  * restart for each run; they are also canonicalized (numbered in order of first appearance) before the
- * comparison; nothing else is normalized.
+ * comparison; nothing else is normalized. context_search's `offset` parameter (0.8.0) is in p3's tool schema, which
+ * is in every request and in the engine's estimates; the reference run's context_search is given the same parameter
+ * by a shim (its search ignores it), so both send the same tools.
  *
  * Paths covered (asserted, so the comparison is not vacuous): context cuts and overflow recovery.
  */
 
 import { createHash } from "node:crypto";
 import { createAssistantMessageEventStream, fauxAssistantMessage, type Message } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as P2 from "../../../../../.pi/extensions/penpi/engine/index.ts";
 import type { ExtensionAPI } from "../../../src/index.ts";
@@ -29,6 +32,35 @@ import {
 import * as P1 from "./reference/p2-context-engine.ts";
 
 type Engine = typeof P2 | typeof P1;
+
+/** The reference engine with context_search's `offset` parameter (0.8.0) added to its schema, as p3 sends it. */
+function withSearchOffset(factory: (pi: ExtensionAPI) => void): (pi: ExtensionAPI) => void {
+	return (pi) =>
+		factory(
+			new Proxy(pi, {
+				get(target, key, receiver) {
+					if (key !== "registerTool") return Reflect.get(target, key, receiver);
+					return (tool: Parameters<ExtensionAPI["registerTool"]>[0]) =>
+						target.registerTool(
+							tool.name === "context_search"
+								? {
+										...tool,
+										parameters: Type.Object({
+											...(tool.parameters as ReturnType<typeof Type.Object>).properties,
+											offset: Type.Optional(
+												Type.Number({
+													description:
+														"Skip this many matches, to see the ones after a reply's last (default 0).",
+												}),
+											),
+										}),
+									}
+								: tool,
+						);
+				},
+			}),
+		);
+}
 type Mode = "a";
 
 interface Trace {
@@ -86,12 +118,14 @@ describe("pin off, notice on is byte-identical to the reference engine (referenc
 										(e) => void (e.message.role === "user" && pi.appendEntry("equiv-shim", {})),
 									),
 							]),
-					engine.createContextEngine({
-						mode,
-						stats,
-						// p3 in the p2 configuration (no-ops for p2, whose defaults these are).
-						...(engine === P2 ? { pinUserMessages: null, notice: true } : {}),
-					} as never),
+					(engine === P2 ? (f: (pi: ExtensionAPI) => void) => f : withSearchOffset)(
+						engine.createContextEngine({
+							mode,
+							stats,
+							// p3 in the p2 configuration (no-ops for p2, whose defaults these are).
+							...(engine === P2 ? { pinUserMessages: null, notice: true } : {}),
+						} as never) as (pi: ExtensionAPI) => void,
+					),
 				],
 			});
 		} finally {

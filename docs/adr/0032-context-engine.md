@@ -198,6 +198,18 @@ clipped at 100 characters. A result matched only through its call already shows 
 and a hit on an assistant message names its results, so neither gets the field. The line is longer, so under
 `searchMaxChars` fewer hits can fit; the tool's description is unchanged. Test: `v080-result-hit-call.test.ts`.
 
+### 0.8.0: context_search takes an offset
+
+A reply showed at most `searchMaxResults` (10) hits and said how many more matched. `limit` could only lower that, and
+nothing reached the rest. PENpi-bench's N facts ask for the first of six runs whose replies echo the cue. In a
+PENpi-bench check, the first cue query hit the cap on 7 of 8 N facts, and one fact took 16 searches. `offset` skips
+that many matches in the reply's order (newest first, or most words first when no entry has every word), so the model
+can page. A later page's head says which matches it shows (`4 shown (matches 11 to 14)`), or that the offset is past
+the last match. The "more not shown" line keeps its words and names the next page: `4 more not shown: narrow the
+query, or pass offset 10 for the next ones`. The cap stays 10 a page, since a longer reply costs context on every
+search. The parameter is in the tool's schema, which is in every request, so a session's request prefix changes once,
+at the upgrade. Test: `v080-search-offset.test.ts`.
+
 ### Replayed reasoning, per model
 
 `replayedReasoning` ("provider/modelId" -> "counted" | "ignored", default "counted"). GLM stays

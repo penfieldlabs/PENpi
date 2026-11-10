@@ -14,6 +14,10 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
   commands could look the same. It now also shows the command or path, after `from: `, clipped at
   100 characters. In PENpi-bench, a query for one script's output also found a sibling script's,
   and neither hit said which was which.
+- **`context_search` can show the matches past its first 10.** It shows at most 10 hits a reply,
+  and `limit` could only lower that. A new `offset` skips that many matches, and the reply's
+  "more not shown" line now names the offset of the next page. In PENpi-bench, the first search
+  for the first of six similar runs hit the 10-hit cap on 7 of 8 facts.
 
 ### Fixed
 - **Silent truncation that first reads only a little short is detected sooner.** The context engine
