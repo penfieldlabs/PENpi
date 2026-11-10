@@ -9,6 +9,19 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
 ## [0.8.0] — Unreleased
 
 ### Changed
+- **PENpi is on upstream Pi v1.5.1** (from v1.5.0). See Pi's own changelog
+  (`packages/coding-agent/CHANGELOG.md`). What PENpi users notice:
+  - MCP sign-in is more reliable: a failed token refresh no longer spoils a sign-in in progress,
+    and a sign-in no longer hangs on "Connecting…" after the browser step.
+  - OAuth logins keep working when Pi is stopped during a token refresh, and two refreshes
+    through a symlinked `auth.json` share one lock.
+  - The read tool streams large files, and grep no longer reads every matched file into memory,
+    so neither runs out of memory on large files.
+  - Internal cursor markers no longer leak into terminal output.
+  - Prompt cache warming now defaults to `"idle"` (it was `"streaming"`): for models with a
+    prompt-cache lifetime, Pi also keeps the cache warm for up to 30 minutes between runs, when
+    a refresh is expected to cost less than it saves. Set `"cacheWarming": "off"` or
+    `"streaming"` in global settings to change it.
 - **A tool result found by `context_search` names the call that made it.** A hit on a tool result
   showed only `tool result bash` and a snippet of its output, so the results of two similar
   commands could look the same. It now also shows the command or path, after `from: `, clipped at

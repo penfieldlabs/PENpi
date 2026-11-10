@@ -2,7 +2,7 @@
 # scripts/check-upstream-patches.mjs fails when `git diff --name-only <base>` (index) is not
 # exactly this set. Add a line when PENpi changes or adds a file; remove it when the file
 # matches upstream again. Update the base after each upstream merge.
-base: f9a26365568127461c47a07a37dcb42c140a3ac5 (upstream Pi v1.5.0)
+base: dd30101cfc5b0609411dd80b6f93adbc14db14cf (upstream Pi v1.5.1)
 .github/APPROVED_CONTRIBUTORS	deleted: upstream contributor gate
 .github/ISSUE_TEMPLATE/bug.yml	PENpi links and wording; no upstream auto-close gate
 .github/ISSUE_TEMPLATE/contribution.yml	PENpi links; no upstream contributor gate
@@ -154,6 +154,7 @@ packages/ai/src/providers/data/opencode-go.json	committed model-data snapshot (o
 packages/ai/src/providers/data/opencode.json	committed model-data snapshot (offline builds)
 packages/ai/src/providers/data/openrouter.json	committed model-data snapshot (offline builds)
 packages/ai/src/providers/data/qwen-token-plan-cn.json	committed model-data snapshot (offline builds)
+packages/ai/src/providers/data/qwen-token-plan-individual-cn.json	committed model-data snapshot (offline builds)
 packages/ai/src/providers/data/qwen-token-plan-individual.json	committed model-data snapshot (offline builds)
 packages/ai/src/providers/data/qwen-token-plan.json	committed model-data snapshot (offline builds)
 packages/ai/src/providers/data/radius.json	committed model-data snapshot (offline builds)
