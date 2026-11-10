@@ -122,6 +122,12 @@ export interface EngineOptions {
 	 * as two suspects, in either order; two marginal samples never do. Internal, for tests; no user setting.
 	 */
 	silentMarginalPair: boolean;
+	/**
+	 * ADR 0034: at a detection, D14 also judges each sample from the first suspect or marginal one in the span on, at
+	 * the ratio from before that sample, raising its expected size only. Names only: the restored ratio, the learned
+	 * window and every request stay as they were. Internal, for tests; no user setting.
+	 */
+	silentNameRescale: boolean;
 	/** H3: clean requests near a learned limit before a re-probe, and confirmations that end probing. */
 	probeAfterParsed: number;
 	probeAfterUnparsed: number;
@@ -354,6 +360,7 @@ export const DEFAULTS: EngineOptions = {
 	silentSuspects: 2,
 	silentEvidenceSpan: 30,
 	silentMarginalPair: true,
+	silentNameRescale: true,
 	probeAfterParsed: 16,
 	probeAfterUnparsed: 8,
 	probeConfirmations: 2,

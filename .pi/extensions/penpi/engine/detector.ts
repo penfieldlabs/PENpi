@@ -28,6 +28,33 @@ export function clearsMarginals(
 	);
 }
 
+/**
+ * ADR 0034: the samples named at a detection. `affected` (D14 as before) are always named. A doubtful sample
+ * (quarantined, or marginal by its growth) that fed the ratio lowered the expected size of the samples after it, and a
+ * truncated one can then fall under D14's line. So each sample from its append chain's first doubtful sample on (that
+ * one included) is judged again at the ratio from before that sample, raising only: max(expected, expected / ratio x
+ * r0) above the window by more than `flatness`. Within a chain the content only grows; after a cut it changes, and a
+ * real fall of the ratio there must not name honest answers. Names only: nothing here feeds the ratio or a request.
+ */
+export function namedSamples<S extends ModelState["recent"][number]>(
+	served: S[],
+	affected: S[],
+	window: number,
+	flatness: number,
+	clamp: (ratio: number) => number,
+	rescale: boolean,
+): S[] {
+	if (!rescale) return affected;
+	const chainStart = new Map<number, number>();
+	return served.filter((s) => {
+		if (s.chain !== undefined && (s.suspect !== undefined || s.marginal) && !chainStart.has(s.chain))
+			chainStart.set(s.chain, clamp(s.ratio));
+		if (affected.includes(s)) return true;
+		const r0 = s.chain === undefined ? undefined : chainStart.get(s.chain);
+		return r0 !== undefined && Math.max(s.expected, (s.expected / clamp(s.ratio)) * r0) > window * (1 + flatness);
+	});
+}
+
 /** The replay check decides from this many request pairs on (spec: 20 or more). */
 export const REPLAY_CHECK_PAIRS = 20;
 /** A pair counts only when its replayed reasoning is at least this many tokens and this share of the text. */
@@ -304,7 +331,16 @@ export function installDetector(core: EngineCore): void {
 		// D14: as long as the evidence span, so an answer truncated long before detection can still be named.
 		state.recent = [
 			...state.recent.slice(-(opts.silentEvidenceSpan - 1)),
-			{ at: assistant.timestamp, expected, reported, ratio: state.ratio, suspect, provider: state.servedBy },
+			{
+				at: assistant.timestamp,
+				expected,
+				reported,
+				ratio: state.ratio,
+				suspect,
+				...(short !== undefined ? { marginal: true } : {}),
+				chain: sent.chain,
+				provider: state.servedBy,
+			},
 		];
 		if (suspect) {
 			// ADR 0033: a lone evidence sample (not strong: that one acts alone; not a second: that one detects anyway) with
@@ -350,6 +386,11 @@ export function installDetector(core: EngineCore): void {
 		// ADR 0033: the same rule forgets marginal samples; a marginal sample is kept for a pair.
 		if (!marginal && clearsMarginals(reported, state.maxReported, marginals, opts.plateauFlatness)) {
 			log(`silent truncation marginal samples cleared: ${reported} reported`);
+			// ADR 0034: a cleared marginal sample was judged honest, so it no longer starts a rescale of its chain.
+			for (const m of marginals) {
+				const r = state.recent.find((s) => s.at === m.at && s.reported === m.reported);
+				if (r) delete r.marginal;
+			}
 			state.marginals = [];
 		}
 		if (short !== undefined && opts.silentMarginalPair) {
@@ -442,7 +483,19 @@ export function installDetector(core: EngineCore): void {
 					s.expected > window * (1 + opts.plateauFlatness)),
 		);
 		if (affected.length > 0) state.ratio = affected[0].ratio;
-		// Was a re-probe of a silent-learned window running? Then the truncated answers include the probe's.
+		// ADR 0034: names only (namedSamples); the restored ratio above comes from today's affected set.
+		const named = namedSamples(
+			state.recent.filter((s) => s.provider === state.servedBy),
+			affected,
+			window,
+			opts.plateauFlatness,
+			core.clampRatio,
+			opts.silentNameRescale,
+		);
+		if (named.length > affected.length)
+			log(
+				`silent truncation: ${named.length - affected.length} more answer(s) named at the ratio from before their chain's first doubtful sample`,
+			);
 		const probing = state.learned?.source === "plateau" && state.learned.window > state.learned.base;
 		// Re-probe only an implausibly small window (below silentReprobeBelow of the planning window), and
 		// at most silentReprobes times per session: against a real silent truncator a probe costs a truncated
@@ -466,7 +519,7 @@ export function installDetector(core: EngineCore): void {
 		log(
 			`silent truncation: ${state.suspects.map((e) => e.why).join("; ")}; largest usage ever reported ${max}; window -> ${window} (this session only)${probing ? "; the re-probe was truncated" : ""}; ${reprobe ? `re-probe after ${opts.probeAfterUnparsed} clean requests (${state.silentProbes}/${opts.silentReprobes} used)` : "not re-probed"}`,
 		);
-		st.pendingPlateau = { key, window, max, samples: affected, probing };
+		st.pendingPlateau = { key, window, max, samples: named, probing };
 		state.recent = [];
 		state.suspects = [];
 		state.marginals = [];

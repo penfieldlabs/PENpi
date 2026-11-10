@@ -42,6 +42,14 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
   known failures pass: research.glm.32k.silent-messages at lag 2 and
   data.o200k.1m.silent-messages at lag 3 (both lag 4 before, against the limit 3). Their
   known-failure entries are gone.
+- **An answer produced from silently truncated input is named, even when the warning sign before
+  it lowered the engine's estimate.** When the engine finds silent truncation, it names every
+  answer that came from cut input. A sample that read only a little short still counted toward
+  the engine's token ratio. So the next request in the same run of growing requests could look a
+  little smaller than it was, and fall just under the line for naming. Such requests are now
+  judged at the ratio from before that sample (ADR 0034). This changes only the names in the
+  warning, never a request. In E2 on the upstream v1.5.1 corpus, data.o200k.1m.silent-messages
+  left call 31 unnamed, about 70 tokens under the line; 0.7.0 does the same.
 
 ## [0.7.0] — 2026-11-08
 

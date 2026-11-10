@@ -63,6 +63,14 @@ export interface ModelState {
 		reported: number;
 		ratio: number;
 		suspect?: string;
+		/**
+		 * ADR 0034: judged marginal by its growth (ADR 0033) when it was sampled. Kept on the sample, since the marginal
+		 * list is emptied before detection, so that D14 can find the ratio from before the first doubtful sample.
+		 * Removed when a clean sample clears the marginal samples: the engine has then judged it honest.
+		 */
+		marginal?: boolean;
+		/** ADR 0034: the append chain of its request (D24); a cut starts a new one. */
+		chain?: number;
 		/** D24: the upstream provider that served it, when the response named one. */
 		provider?: string;
 	}>;

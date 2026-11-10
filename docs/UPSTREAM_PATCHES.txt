@@ -40,6 +40,7 @@ base: dd30101cfc5b0609411dd80b6f93adbc14db14cf (upstream Pi v1.5.1)
 .pi/extensions/penpi/engine/header.ts	PENpi: context engine (ADR 0032)
 .pi/extensions/penpi/engine/index.ts	PENpi: context engine (ADR 0032)
 .pi/extensions/penpi/engine/limits.ts	PENpi: context engine (ADR 0032)
+.pi/extensions/penpi/engine/name-rescale.test.ts	PENpi: context engine (ADR 0032)
 .pi/extensions/penpi/engine/options.ts	PENpi: context engine (ADR 0032)
 .pi/extensions/penpi/engine/pin.ts	PENpi: context engine (ADR 0032)
 .pi/extensions/penpi/engine/planner.ts	PENpi: context engine (ADR 0032)
@@ -120,6 +121,7 @@ docs/adr/0030-strict-config-values.md	PENpi decision record
 docs/adr/0031-upstream-ancestry-and-patch-manifest.md	PENpi decision record
 docs/adr/0032-context-engine.md	PENpi decision record
 docs/adr/0033-marginal-pair.md	PENpi decision record
+docs/adr/0034-names-at-the-ratio-before-doubt.md	PENpi decision record
 docs/adr/README.md	PENpi decision record
 package-lock.json	follows package.json (PENpi workspace and pins); pi-mcp-adapter installed with --legacy-peer-deps (CONTRIBUTING.md); overrides include recheck 4.6.2 (pi-mcp-adapter pins 4.6.0-beta.3) and miniflare's undici 7.30.1
 package.json	PENpi version, workspace, checks and pins, context engine suite and tokenizer scripts; no npm publishing or model-catalog scripts
@@ -309,6 +311,7 @@ packages/coding-agent/test/suite/context-engine/v061-align-mismatch-warning.test
 packages/coding-agent/test/suite/context-engine/v061-recall-page.test.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/context-engine/v061-recall-tool-call.test.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/context-engine/v080-marginal-pair.test.ts	PENpi: context engine behaviour suite (ADR 0032)
+packages/coding-agent/test/suite/context-engine/v080-name-rescale.test.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/context-engine/v080-result-hit-call.test.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/context-engine/v080-search-offset.test.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/context-engine/vitest.config.ts	PENpi: context engine behaviour suite (ADR 0032)
