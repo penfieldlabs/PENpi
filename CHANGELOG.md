@@ -50,6 +50,13 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
   judged at the ratio from before that sample (ADR 0034). This changes only the names in the
   warning, never a request. In E2 on the upstream v1.5.1 corpus, data.o200k.1m.silent-messages
   left call 31 unnamed, about 70 tokens under the line; 0.7.0 does the same.
+- **E2's test material is pinned on its own.** E2 builds its sessions from upstream Pi's files at
+  the upstream base recorded for the patch manifest, so the v1.5.1 merge also changed the
+  material, and every E2 run changed with it. Code and material could not be told apart. The
+  material now has its own `e2-corpus:` line in `docs/UPSTREAM_PATCHES.txt`, with the revision and
+  its fingerprint, pinned at v1.5.1. A run at that revision fails when the fingerprint differs,
+  and each run's results and the summary name the revision. CI's engine-on-upstream job and the
+  release workflow check the fingerprint too; the release stops on a mismatch.
 
 ## [0.7.0] — 2026-11-08
 

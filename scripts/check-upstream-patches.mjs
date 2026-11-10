@@ -15,6 +15,7 @@ export const MANIFEST = "docs/UPSTREAM_PATCHES.txt";
 
 export function parseManifest(text) {
 	let base;
+	let e2Corpus;
 	const entries = new Map();
 	const errors = [];
 	for (const [index, raw] of text.split("\n").entries()) {
@@ -25,6 +26,13 @@ export function parseManifest(text) {
 			base = baseMatch[1];
 			continue;
 		}
+		// The E2 corpus pin (corpus.ts): an upstream revision and its corpus fingerprint, apart from the base.
+		if (line.startsWith("e2-corpus:")) {
+			const pin = /^e2-corpus: ([0-9a-f]{40}) ([0-9a-f]{64})\b/.exec(line);
+			if (pin) e2Corpus = { rev: pin[1], fingerprint: pin[2] };
+			else errors.push(`line ${index + 1}: e2-corpus: needs a 40-hex revision and a 64-hex fingerprint`);
+			continue;
+		}
 		const tab = line.indexOf("\t");
 		const path = tab === -1 ? line : line.slice(0, tab);
 		const reason = tab === -1 ? "" : line.slice(tab + 1).trim();
@@ -33,7 +41,8 @@ export function parseManifest(text) {
 		entries.set(path, reason);
 	}
 	if (!base) errors.push("no `base: <40-hex sha>` line");
-	return { base, entries, errors };
+	if (!e2Corpus) errors.push("no `e2-corpus: <40-hex revision> <64-hex fingerprint>` line");
+	return { base, e2Corpus, entries, errors };
 }
 
 /** Paths listed but not differing, and differing but not listed. `listed` is the manifest's path -> reason map. */

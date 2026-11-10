@@ -71,7 +71,7 @@ Narrow the matrix for a quick look (all runs of one mix at 60 turns take about 1
 | `E2_MODES` | `reject,silent-front,silent-messages` | what the provider does above its hard limit (see below) |
 | `E2_TURNS` | `500` | assistant turns per session |
 | `E2_SEED` | `1` | plan seed |
-| `E2_CORPUS_REV` | the `base:` of `docs/UPSTREAM_PATCHES.txt` | upstream commit the corpus is read from (git objects, as a checkout has them); `worktree` reads the checkout |
+| `E2_CORPUS_REV` | the `e2-corpus:` revision of `docs/UPSTREAM_PATCHES.txt` | upstream commit the corpus is read from (git objects, as a checkout has them); `worktree` reads the checkout. The revision is resolved with `git rev-parse`, so a tag or a short id of the pinned commit is checked too. At the pinned revision a run fails when the corpus fingerprint differs from the pinned one (`corpus-pin.test.ts` checks it in CI's engine-on-upstream job and before a release; in a shallow clone it skips); the revision is in each run's JSON (`corpusRev`) and the summary. The pin moves on its own commit, with a full E2 comparison, not with an upstream merge's `base:` |
 | `E2_SILENT_LIMIT` | `half` | silent server context: `half` = min(window, 200k)/2, `window` = the declared window, or a fraction |
 | `E2_ENGINE_OPTIONS` | | JSON merged into `createContextEngine` options |
 | `E2_DUMP_DROPPED` | | `1`: each silently truncated request's removed segments (role, tokens, first characters) in `<id>.dropped.jsonl` |

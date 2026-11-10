@@ -3,6 +3,9 @@
 # exactly this set. Add a line when PENpi changes or adds a file; remove it when the file
 # matches upstream again. Update the base after each upstream merge.
 base: dd30101cfc5b0609411dd80b6f93adbc14db14cf (upstream Pi v1.5.1)
+# The E2 corpus (context-engine-e2/corpus.ts): an upstream revision and its fingerprint, moved on its own
+# commit with a full E2 comparison, not with the base. An E2 run at this revision fails on another fingerprint.
+e2-corpus: dd30101cfc5b0609411dd80b6f93adbc14db14cf e917a3cbd38a1bd6ae8bb72a99be52fe5761ff224ada1908c747a12a015464ab (upstream Pi v1.5.1)
 .github/APPROVED_CONTRIBUTORS	deleted: upstream contributor gate
 .github/ISSUE_TEMPLATE/bug.yml	PENpi links and wording; no upstream auto-close gate
 .github/ISSUE_TEMPLATE/contribution.yml	PENpi links; no upstream contributor gate
@@ -197,6 +200,7 @@ packages/coding-agent/test/suite/agent-session-compaction.test.ts	upstream test 
 packages/coding-agent/test/suite/context-engine-e2/.gitignore	PENpi: E2, the context engine against real tokenizers (ADR 0032)
 packages/coding-agent/test/suite/context-engine-e2/README.md	PENpi: E2, the context engine against real tokenizers (ADR 0032)
 packages/coding-agent/test/suite/context-engine-e2/content.ts	PENpi: E2, the context engine against real tokenizers (ADR 0032)
+packages/coding-agent/test/suite/context-engine-e2/corpus-pin.test.ts	PENpi: E2, the context engine against real tokenizers (ADR 0032)
 packages/coding-agent/test/suite/context-engine-e2/corpus.ts	PENpi: E2, the context engine against real tokenizers (ADR 0032)
 packages/coding-agent/test/suite/context-engine-e2/e2-cjk.e2.ts	PENpi: E2, the context engine against real tokenizers (ADR 0032)
 packages/coding-agent/test/suite/context-engine-e2/e2-coding.e2.ts	PENpi: E2, the context engine against real tokenizers (ADR 0032)

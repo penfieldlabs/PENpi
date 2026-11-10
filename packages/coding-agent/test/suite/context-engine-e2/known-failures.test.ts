@@ -49,6 +49,7 @@ function run(id: string, { failing = [] as string[], lag = 1 as number | null, d
 		engine: { label: "test", sha256: "0".repeat(64), source: "test", via: "test" },
 		tokenizer: "test",
 		corpusFingerprint: "test",
+		corpusRev: "test",
 		calls: 30,
 		limits: { hardLimit: 16384, firstBudget: 26215, minBudget: 26215 },
 		rejections: { count: 0, late: 0, at: [], allowance: 0 },
