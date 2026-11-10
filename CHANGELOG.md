@@ -8,6 +8,13 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
 
 ## [0.8.0] — Unreleased
 
+### Changed
+- **A tool result found by `context_search` names the call that made it.** A hit on a tool result
+  showed only `tool result bash` and a snippet of its output, so the results of two similar
+  commands could look the same. It now also shows the command or path, after `from: `, clipped at
+  100 characters. In PENpi-bench, a query for one script's output also found a sibling script's,
+  and neither hit said which was which.
+
 ### Fixed
 - **Silent truncation that first reads only a little short is detected sooner.** The context engine
   compares the usage growth a provider reports with what each request appended. Growth below a

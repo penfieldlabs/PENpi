@@ -22,6 +22,13 @@ function callLabel(call: { name: string; arguments?: unknown }): string {
 	return values.join(" ");
 }
 
+/** The longest call label a result hit shows (characters); a longer one is clipped with "…". */
+const FROM_MAX = 100;
+
+function clip(text: string, max: number): string {
+	return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
+
 /**
  * Each tool call in a branch paired with its result entry (D16, Later 8, N7): `callOfResult` maps a result entry to
  * its call's label and entry, `resultOfBlock` maps "<call entry>#<block index>" to the result entry. context_search
@@ -96,6 +103,8 @@ export function installSearch(core: EngineCore): void {
 			found: number;
 			/** F4: matched only through its call (none of its own text); the call's entry. */
 			viaCall?: string;
+			/** A tool result's call label (D16), shown on its hit so siblings that print alike can be told apart. */
+			from?: string;
 		};
 		const hits: Hit[] = [];
 		let assistants = 0;
@@ -190,6 +199,8 @@ export function installSearch(core: EngineCore): void {
 				results,
 				found,
 				...(own ? {} : { viaCall: callEntry ?? "" }),
+				// 0.8.0: a result hit names its call (a snippet marked `call: ` already shows it).
+				...(own && label ? { from: clip(label.replace(/\s+/g, " ").trim(), FROM_MAX) } : {}),
 			});
 		}
 		// F4: a result matched only through its call says nothing the call does not; recalling it returns none
@@ -212,7 +223,8 @@ export function installSearch(core: EngineCore): void {
 			const where = hit.inView ? (hit.capped ? "in view, shown capped" : "in view") : "out of view";
 			const result = hit.results.length ? ` · result: ${hit.results.join(", ")}` : "";
 			const words = partial ? ` · ${hit.found} of ${terms.length} words` : "";
-			const line = `- ${hit.entry} · turn ${hit.turn} · ${hit.role} · ${where}${result}${words} · ${hit.snippet}`;
+			const from = hit.from ? ` · from: ${hit.from}` : "";
+			const line = `- ${hit.entry} · turn ${hit.turn} · ${hit.role} · ${where}${result}${words}${from} · ${hit.snippet}`;
 			if (used + line.length > opts.searchMaxChars && shown.length > 0) break;
 			const clipped = line.length > opts.searchMaxChars ? `${line.slice(0, opts.searchMaxChars - 1)}…` : line;
 			lines.push(clipped);
