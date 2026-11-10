@@ -1,1 +1,16 @@
-[]
+[
+	{
+		"run": "data.o200k.1m.silent-messages",
+		"criterion": "C6 detection-lag",
+		"maxLag": 4,
+		"until": "0.9.0",
+		"reason": "Measured on the upstream v1.5.1 corpus (dd30101cf, the e2-corpus: pin): truncations at calls 30, 31, 47 and 48, detection at call 49 (lag 4 against the limit 3). Call 30 is marginal (+5,910 for 12,639 appended) and joins no evidence; call 31 grows by exactly its append, since the server dropped the same messages for both; call 47 (100,116 sent, 99,718 counted) loses only 398 tokens and reads as ordinary growth; call 48 is a strong sample (-1,322 for 2,957 appended) and detects alone, at the next request. The detection is one request late because call 47 is truncated too: on the v1.5.0 corpus (f9a263655) that request is 99,096 tokens, under the server's limit, and 0.8.0 passes the run at lag 3 (truncations at calls 30, 31 and 48, detection at call 49). 0.7.0's engine on the v1.5.1 corpus fails it the same way (the same truncations, detection at call 49), and fails C8 there too. New with the upstream v1.4.0 corpus (0.6.0); accepted for 0.6.0 until 0.7.0 and for 0.7.0 until 0.8.0 by decision; passed on the v1.5.0 corpus after ADR 0033. On the v1.5.1 corpus it fails C6 alone only because of ADR 0034, which names call 31; without it the run fails C8 as well, which no entry covers. Accepted for 0.8.0 until 0.9.0 by decision."
+	},
+	{
+		"run": "data.o200k.32k.silent-front",
+		"criterion": "C6 detection-lag",
+		"maxLag": 4,
+		"until": "0.9.0",
+		"reason": "Measured on the upstream v1.5.1 corpus (dd30101cf, the e2-corpus: pin), with the server's limit at 16,384 tokens: truncations at calls 6, 9, 12 and 19, detection at call 20 (lag 4 against the limit 3). Call 6 (19,571 sent, 16,384 counted) still grows by more than half of what was appended (+3,980), so it is no evidence. Call 9 reports exactly the earlier maximum again and is the first evidence. Call 12 loses only 46 tokens and is expected under the maximum (about 15,781), so it can be no evidence. Call 19 is a strong sample (+337 for 2,580 appended), the second evidence, and the engine detects at the next request, as on the v1.5.0 corpus. The detection is one request late because the truncation starts earlier, with call 6 already over the limit, and calls 6 and 12 cannot be told from honest growth. On the v1.5.0 corpus (f9a263655) the first truncated request is call 10, and 0.8.0 passes the run at lag 3 (truncations at calls 10, 15 and 16, detection at call 17). 0.7.0's engine on the v1.5.1 corpus fails it the same way (the same truncations, detection at call 20). Accepted for 0.8.0 until 0.9.0 by decision."
+	}
+]

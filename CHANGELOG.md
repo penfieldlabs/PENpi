@@ -58,6 +58,17 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
   and each run's results and the summary name the revision. CI's engine-on-upstream job and the
   release workflow check the fingerprint too; the release stops on a mismatch.
 
+### Known issues
+- **E2: two runs detect silent truncation one call late** (C6, lag 4 against the limit 3). Both are
+  accepted until 0.9.0, measured on the upstream v1.5.1 corpus; on the v1.5.0 corpus 0.8.0 passes
+  both at lag 3, and 0.7.0 fails both the same way on v1.5.1:
+  - data.o200k.1m.silent-messages, accepted since 0.6.0: one more call is truncated, by 398
+    tokens, too little to tell from honest growth;
+  - data.o200k.32k.silent-front, new: the truncation starts earlier on this corpus, and two of
+    the truncated calls read as honest growth.
+- **After a cut, an agent can pick up an earlier task that is already finished, or report it as
+  done**, as in 0.7.0.
+
 ## [0.7.0] — 2026-11-08
 
 ### Changed

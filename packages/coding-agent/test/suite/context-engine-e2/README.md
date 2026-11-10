@@ -244,8 +244,16 @@ and the lag is at most `maxLag`, and PENpi's version (the root `package.json`) i
   (`run-e2.sh` with no selection). In any other set, such as a selection or the misconfigured runs, an entry whose
   run is not there is reported as not run. Anything an entry does not cover fails as before.
 
-There is no entry today. 0.7.0 had two, both C6 lag 4 (limit 3) until 0.8.0, measured on the upstream v1.5.0
-corpus (`f9a263655`): data.o200k.1m.silent-messages (new with the v1.4.0 corpus, accepted since 0.6.0) and
+Today's entries, both C6 lag 4 (limit 3) until 0.9.0, measured on the upstream v1.5.1 corpus (`dd30101cf`, the
+`e2-corpus:` pin). 0.8.0 passes both runs at lag 3 on the v1.5.0 corpus (`f9a263655`), and 0.7.0's engine fails
+both the same way on the v1.5.1 corpus:
+
+- data.o200k.1m.silent-messages: call 47 is truncated by 398 tokens and reads as ordinary growth; on v1.5.0 that
+  request was under the server's limit. Accepted since 0.6.0. It fails C6 alone because ADR 0034 names call 31.
+- data.o200k.32k.silent-front: the truncation starts at call 6, earlier than on v1.5.0, and two of the truncated
+  requests cannot be told from honest growth.
+
+0.7.0 had two other entries, until 0.8.0, on the v1.5.0 corpus: data.o200k.1m.silent-messages and
 research.glm.32k.silent-messages (new with Pi 1.5.0's shorter system prompt). 0.8.0's marginal pair (ADR 0033)
 detects them at lag 3 and 2 on that corpus, and deleted both. An earlier entry for research.glm.32k.silent-messages
 (C6 lag 4, from 0.5.0) was deleted in 0.6.0, whose corpus no longer made it fail.
