@@ -25,12 +25,14 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
 - **A tool result found by `context_search` names the call that made it.** A hit on a tool result
   showed only `tool result bash` and a snippet of its output, so the results of two similar
   commands could look the same. It now also shows the command or path, after `from: `, clipped at
-  100 characters. In PENpi-bench, a query for one script's output also found a sibling script's,
-  and neither hit said which was which.
+  100 characters. The change came from a PENpi-bench case: a query for one script's output also
+  found a sibling script's, and neither hit said which was which. That case is in-sample, so it
+  shows the problem, not what the change gains.
 - **`context_search` can show the matches past its first 10.** It shows at most 10 hits a reply,
   and `limit` could only lower that. A new `offset` skips that many matches, and the reply's
-  "more not shown" line now names the offset of the next page. In PENpi-bench, the first search
-  for the first of six similar runs hit the 10-hit cap on 7 of 8 facts.
+  "more not shown" line now names the offset of the next page. The change came from a PENpi-bench
+  case: the first search for the first of six similar runs hit the 10-hit cap on 7 of 8 facts. That
+  case is in-sample, so it shows the problem, not what the change gains.
 
 ### Fixed
 - **Silent truncation that first reads only a little short is detected sooner.** The context engine
@@ -40,8 +42,11 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
   either order (ADR 0033). Two such samples alone never do, since honest output such as
   `git diff --stat` bars can read that low. On the upstream v1.5.0 corpus (`f9a263655`), E2's two
   known failures pass: research.glm.32k.silent-messages at lag 2 and
-  data.o200k.1m.silent-messages at lag 3 (both lag 4 before, against the limit 3). Their
-  known-failure entries are gone.
+  data.o200k.1m.silent-messages at lag 3 (both lag 4 before, against the limit 3). The
+  known-failure entry for research.glm.32k.silent-messages is gone. data.o200k.1m.silent-messages
+  fails again on the upstream v1.5.1 corpus (see Known issues). This path could not have fired in
+  any stored release-gate session, so the evidence for the fix is its unit test and E2, not the
+  gate.
 - **An answer produced from silently truncated input is named, even when the warning sign before
   it lowered the engine's estimate.** When the engine finds silent truncation, it names every
   answer that came from cut input. A sample that read only a little short still counted toward
