@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { compare, differingPaths, parseManifest } from "./check-upstream-patches.mjs";
+import { compare, differingPaths, indexPaths, parseManifest, unlistedWorkflows } from "./check-upstream-patches.mjs";
 
 const BASE = "a".repeat(40);
 const REV = "b".repeat(40);
@@ -66,6 +66,41 @@ test("diffs the index, including additions, deletions and mode changes", () => {
 		git("add", "edited.txt", "added.txt");
 		git("update-index", "--chmod=+x", "script.sh");
 		assert.deepEqual([...differingPaths(root, base)].sort(), ["added.txt", "edited.txt", "removed.txt", "script.sh"]);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("a workflow in the index needs a line, even when it matches upstream", () => {
+	const listed = new Map([
+		[".github/workflows/ci.yml", "PENpi CI"],
+		[".github/workflows/gone.yml", "deleted: upstream"],
+	]);
+	const paths = new Set([
+		".github/workflows/ci.yml",
+		".github/workflows/new.yml",
+		".github/ISSUE_TEMPLATE/config.yml",
+		"README.md",
+	]);
+	assert.deepEqual(unlistedWorkflows(listed, paths), [".github/workflows/new.yml"]);
+	assert.deepEqual(unlistedWorkflows(listed, new Set([".github/workflows/ci.yml"])), []);
+});
+
+test("lists the index's workflows, not deleted or untracked ones", () => {
+	const root = mkdtempSync(join(tmpdir(), "upstream-patches-"));
+	const git = (...args) => execFileSync("git", args, { cwd: root, encoding: "utf8" });
+	try {
+		git("init", "-q");
+		git("config", "user.email", "test@example.invalid");
+		git("config", "user.name", "test");
+		mkdirSync(join(root, ".github/workflows"), { recursive: true });
+		for (const name of ["kept.yml", "removed.yml"]) writeFileSync(join(root, ".github/workflows", name), `${name}\n`);
+		writeFileSync(join(root, "README.md"), "readme\n");
+		git("add", ".");
+		git("commit", "-q", "-m", "base");
+		git("rm", "-q", ".github/workflows/removed.yml");
+		writeFileSync(join(root, ".github/workflows/untracked.yml"), "untracked\n");
+		assert.deepEqual([...indexPaths(root, ".github/workflows/")], [".github/workflows/kept.yml"]);
 	} finally {
 		rmSync(root, { recursive: true, force: true });
 	}

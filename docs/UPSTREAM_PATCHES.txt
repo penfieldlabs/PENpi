@@ -1,7 +1,9 @@
 # Paths that intentionally differ from the upstream Pi base, one per line: <path><TAB><reason>.
 # scripts/check-upstream-patches.mjs fails when `git diff --name-only <base>` (index) is not
 # exactly this set. Add a line when PENpi changes or adds a file; remove it when the file
-# matches upstream again. Update the base after each upstream merge.
+# matches upstream again. Update the base after each upstream merge. Every workflow under
+# .github/workflows needs a line too, so an upstream workflow that a merge brings in unchanged
+# fails the check: patch it or delete it, and say why.
 base: dd30101cfc5b0609411dd80b6f93adbc14db14cf (upstream Pi v1.5.1)
 # The E2 corpus (context-engine-e2/corpus.ts): an upstream revision and its fingerprint, moved on its own
 # commit with a full E2 comparison, not with the base. An E2 run at this revision fails on another fingerprint.
@@ -21,6 +23,7 @@ e2-corpus: dd30101cfc5b0609411dd80b6f93adbc14db14cf e917a3cbd38a1bd6ae8bb72a99be
 .github/workflows/issue-triage-labels.yml	deleted: upstream issue automation
 .github/workflows/nix.yml	deleted: PENpi has no Nix packaging
 .github/workflows/npm-audit.yml	weekly schedule, job timeout, no persisted credentials; runs upstream's npm-audit.mjs
+.github/workflows/p2-cloud-bundle.yml	deleted: upstream web UI upload to R2; PENpi ships source only
 .github/workflows/pr-gate.yml	deleted: upstream contributor gate
 .github/workflows/preview-packages.yml	deleted: upstream preview-package publishing (pkg.earendil.com); PENpi ships source only
 .github/workflows/publish-model-catalog.yml	deleted: PENpi publishes no model catalog

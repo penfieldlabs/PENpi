@@ -2,7 +2,9 @@
 // Every path that differs from the upstream Pi base must be listed, with a reason, in
 // docs/UPSTREAM_PATCHES.txt, and every listed path must still differ. Once main records
 // upstream as merged, an unlisted difference would survive the next upstream merge
-// silently as if it were a deliberate PENpi change.
+// silently as if it were a deliberate PENpi change. Every workflow under .github/workflows
+// must be listed as well: an upstream workflow that a merge brings in unchanged differs from
+// nothing, so it would otherwise run in PENpi's repository unseen.
 //
 // Compares the index (what is committed, or about to be) with the base, so the result is
 // the same in CI and in a pre-commit run. Fetches the base commit by SHA when it is not
@@ -12,6 +14,7 @@ import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 export const MANIFEST = "docs/UPSTREAM_PATCHES.txt";
+export const WORKFLOWS = ".github/workflows/";
 
 export function parseManifest(text) {
 	let base;
@@ -53,12 +56,22 @@ export function compare(listed, differing) {
 	};
 }
 
+/** Workflows in `paths` (the index) with no manifest line, whether or not they differ from upstream. */
+export function unlistedWorkflows(listed, paths) {
+	return [...paths].filter((path) => path.startsWith(WORKFLOWS) && !listed.has(path)).sort();
+}
+
 function git(repoRoot, args, options = {}) {
 	return execFileSync("git", args, { cwd: repoRoot, encoding: "utf8", ...options });
 }
 
 export function differingPaths(repoRoot, base) {
 	const output = git(repoRoot, ["diff", "--cached", "--name-only", "--no-renames", "-z", base]);
+	return new Set(output.split("\0").filter(Boolean));
+}
+
+export function indexPaths(repoRoot, prefix) {
+	const output = git(repoRoot, ["ls-files", "--cached", "-z", "--", prefix]);
 	return new Set(output.split("\0").filter(Boolean));
 }
 
@@ -79,9 +92,14 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 	}
 	ensureBase(repoRoot, base);
 	const { unlisted, stale } = compare(entries, differingPaths(repoRoot, base));
-	if (unlisted.length > 0 || stale.length > 0) {
+	const workflows = unlistedWorkflows(entries, indexPaths(repoRoot, WORKFLOWS)).filter(
+		(path) => !unlisted.includes(path),
+	);
+	if (unlisted.length > 0 || stale.length > 0 || workflows.length > 0) {
 		for (const path of unlisted) console.error(`differs from upstream ${base.slice(0, 9)} but is not in ${MANIFEST}: ${path}`);
 		for (const path of stale) console.error(`listed in ${MANIFEST} but identical to upstream: ${path}`);
+		for (const path of workflows)
+			console.error(`an upstream workflow, unchanged, is not in ${MANIFEST}: ${path} (patch or delete it, and list it)`);
 		process.exit(1);
 	}
 	console.log(`All ${entries.size} paths that differ from upstream ${base.slice(0, 9)} are listed in ${MANIFEST}.`);
