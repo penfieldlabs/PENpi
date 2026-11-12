@@ -63,6 +63,14 @@ export interface ModelState {
 		reported: number;
 		ratio: number;
 		suspect?: string;
+		/**
+		 * ADR 0034: judged marginal by its growth (ADR 0033) when it was sampled. Kept on the sample, since the marginal
+		 * list is emptied before detection, so that D14 can find the ratio from before the first doubtful sample.
+		 * Removed when a clean sample clears the marginal samples: the engine has then judged it honest.
+		 */
+		marginal?: boolean;
+		/** ADR 0034: the append chain of its request (D24); a cut starts a new one. */
+		chain?: number;
 		/** D24: the upstream provider that served it, when the response named one. */
 		provider?: string;
 	}>;
@@ -79,13 +87,26 @@ export interface ModelState {
 	 * evidence, set aside at a switch and restored when they serve again). Not persisted.
 	 */
 	providerLast?: Map<string, { seq: number; reported: number; chain: number; cum: number }>;
-	providerParked?: Map<string, { maxReported: number; maxExpected?: number; suspects: ModelState["suspects"] }>;
+	providerParked?: Map<
+		string,
+		{
+			maxReported: number;
+			maxExpected?: number;
+			suspects: ModelState["suspects"];
+			marginals?: ModelState["marginals"];
+		}
+	>;
 	/** The largest usage reported by a sample that was not quarantined. */
 	maxReported: number;
 	/** The expectation of the sample that set maxReported (a repeat of the same request is no evidence). */
 	maxExpected?: number;
 	/** Quarantined samples (evidence of silent truncation), with the sample count when seen. */
 	suspects: Array<{ reported: number; at: number; sample: number; why: string }>;
+	/**
+	 * ADR 0033: marginal samples by growth (not quarantined), kept for a pair with an evidence sample within the
+	 * evidence span. Not persisted, like the evidence.
+	 */
+	marginals?: Array<{ reported: number; at: number; sample: number; why: string }>;
 	learned?: LearnedWindow;
 	output: {
 		ceiling?: number;

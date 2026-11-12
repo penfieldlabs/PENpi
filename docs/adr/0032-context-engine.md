@@ -187,6 +187,29 @@ began with a several-word query that matched nothing. The tool's description is 
 every request). Test: `d16-search-tool-call-arguments.test.ts`, the s14 session trimmed to the read,
 the model's two queries, a partial one and the recall that returns the approval code.
 
+### 0.8.0: a result hit names its call
+
+A tool result's hit showed its role (`tool result bash`) and a snippet of its own text. Its call's argument values
+were searched (D16) but not shown, so two results of sibling commands that print alike gave hits the model could not
+tell apart. In a PENpi-bench check, the query for `row-audit` returned the target's result
+and the sibling `row-audit-legacy`'s, with no value in either snippet; the model had to recall both. A result hit now
+shows its call after the place it is in (`· from: <argument values> ·`), whitespace folded to single spaces and
+clipped at 100 characters. A result matched only through its call already shows the call in its snippet (`call: `),
+and a hit on an assistant message names its results, so neither gets the field. The line is longer, so under
+`searchMaxChars` fewer hits can fit; the tool's description is unchanged. Test: `v080-result-hit-call.test.ts`.
+
+### 0.8.0: context_search takes an offset
+
+A reply showed at most `searchMaxResults` (10) hits and said how many more matched. `limit` could only lower that, and
+nothing reached the rest. PENpi-bench's N facts ask for the first of six runs whose replies echo the cue. In a
+PENpi-bench check, the first cue query hit the cap on 7 of 8 N facts, and one fact took 16 searches. `offset` skips
+that many matches in the reply's order (newest first, or most words first when no entry has every word), so the model
+can page. A later page's head says which matches it shows (`4 shown (matches 11 to 14)`), or that the offset is past
+the last match. The "more not shown" line keeps its words and names the next page: `4 more not shown: narrow the
+query, or pass offset 10 for the next ones`. The cap stays 10 a page, since a longer reply costs context on every
+search. The parameter is in the tool's schema, which is in every request, so a session's request prefix changes once,
+at the upgrade. Test: `v080-search-offset.test.ts`.
+
 ### Replayed reasoning, per model
 
 `replayedReasoning` ("provider/modelId" -> "counted" | "ignored", default "counted"). GLM stays

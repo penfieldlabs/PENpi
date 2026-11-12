@@ -91,15 +91,18 @@ describe("pre-cut notice", () => {
 
 	for (const seed of FIXTURE_SEEDS) {
 		it(`notice: false sends no notice, with or without repeats, and cuts as before (fixture seed ${seed})`, async () => {
-			const on = await run(seed);
-			const off = await run(seed, undefined, { notice: false });
-			const offRepeats = await run(seed, true, { notice: false });
+			// Calibration off in all three runs: the provider counts the notice, so with calibration on the notice moves
+			// the ratio a little, and that can move a cut by one request at a boundary.
+			const on = await run(seed, undefined, { calibrate: false });
+			const off = await run(seed, undefined, { notice: false, calibrate: false });
+			const offRepeats = await run(seed, true, { notice: false, calibrate: false });
 			report("p4", ENGINE_LABEL, `notice-off.${seed}`, {
 				on: { notices: on.withNotice.length, cuts: on.stats.cuts.length },
 				off: { notices: off.withNotice.length, counted: off.stats.notices, cuts: off.stats.cuts.length },
 				offRepeats: { notices: offRepeats.withNotice.length, counted: offRepeats.stats.notices },
 			});
 			expect(on.withNotice.length).toBeGreaterThan(0);
+			expect(on.stats.cuts.length).toBeGreaterThan(0);
 			for (const r of [off, offRepeats]) {
 				expect(r.withNotice).toHaveLength(0);
 				expect(r.stats.notices).toBe(0);
@@ -110,7 +113,7 @@ describe("pre-cut notice", () => {
 			const idsOf = (r: typeof on) => r.harness.sessionManager.getEntries().map((e) => e.id);
 			expect(idsOf(off)).toEqual(idsOf(on));
 			expect(idsOf(on)[0]).toBe("00000000");
-			// The notice is request-only, so switching it off leaves the cuts where they were.
+			// The notice is request-only, so with calibration off, switching it off leaves the cuts where they were.
 			expect(off.stats.cuts.map((c) => c.seq)).toEqual(on.stats.cuts.map((c) => c.seq));
 			expect(off.prefix.breakAt).toEqual(on.prefix.breakAt);
 		});

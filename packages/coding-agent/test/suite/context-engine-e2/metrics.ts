@@ -65,6 +65,8 @@ export interface RunMetrics {
 	engine: { label: string; sha256: string; source: string; loaded: string; via: string };
 	tokenizer: string;
 	corpusFingerprint: string;
+	/** The upstream revision the corpus was read from (the e2-corpus: pin or E2_CORPUS_REV), or "worktree". */
+	corpusRev: string;
 	session: {
 		plannedTurns: number;
 		answeredTurns: number;
@@ -184,6 +186,7 @@ export interface EvaluateInput {
 	tokenizerSource: string;
 	tokenizerStats: { calls: number; chars: number; ms: number };
 	corpusFingerprint: string;
+	corpusRev: string;
 	runtimeMs: number;
 }
 
@@ -422,6 +425,7 @@ export function evaluate(input: EvaluateInput): RunMetrics {
 		},
 		tokenizer: input.tokenizerSource,
 		corpusFingerprint: input.corpusFingerprint,
+		corpusRev: input.corpusRev,
 		session: {
 			plannedTurns: input.plan.turns,
 			answeredTurns: input.answered,

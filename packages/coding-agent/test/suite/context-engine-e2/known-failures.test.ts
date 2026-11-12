@@ -49,6 +49,7 @@ function run(id: string, { failing = [] as string[], lag = 1 as number | null, d
 		engine: { label: "test", sha256: "0".repeat(64), source: "test", via: "test" },
 		tokenizer: "test",
 		corpusFingerprint: "test",
+		corpusRev: "test",
 		calls: 30,
 		limits: { hardLimit: 16384, firstBudget: 26215, minBudget: 26215 },
 		rejections: { count: 0, late: 0, at: [], allowance: 0 },
@@ -101,17 +102,22 @@ describe("E2 known failures", () => {
 		expect(validateKnownFailures(loadKnownFailures())).toEqual([]);
 	});
 
-	it("the repository's two entries are KNOWN at 0.7.0 and EXPIRED at 0.8.0", () => {
-		// 0.7.0, both measured on the upstream v1.5.0 corpus: data.o200k.1m.silent-messages (new with the v1.4.0
-		// corpus, accepted since 0.6.0) and research.glm.32k.silent-messages (new with v1.5.0's shorter system
-		// prompt), both until 0.8.0.
+	it("the repository has exactly 0.8.0's two entries, each valid, KNOWN at 0.8.0 and EXPIRED at 0.9.0", () => {
+		// 0.7.0 accepted two C6 failures on the upstream v1.5.0 corpus (f9a263655) until 0.8.0:
+		// data.o200k.1m.silent-messages and research.glm.32k.silent-messages. 0.8.0's marginal pair (ADR 0033) detects
+		// them at lag 3 and 2, and those entries are gone. On the upstream v1.5.1 corpus (dd30101cf, the e2-corpus: pin)
+		// two runs fail C6 alone at lag 4, accepted for 0.8.0 until 0.9.0 by decision.
 		const entries = loadKnownFailures();
-		expect(entries).toHaveLength(2);
-		for (const name of ["data.o200k.1m.silent-messages", "research.glm.32k.silent-messages"]) {
+		expect(entries.map((e) => [e.run, e.criterion, e.maxLag, e.until])).toEqual([
+			["data.o200k.1m.silent-messages", "C6 detection-lag", 4, "0.9.0"],
+			["data.o200k.32k.silent-front", "C6 detection-lag", 4, "0.9.0"],
+		]);
+		for (const e of entries) expect(validateKnownFailures([e])).toEqual([]);
+		for (const { run: name } of entries) {
 			const r = run(name, { failing: ["C6"], lag: 4 });
-			expect(knownFailure(r, entries, "0.7.0")?.status).toBe("known");
-			expect(knownFailure(r, entries, "0.8.0")?.status).toBe("expired");
-			expect(knownFailure(run(name, { failing: ["C6"], lag: 5 }), entries, "0.7.0")?.status).not.toBe("known");
+			expect(knownFailure(r, entries, "0.8.0")?.status).toBe("known");
+			expect(knownFailure(r, entries, "0.9.0")?.status).toBe("expired");
+			expect(knownFailure(run(name, { failing: ["C6"], lag: 5 }), entries, "0.8.0")?.status).not.toBe("known");
 		}
 	});
 

@@ -6,6 +6,75 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
 
 ## [Unreleased]
 
+## [0.8.0] — Unreleased
+
+### Changed
+- **PENpi is on upstream Pi v1.5.1** (from v1.5.0). See Pi's own changelog
+  (`packages/coding-agent/CHANGELOG.md`). What PENpi users notice:
+  - MCP sign-in is more reliable: a failed token refresh no longer spoils a sign-in in progress,
+    and a sign-in no longer hangs on "Connecting…" after the browser step.
+  - OAuth logins keep working when Pi is stopped during a token refresh, and two refreshes
+    through a symlinked `auth.json` share one lock.
+  - The read tool streams large files, and grep no longer reads every matched file into memory,
+    so neither runs out of memory on large files.
+  - Internal cursor markers no longer leak into terminal output.
+  - Prompt cache warming is now off by default: with it on, Pi sends paid requests the user did
+    not ask for. In 0.7.0 it was on while a run streamed (`"streaming"`), so this is a change
+    users will notice. Upstream v1.5.1 made `"idle"` its default, which also keeps the cache
+    warm for up to 30 minutes between runs; PENpi does not follow it. Set
+    `"cacheWarming": "streaming"` or `"idle"` in global settings to turn it on.
+- **A tool result found by `context_search` names the call that made it.** A hit on a tool result
+  showed only `tool result bash` and a snippet of its output, so the results of two similar
+  commands could look the same. It now also shows the command or path, after `from: `, clipped at
+  100 characters. The change came from a PENpi-bench case: a query for one script's output also
+  found a sibling script's, and neither hit said which was which. That case is in-sample, so it
+  shows the problem, not what the change gains.
+- **`context_search` can show the matches past its first 10.** It shows at most 10 hits a reply,
+  and `limit` could only lower that. A new `offset` skips that many matches, and the reply's
+  "more not shown" line now names the offset of the next page. The change came from a PENpi-bench
+  case: the first search for the first of six similar runs hit the 10-hit cap on 7 of 8 facts. That
+  case is in-sample, so it shows the problem, not what the change gains.
+
+### Fixed
+- **Silent truncation that first reads only a little short is detected sooner.** The context engine
+  compares the usage growth a provider reports with what each request appended. Growth below a
+  quarter of the append is evidence; growth below half was only a warning sign and counted for
+  nothing. Now such a sample and one evidence sample within 30 requests detect together, in
+  either order (ADR 0033). Two such samples alone never do, since honest output such as
+  `git diff --stat` bars can read that low. On the upstream v1.5.0 corpus (`f9a263655`), E2's two
+  known failures pass: research.glm.32k.silent-messages at lag 2 and
+  data.o200k.1m.silent-messages at lag 3 (both lag 4 before, against the limit 3). The
+  known-failure entry for research.glm.32k.silent-messages is gone. data.o200k.1m.silent-messages
+  fails again on the upstream v1.5.1 corpus (see Known issues). This path could not have fired in
+  any stored release-gate session, so the evidence for the fix is its unit test and E2, not the
+  gate.
+- **An answer produced from silently truncated input is named, even when the warning sign before
+  it lowered the engine's estimate.** When the engine finds silent truncation, it names every
+  answer that came from cut input. A sample that read only a little short still counted toward
+  the engine's token ratio. So the next request in the same run of growing requests could look a
+  little smaller than it was, and fall just under the line for naming. Such requests are now
+  judged at the ratio from before that sample (ADR 0034). This changes only the names in the
+  warning, never a request. In E2 on the upstream v1.5.1 corpus, data.o200k.1m.silent-messages
+  left call 31 unnamed, about 70 tokens under the line; 0.7.0 does the same.
+- **E2's test material is pinned on its own.** E2 builds its sessions from upstream Pi's files at
+  the upstream base recorded for the patch manifest, so the v1.5.1 merge also changed the
+  material, and every E2 run changed with it. Code and material could not be told apart. The
+  material now has its own `e2-corpus:` line in `docs/UPSTREAM_PATCHES.txt`, with the revision and
+  its fingerprint, pinned at v1.5.1. A run at that revision fails when the fingerprint differs,
+  and each run's results and the summary name the revision. CI's engine-on-upstream job and the
+  release workflow check the fingerprint too; the release stops on a mismatch.
+
+### Known issues
+- **E2: two runs detect silent truncation one call late** (C6, lag 4 against the limit 3). Both are
+  accepted until 0.9.0, measured on the upstream v1.5.1 corpus; on the v1.5.0 corpus 0.8.0 passes
+  both at lag 3, and 0.7.0 fails both the same way on v1.5.1:
+  - data.o200k.1m.silent-messages, accepted since 0.6.0: one more call is truncated, by 398
+    tokens, too little to tell from honest growth;
+  - data.o200k.32k.silent-front, new: the truncation starts earlier on this corpus, and two of
+    the truncated calls read as honest growth.
+- **After a cut, an agent can pick up an earlier task that is already finished, or report it as
+  done**, as in 0.7.0.
+
 ## [0.7.0] — 2026-11-08
 
 ### Changed

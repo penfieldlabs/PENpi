@@ -20,6 +20,7 @@ function run(id, { mode = "reasoning", misconfigured = false, warnings = [], nam
 		engine: { label: "t", sha256: "0".repeat(64), source: "engine.ts", loaded: "engine.ts", via: "test" },
 		tokenizer: "o200k",
 		corpusFingerprint: "c",
+		corpusRev: "r",
 		calls: 3,
 		criteria: ["C1 rejections", "C2 largest", "C3 mean", "C4 breaks", "C5", "C6", "C7", "C8 named"].map(criterion),
 		verdict: "PASS",
@@ -106,4 +107,9 @@ test("N2: misconfigured runs are reported in their own section and gated only on
 	const bad = summarize([run("normal"), failing("m1", [])]);
 	assert.equal(bad.status, 1);
 	assert.match(bad.md, /\| m1 \| FAIL \(C2 largest\) \| 2 \| 1\.12 \| 3 \| 3 \| 31 \| 0\.96 \| \*\*no\*\* \|/);
+});
+
+test("the summary names the corpus revision with its fingerprint", () => {
+	const { md } = summarize([run("a"), run("b")]);
+	assert.match(md, /^- corpus: revision r; fingerprint c$/m);
 });

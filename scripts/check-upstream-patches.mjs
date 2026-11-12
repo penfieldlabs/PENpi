@@ -2,7 +2,9 @@
 // Every path that differs from the upstream Pi base must be listed, with a reason, in
 // docs/UPSTREAM_PATCHES.txt, and every listed path must still differ. Once main records
 // upstream as merged, an unlisted difference would survive the next upstream merge
-// silently as if it were a deliberate PENpi change.
+// silently as if it were a deliberate PENpi change. Every workflow under .github/workflows
+// must be listed as well: an upstream workflow that a merge brings in unchanged differs from
+// nothing, so it would otherwise run in PENpi's repository unseen.
 //
 // Compares the index (what is committed, or about to be) with the base, so the result is
 // the same in CI and in a pre-commit run. Fetches the base commit by SHA when it is not
@@ -12,9 +14,11 @@ import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 export const MANIFEST = "docs/UPSTREAM_PATCHES.txt";
+export const WORKFLOWS = ".github/workflows/";
 
 export function parseManifest(text) {
 	let base;
+	let e2Corpus;
 	const entries = new Map();
 	const errors = [];
 	for (const [index, raw] of text.split("\n").entries()) {
@@ -25,6 +29,13 @@ export function parseManifest(text) {
 			base = baseMatch[1];
 			continue;
 		}
+		// The E2 corpus pin (corpus.ts): an upstream revision and its corpus fingerprint, apart from the base.
+		if (line.startsWith("e2-corpus:")) {
+			const pin = /^e2-corpus: ([0-9a-f]{40}) ([0-9a-f]{64})\b/.exec(line);
+			if (pin) e2Corpus = { rev: pin[1], fingerprint: pin[2] };
+			else errors.push(`line ${index + 1}: e2-corpus: needs a 40-hex revision and a 64-hex fingerprint`);
+			continue;
+		}
 		const tab = line.indexOf("\t");
 		const path = tab === -1 ? line : line.slice(0, tab);
 		const reason = tab === -1 ? "" : line.slice(tab + 1).trim();
@@ -33,7 +44,8 @@ export function parseManifest(text) {
 		entries.set(path, reason);
 	}
 	if (!base) errors.push("no `base: <40-hex sha>` line");
-	return { base, entries, errors };
+	if (!e2Corpus) errors.push("no `e2-corpus: <40-hex revision> <64-hex fingerprint>` line");
+	return { base, e2Corpus, entries, errors };
 }
 
 /** Paths listed but not differing, and differing but not listed. `listed` is the manifest's path -> reason map. */
@@ -44,12 +56,22 @@ export function compare(listed, differing) {
 	};
 }
 
+/** Workflows in `paths` (the index) with no manifest line, whether or not they differ from upstream. */
+export function unlistedWorkflows(listed, paths) {
+	return [...paths].filter((path) => path.startsWith(WORKFLOWS) && !listed.has(path)).sort();
+}
+
 function git(repoRoot, args, options = {}) {
 	return execFileSync("git", args, { cwd: repoRoot, encoding: "utf8", ...options });
 }
 
 export function differingPaths(repoRoot, base) {
 	const output = git(repoRoot, ["diff", "--cached", "--name-only", "--no-renames", "-z", base]);
+	return new Set(output.split("\0").filter(Boolean));
+}
+
+export function indexPaths(repoRoot, prefix) {
+	const output = git(repoRoot, ["ls-files", "--cached", "-z", "--", prefix]);
 	return new Set(output.split("\0").filter(Boolean));
 }
 
@@ -70,9 +92,14 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 	}
 	ensureBase(repoRoot, base);
 	const { unlisted, stale } = compare(entries, differingPaths(repoRoot, base));
-	if (unlisted.length > 0 || stale.length > 0) {
+	const workflows = unlistedWorkflows(entries, indexPaths(repoRoot, WORKFLOWS)).filter(
+		(path) => !unlisted.includes(path),
+	);
+	if (unlisted.length > 0 || stale.length > 0 || workflows.length > 0) {
 		for (const path of unlisted) console.error(`differs from upstream ${base.slice(0, 9)} but is not in ${MANIFEST}: ${path}`);
 		for (const path of stale) console.error(`listed in ${MANIFEST} but identical to upstream: ${path}`);
+		for (const path of workflows)
+			console.error(`an upstream workflow, unchanged, is not in ${MANIFEST}: ${path} (patch or delete it, and list it)`);
 		process.exit(1);
 	}
 	console.log(`All ${entries.size} paths that differ from upstream ${base.slice(0, 9)} are listed in ${MANIFEST}.`);

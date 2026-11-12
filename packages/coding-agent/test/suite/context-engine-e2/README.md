@@ -71,7 +71,7 @@ Narrow the matrix for a quick look (all runs of one mix at 60 turns take about 1
 | `E2_MODES` | `reject,silent-front,silent-messages` | what the provider does above its hard limit (see below) |
 | `E2_TURNS` | `500` | assistant turns per session |
 | `E2_SEED` | `1` | plan seed |
-| `E2_CORPUS_REV` | the `base:` of `docs/UPSTREAM_PATCHES.txt` | upstream commit the corpus is read from (git objects, as a checkout has them); `worktree` reads the checkout |
+| `E2_CORPUS_REV` | the `e2-corpus:` revision of `docs/UPSTREAM_PATCHES.txt` | upstream commit the corpus is read from (git objects, as a checkout has them); `worktree` reads the checkout. The revision is resolved with `git rev-parse`, so a tag or a short id of the pinned commit is checked too. At the pinned revision a run fails when the corpus fingerprint differs from the pinned one (`corpus-pin.test.ts` checks it in CI's engine-on-upstream job and before a release; in a shallow clone it skips); the revision is in each run's JSON (`corpusRev`) and the summary. The pin moves on its own commit, with a full E2 comparison, not with an upstream merge's `base:` |
 | `E2_SILENT_LIMIT` | `half` | silent server context: `half` = min(window, 200k)/2, `window` = the declared window, or a fraction |
 | `E2_ENGINE_OPTIONS` | | JSON merged into `createContextEngine` options |
 | `E2_DUMP_DROPPED` | | `1`: each silently truncated request's removed segments (role, tokens, first characters) in `<id>.dropped.jsonl` |
@@ -244,14 +244,19 @@ and the lag is at most `maxLag`, and PENpi's version (the root `package.json`) i
   (`run-e2.sh` with no selection). In any other set, such as a selection or the misconfigured runs, an entry whose
   run is not there is reported as not run. Anything an entry does not cover fails as before.
 
-Today's entries, both C6 lag 4 (limit 3) until 0.8.0, measured on the upstream v1.5.0 corpus:
+Today's entries, both C6 lag 4 (limit 3) until 0.9.0, measured on the upstream v1.5.1 corpus (`dd30101cf`, the
+`e2-corpus:` pin). 0.8.0 passes both runs at lag 3 on the v1.5.0 corpus (`f9a263655`), and 0.7.0's engine fails
+both the same way on the v1.5.1 corpus:
 
-- data.o200k.1m.silent-messages, new with the upstream v1.4.0 corpus: 0.6.0's engine on the v1.1.0 corpus passes the
-  run at lag 2, as 0.5.1 does. It was accepted until 0.7.0 in 0.6.0.
-- research.glm.32k.silent-messages, new with v1.5.0: Pi 1.5.0's shorter system prompt keeps one call 234 tokens over
-  the server's limit, where on Pi 1.4.0 it was 4 under. 0.6.1's engine on Pi 1.4.0 with the same corpus passes the
-  run at lag 3. An earlier entry for the same run (C6 lag 4, from 0.5.0) was deleted in 0.6.0, whose corpus no
-  longer made it fail.
+- data.o200k.1m.silent-messages: call 47 is truncated by 398 tokens and reads as ordinary growth; on v1.5.0 that
+  request was under the server's limit. Accepted since 0.6.0. It fails C6 alone because ADR 0034 names call 31.
+- data.o200k.32k.silent-front: the truncation starts at call 6, earlier than on v1.5.0, and two of the truncated
+  requests cannot be told from honest growth.
+
+0.7.0 had two other entries, until 0.8.0, on the v1.5.0 corpus: data.o200k.1m.silent-messages and
+research.glm.32k.silent-messages (new with Pi 1.5.0's shorter system prompt). 0.8.0's marginal pair (ADR 0033)
+detects them at lag 3 and 2 on that corpus, and deleted both. An earlier entry for research.glm.32k.silent-messages
+(C6 lag 4, from 0.5.0) was deleted in 0.6.0, whose corpus no longer made it fail.
 
 ## C3 trend
 

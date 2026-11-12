@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { answersProduced, replayRecommendation, replayVerdict } from "./detector.ts";
+import {
+	answersProduced,
+	clearsMarginals,
+	completesMarginalPair,
+	replayRecommendation,
+	replayVerdict,
+} from "./detector.ts";
 
 describe("silent-truncation warning wording", () => {
 	it("counts one answer in the singular and any other number in the plural", () => {
@@ -65,5 +71,32 @@ describe("replay check verdict (review round 2, Later 1 and 2)", () => {
 		expect(replayRecommendation(repeat(0.05, 20), "counted")).toBe("ignored");
 		expect(replayRecommendation(repeat(0.98, 20), "ignored")).toBe("counted");
 		expect(replayRecommendation(repeat(0.4, 20), "ignored")).toBeUndefined();
+	});
+});
+
+describe("ADR 0033: a marginal sample and an evidence sample within the span", () => {
+	it("an evidence sample completes the pair with a marginal sample in the span, and a marginal one with evidence", () => {
+		expect(completesMarginalPair("evidence", 0, 1)).toBe(true);
+		expect(completesMarginalPair("evidence", 0, 2)).toBe(true);
+		expect(completesMarginalPair("marginal", 1, 0)).toBe(true);
+		expect(completesMarginalPair("marginal", 1, 3)).toBe(true);
+	});
+
+	it("two marginal samples never complete it, and a lone sample does not either", () => {
+		expect(completesMarginalPair("marginal", 0, 1)).toBe(false);
+		expect(completesMarginalPair("marginal", 0, 5)).toBe(false);
+		expect(completesMarginalPair("evidence", 0, 0)).toBe(false);
+		expect(completesMarginalPair("marginal", 0, 0)).toBe(false);
+	});
+
+	it("a clean sample clears marginal samples only above everything reported, by more than the flatness", () => {
+		const marginals = [{ reported: 15_831 }];
+		// E2's research.glm.32k.silent-messages: calls 13 to 17 report below 15,831 and keep it.
+		expect(clearsMarginals(15_105, 15_831, marginals, 0.02)).toBe(false);
+		expect(clearsMarginals(16_147, 15_831, marginals, 0.02)).toBe(false);
+		expect(clearsMarginals(16_148, 15_831, marginals, 0.02)).toBe(true);
+		// The larger of the running maximum and the marginal samples' reports.
+		expect(clearsMarginals(16_149, 16_000, marginals, 0.02)).toBe(false);
+		expect(clearsMarginals(20_000, 15_831, [], 0.02)).toBe(false);
 	});
 });

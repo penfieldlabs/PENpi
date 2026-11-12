@@ -1,8 +1,13 @@
 # Paths that intentionally differ from the upstream Pi base, one per line: <path><TAB><reason>.
 # scripts/check-upstream-patches.mjs fails when `git diff --name-only <base>` (index) is not
 # exactly this set. Add a line when PENpi changes or adds a file; remove it when the file
-# matches upstream again. Update the base after each upstream merge.
-base: f9a26365568127461c47a07a37dcb42c140a3ac5 (upstream Pi v1.5.0)
+# matches upstream again. Update the base after each upstream merge. Every workflow under
+# .github/workflows needs a line too, so an upstream workflow that a merge brings in unchanged
+# fails the check: patch it or delete it, and say why.
+base: dd30101cfc5b0609411dd80b6f93adbc14db14cf (upstream Pi v1.5.1)
+# The E2 corpus (context-engine-e2/corpus.ts): an upstream revision and its fingerprint, moved on its own
+# commit with a full E2 comparison, not with the base. An E2 run at this revision fails on another fingerprint.
+e2-corpus: dd30101cfc5b0609411dd80b6f93adbc14db14cf e917a3cbd38a1bd6ae8bb72a99be52fe5761ff224ada1908c747a12a015464ab (upstream Pi v1.5.1)
 .github/APPROVED_CONTRIBUTORS	deleted: upstream contributor gate
 .github/ISSUE_TEMPLATE/bug.yml	PENpi links and wording; no upstream auto-close gate
 .github/ISSUE_TEMPLATE/contribution.yml	PENpi links; no upstream contributor gate
@@ -18,6 +23,7 @@ base: f9a26365568127461c47a07a37dcb42c140a3ac5 (upstream Pi v1.5.0)
 .github/workflows/issue-triage-labels.yml	deleted: upstream issue automation
 .github/workflows/nix.yml	deleted: PENpi has no Nix packaging
 .github/workflows/npm-audit.yml	weekly schedule, job timeout, no persisted credentials; runs upstream's npm-audit.mjs
+.github/workflows/p2-cloud-bundle.yml	deleted: upstream web UI upload to R2; PENpi ships source only
 .github/workflows/pr-gate.yml	deleted: upstream contributor gate
 .github/workflows/preview-packages.yml	deleted: upstream preview-package publishing (pkg.earendil.com); PENpi ships source only
 .github/workflows/publish-model-catalog.yml	deleted: PENpi publishes no model catalog
@@ -40,6 +46,7 @@ base: f9a26365568127461c47a07a37dcb42c140a3ac5 (upstream Pi v1.5.0)
 .pi/extensions/penpi/engine/header.ts	PENpi: context engine (ADR 0032)
 .pi/extensions/penpi/engine/index.ts	PENpi: context engine (ADR 0032)
 .pi/extensions/penpi/engine/limits.ts	PENpi: context engine (ADR 0032)
+.pi/extensions/penpi/engine/name-rescale.test.ts	PENpi: context engine (ADR 0032)
 .pi/extensions/penpi/engine/options.ts	PENpi: context engine (ADR 0032)
 .pi/extensions/penpi/engine/pin.ts	PENpi: context engine (ADR 0032)
 .pi/extensions/penpi/engine/planner.ts	PENpi: context engine (ADR 0032)
@@ -78,6 +85,12 @@ LICENSE	adds the Penfield copyright line; MIT terms and Mario Zechner's notice u
 README.md	PENpi README
 README.pi.md	upstream README kept as Pi's README, minus upstream-only banner and binary section
 SECURITY.md	PENpi reporting and trust boundaries, upstream policy preserved below
+apps/p2/README.md	documents PENpi's cache-warming-off default
+apps/p2/docs/p2-notes.md	documents PENpi's cache-warming-off default
+apps/p2/plugins/cache-warming/worker.ts	PENpi: cache warming off without a setting, as pi-coding-agent's default
+apps/p2/plugins/familiar/worker.ts	PENpi: cache warming off without a setting, as pi-coding-agent's default
+apps/p2/src/runtime/settings.ts	documents PENpi's cache-warming-off default
+apps/p2/test/p2/cache-warming.test.ts	upstream test adapted to PENpi's cache-warming-off default; tests the hook is off without a setting
 assets/penpi-logo.png	PENpi logo
 biome.json	lint and format the PENpi extension
 docs/ARCHITECTURE.md	PENpi documentation
@@ -119,6 +132,8 @@ docs/adr/0029-sanitizer-normalization-and-bounds.md	PENpi decision record
 docs/adr/0030-strict-config-values.md	PENpi decision record
 docs/adr/0031-upstream-ancestry-and-patch-manifest.md	PENpi decision record
 docs/adr/0032-context-engine.md	PENpi decision record
+docs/adr/0033-marginal-pair.md	PENpi decision record
+docs/adr/0034-names-at-the-ratio-before-doubt.md	PENpi decision record
 docs/adr/README.md	PENpi decision record
 package-lock.json	follows package.json (PENpi workspace and pins); pi-mcp-adapter installed with --legacy-peer-deps (CONTRIBUTING.md); overrides include recheck 4.6.2 (pi-mcp-adapter pins 4.6.0-beta.3) and miniflare's undici 7.30.1
 package.json	PENpi version, workspace, checks and pins, context engine suite and tokenizer scripts; no npm publishing or model-catalog scripts
@@ -153,6 +168,7 @@ packages/ai/src/providers/data/opencode-go.json	committed model-data snapshot (o
 packages/ai/src/providers/data/opencode.json	committed model-data snapshot (offline builds)
 packages/ai/src/providers/data/openrouter.json	committed model-data snapshot (offline builds)
 packages/ai/src/providers/data/qwen-token-plan-cn.json	committed model-data snapshot (offline builds)
+packages/ai/src/providers/data/qwen-token-plan-individual-cn.json	committed model-data snapshot (offline builds)
 packages/ai/src/providers/data/qwen-token-plan-individual.json	committed model-data snapshot (offline builds)
 packages/ai/src/providers/data/qwen-token-plan.json	committed model-data snapshot (offline builds)
 packages/ai/src/providers/data/radius.json	committed model-data snapshot (offline builds)
@@ -167,15 +183,15 @@ packages/ai/src/providers/data/xiaomi.json	committed model-data snapshot (offlin
 packages/ai/src/providers/data/zai-coding-cn.json	committed model-data snapshot (offline builds)
 packages/ai/src/providers/data/zai.json	committed model-data snapshot (offline builds)
 packages/coding-agent/README.md	upstream README plus a PENpi note
-packages/coding-agent/docs/settings.md	documents PENpi's compaction-off default
+packages/coding-agent/docs/settings.md	documents PENpi's compaction-off and cache-warming-off defaults
 packages/coding-agent/install-lock/package-lock.json	generated from packages/coding-agent/package.json: undici 8.12.3 security update; minimatch 11.0.3 security update (GHSA-g3hv-75wg-m249) in place of 10.2.6, with its new dependency @isaacs/nonrecursive-glob-match 1.0.3
-packages/coding-agent/schemas/settings.schema.json	generated: compaction.enabled defaults to false (settings-defaults.ts)
+packages/coding-agent/schemas/settings.schema.json	generated: compaction.enabled defaults to false and cacheWarming to "off" (settings-defaults.ts)
 packages/coding-agent/src/cli/args.ts	core patch: hidden extension CLI flags
 packages/coding-agent/src/core/extensions/loader.ts	core patch: hidden extension CLI flags
 packages/coding-agent/src/core/extensions/types.ts	core patch: hidden extension CLI flags
 packages/coding-agent/src/core/http-dispatcher.ts	core patch: a Pool to the proxy, as undici's default, so a CONNECT the proxy holds open no longer blocks other requests (0.6.0)
 packages/coding-agent/src/core/package-manager.ts	core patch: exact pins for managed installs (ADR 0020)
-packages/coding-agent/src/core/settings-defaults.ts	core patch: compaction off by default; the context engine replaces it (ADR 0032)
+packages/coding-agent/src/core/settings-defaults.ts	core patch: compaction off by default, the context engine replaces it (ADR 0032); cache warming off by default, each refresh is a paid request
 packages/coding-agent/src/modes/interactive/interactive-mode.ts	core patch: no upstream update banner (ADR 0019)
 packages/coding-agent/src/modes/print-mode.ts	core patch: print every continuation part (ADR 0032)
 packages/coding-agent/src/utils/shell.ts	core patch: strip Penfield credentials from shell commands
@@ -186,13 +202,16 @@ packages/coding-agent/test/penpi-builtin-mcp-disabled.test.ts	PENpi test against
 packages/coding-agent/test/penpi-http-proxy-held-connect.test.ts	PENpi test: a held proxy CONNECT does not block a request to another host
 packages/coding-agent/test/penpi-print-mode-continuation.test.ts	PENpi test against the real session
 packages/coding-agent/test/penpi-shell-env.test.ts	PENpi test against the real session
+packages/coding-agent/test/sdk-stream-options.test.ts	upstream test adapted to PENpi's cache-warming-off default; tests that the default warms nothing
 packages/coding-agent/test/settings-manager-compaction.test.ts	upstream test adapted to PENpi's compaction-off default
+packages/coding-agent/test/settings-manager.test.ts	upstream test adapted to PENpi's cache-warming-off default
 packages/coding-agent/test/suite/agent-session-boundaries.test.ts	upstream test adapted to PENpi's compaction-off default
 packages/coding-agent/test/suite/agent-session-compaction-model-overrides.test.ts	upstream test adapted to PENpi's compaction-off default
 packages/coding-agent/test/suite/agent-session-compaction.test.ts	upstream test adapted to PENpi's compaction-off default
 packages/coding-agent/test/suite/context-engine-e2/.gitignore	PENpi: E2, the context engine against real tokenizers (ADR 0032)
 packages/coding-agent/test/suite/context-engine-e2/README.md	PENpi: E2, the context engine against real tokenizers (ADR 0032)
 packages/coding-agent/test/suite/context-engine-e2/content.ts	PENpi: E2, the context engine against real tokenizers (ADR 0032)
+packages/coding-agent/test/suite/context-engine-e2/corpus-pin.test.ts	PENpi: E2, the context engine against real tokenizers (ADR 0032)
 packages/coding-agent/test/suite/context-engine-e2/corpus.ts	PENpi: E2, the context engine against real tokenizers (ADR 0032)
 packages/coding-agent/test/suite/context-engine-e2/e2-cjk.e2.ts	PENpi: E2, the context engine against real tokenizers (ADR 0032)
 packages/coding-agent/test/suite/context-engine-e2/e2-coding.e2.ts	PENpi: E2, the context engine against real tokenizers (ADR 0032)
@@ -306,6 +325,10 @@ packages/coding-agent/test/suite/context-engine/v060-request-size-413.test.ts	PE
 packages/coding-agent/test/suite/context-engine/v061-align-mismatch-warning.test.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/context-engine/v061-recall-page.test.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/context-engine/v061-recall-tool-call.test.ts	PENpi: context engine behaviour suite (ADR 0032)
+packages/coding-agent/test/suite/context-engine/v080-marginal-pair.test.ts	PENpi: context engine behaviour suite (ADR 0032)
+packages/coding-agent/test/suite/context-engine/v080-name-rescale.test.ts	PENpi: context engine behaviour suite (ADR 0032)
+packages/coding-agent/test/suite/context-engine/v080-result-hit-call.test.ts	PENpi: context engine behaviour suite (ADR 0032)
+packages/coding-agent/test/suite/context-engine/v080-search-offset.test.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/context-engine/vitest.config.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/regressions/copilot-request-size-overflow.test.ts	upstream test adapted to PENpi's compaction-off default
 packages/coding-agent/test/suite/virtual-models.test.ts	upstream test adapted to PENpi's compaction-off default

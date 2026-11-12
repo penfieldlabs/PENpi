@@ -5,10 +5,14 @@
  * engine's own test directories are left out. `fingerprint` hashes every file
  * used; two machines on the same tag (v1.1.0) produce the same corpus and therefore the same sessions.
  *
- * PENpi: the corpus is read from upstream Pi's tree at the recorded base (E2_CORPUS_REV, default the
- * `base:` line of docs/UPSTREAM_PATCHES.txt) through git objects, not from the working tree, so a run in
- * the fork builds the same sessions as one on stock Pi and does not change with each PENpi commit.
- * E2_CORPUS_REV=worktree reads the checkout as before.
+ * PENpi: the corpus is read from upstream Pi's tree at a pinned revision through git objects, not from the
+ * working tree, so a run in the fork builds the same sessions as one on stock Pi and does not change with each
+ * PENpi commit. The pin is the `e2-corpus:` line of docs/UPSTREAM_PATCHES.txt, with the revision and its
+ * fingerprint, kept apart from the `base:` line: an upstream merge then measures code alone, and moving the
+ * corpus is its own change with its own E2 comparison (0.8.0: the v1.5.1 merge moved the corpus with the base,
+ * and every E2 run changed). A run at the pinned revision fails when the fingerprint differs. E2_CORPUS_REV
+ * reads another revision (no fingerprint to check), and E2_CORPUS_REV=worktree the checkout as before. The
+ * revision is in every run's JSON (`corpusRev`) and in the summary.
  */
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -37,6 +41,39 @@ export interface Corpus {
 	/** Every tracked file with its size (for `ls -l` tables). */
 	listing: Array<{ path: string; size: number }>;
 	fingerprint: string;
+	/** The upstream revision it was read from, or "worktree". */
+	rev: string;
+}
+
+/** The `e2-corpus:` line of docs/UPSTREAM_PATCHES.txt: the upstream revision of the corpus and its fingerprint. */
+export interface CorpusPin {
+	rev: string;
+	fingerprint: string;
+}
+
+export function parseCorpusPin(manifest: string): CorpusPin | undefined {
+	const match = /^e2-corpus: ([0-9a-f]{40}) ([0-9a-f]{64})\b/m.exec(manifest);
+	return match ? { rev: match[1], fingerprint: match[2] } : undefined;
+}
+
+/** Why a corpus read from `rev` does not match the pin, or undefined when it does (or another revision was asked). */
+export function corpusPinMismatch(pin: CorpusPin, rev: string, fingerprint: string): string | undefined {
+	if (rev !== pin.rev || fingerprint === pin.fingerprint) return undefined;
+	return (
+		`E2: the corpus at ${rev.slice(0, 12)} has fingerprint ${fingerprint.slice(0, 12)}, but the e2-corpus: line of ` +
+		`docs/UPSTREAM_PATCHES.txt records ${pin.fingerprint.slice(0, 12)}: the corpus code or the revision's files ` +
+		"changed. Moving the corpus is its own change: update the line, and compare a full E2 with the last one."
+	);
+}
+
+function manifestPin(): CorpusPin | undefined {
+	return parseCorpusPin(readFileSync(join(REPO_ROOT, "docs", "UPSTREAM_PATCHES.txt"), "utf8"));
+}
+
+function readPin(): CorpusPin {
+	const pin = manifestPin();
+	if (!pin) throw new Error("E2: no e2-corpus: line in docs/UPSTREAM_PATCHES.txt; set E2_CORPUS_REV");
+	return pin;
 }
 
 const CODE_EXT: Record<string, string> = {
@@ -56,15 +93,12 @@ const CODE_EXT: Record<string, string> = {
 
 let cached: Corpus | undefined;
 
-/** The upstream commit the corpus is read from, or undefined for the working tree. */
+/** The upstream commit the corpus is read from (E2_CORPUS_REV, or the pin), or undefined for the working tree. */
 function corpusRev(): string | undefined {
 	const rev = process.env.E2_CORPUS_REV;
 	if (rev === "worktree") return undefined;
 	if (rev) return rev;
-	const manifest = readFileSync(join(REPO_ROOT, "docs", "UPSTREAM_PATCHES.txt"), "utf8");
-	const base = /^base: ([0-9a-f]{40})\b/m.exec(manifest)?.[1];
-	if (!base) throw new Error("E2: no base line in docs/UPSTREAM_PATCHES.txt; set E2_CORPUS_REV");
-	return base;
+	return readPin().rev;
 }
 
 interface CorpusSource {
@@ -160,9 +194,34 @@ function markdownSections(markdown: string): string[] {
 		.filter((s) => s.length >= 200);
 }
 
+/** The full commit id `rev` names (a tag, a short id or a full one), so the pin check sees through any spelling. */
+export function resolveRev(rev: string): string {
+	try {
+		return execFileSync("git", ["rev-parse", "--verify", "--quiet", `${rev}^{commit}`], {
+			cwd: REPO_ROOT,
+			stdio: ["ignore", "pipe", "ignore"],
+		})
+			.toString()
+			.trim();
+	} catch {
+		throw new Error(`E2: ${rev} is not a commit in this clone (a shallow checkout needs fetch-depth: 0)`);
+	}
+}
+
+/** Whether `rev` is a commit in this clone: a shallow checkout (CI's main job) lacks the pinned one. */
+export function hasCommit(rev: string): boolean {
+	try {
+		resolveRev(rev);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
 export function loadCorpus(): Corpus {
 	if (cached) return cached;
-	const rev = corpusRev();
+	const asked = corpusRev();
+	const rev = asked ? resolveRev(asked) : undefined;
 	const source = rev ? revisionSource(rev) : worktreeSource();
 	const files = source.files;
 	const hash = createHash("sha256");
@@ -181,6 +240,7 @@ export function loadCorpus(): Corpus {
 		binaries: [],
 		listing: [],
 		fingerprint: "",
+		rev: rev ?? "worktree",
 	};
 	for (const path of files) {
 		const size = source.size(path);
@@ -217,6 +277,9 @@ export function loadCorpus(): Corpus {
 	if (corpus.code.length < 50 || corpus.paragraphs.length < 50 || corpus.images.length === 0)
 		throw new Error(`E2: corpus too small (is ${rev ?? REPO_ROOT} a Pi tree?)`);
 	corpus.fingerprint = hash.digest("hex");
+	const pin = rev ? manifestPin() : undefined;
+	const mismatch = pin && rev ? corpusPinMismatch(pin, rev, corpus.fingerprint) : undefined;
+	if (mismatch) throw new Error(mismatch);
 	cached = corpus;
 	return corpus;
 }
