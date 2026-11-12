@@ -1,3 +1,0 @@
-# Vite dependency caches from before the web UI was bundled with esbuild; safe to delete.
-.vite/
-.vite-test-*/

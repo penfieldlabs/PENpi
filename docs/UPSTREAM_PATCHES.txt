@@ -4,6 +4,8 @@
 # matches upstream again. Update the base after each upstream merge. Every workflow under
 # .github/workflows needs a line too, so an upstream workflow that a merge brings in unchanged
 # fails the check: patch it or delete it, and say why.
+# A directory line, ending in "/", deletes the whole directory: it covers every path under it, and the check
+# fails while the index holds any file there.
 base: dd30101cfc5b0609411dd80b6f93adbc14db14cf (upstream Pi v1.5.1)
 # The E2 corpus (context-engine-e2/corpus.ts): an upstream revision and its fingerprint, moved on its own
 # commit with a full E2 comparison, not with the base. An E2 run at this revision fails on another fingerprint.
@@ -31,6 +33,7 @@ e2-corpus: dd30101cfc5b0609411dd80b6f93adbc14db14cf e917a3cbd38a1bd6ae8bb72a99be
 .github/workflows/release.yml	PENpi source-only manual release, first-parent tag check
 .github/workflows/remove-inprogress-on-close.yml	deleted: upstream issue automation
 .gitignore	track the model-data snapshot; ignore .env.*, the runtime .pi/mcp.json and the local .cache/
+.husky/pre-commit	no apps/p2 check: PENpi deletes upstream's apps/
 .pi/extensions/import-repro.ts	deleted: upstream in-repo dev extension, would load in PENpi sessions
 .pi/extensions/penpi/README.md	PENpi extension
 .pi/extensions/penpi/__fixtures__/penfield-server.ts	PENpi extension
@@ -79,14 +82,16 @@ e2-corpus: dd30101cfc5b0609411dd80b6f93adbc14db14cf e917a3cbd38a1bd6ae8bb72a99be
 .pi/extensions/penpi/transcript-search.ts	PENpi extension
 .pi/extensions/penpi/tsconfig.json	PENpi extension
 .pi/settings.json	PENpi project defaults (compaction off)
+.pi/skills/p2-ui.md	deleted: upstream skill for apps/p2, which PENpi does not ship
 AGENTS.md	PENpi's agent rules (upstream's live in AGENTS.pi.md)
-AGENTS.pi.md	upstream AGENTS.md kept as Pi's rules, with PENpi's contribution and release notes
+AGENTS.pi.md	upstream AGENTS.md kept as Pi's rules, with PENpi's contribution, upstream-merge and release notes; no apps/p2 rules
 CHANGELOG.md	PENpi changelog
 CONTRIBUTING.md	PENpi contribution process
 LICENSE	adds the Penfield copyright line; MIT terms and Mario Zechner's notice unchanged
 README.md	PENpi README
 README.pi.md	upstream README kept as Pi's README, minus upstream-only banner and binary section
 SECURITY.md	PENpi reporting and trust boundaries, upstream policy preserved below
+apps/	deleted: upstream experimental apps, not shipped
 assets/penpi-logo.png	PENpi logo
 biome.json	lint and format the PENpi extension
 docs/ARCHITECTURE.md	PENpi documentation
@@ -131,8 +136,8 @@ docs/adr/0032-context-engine.md	PENpi decision record
 docs/adr/0033-marginal-pair.md	PENpi decision record
 docs/adr/0034-names-at-the-ratio-before-doubt.md	PENpi decision record
 docs/adr/README.md	PENpi decision record
-package-lock.json	follows package.json (PENpi workspace and pins); pi-mcp-adapter installed with --legacy-peer-deps (CONTRIBUTING.md); overrides include recheck 4.6.2 (pi-mcp-adapter pins 4.6.0-beta.3) and miniflare's undici 7.30.1
-package.json	PENpi version, workspace, checks and pins, context engine suite and tokenizer scripts; no npm publishing or model-catalog scripts
+package-lock.json	follows package.json (PENpi workspaces and pins; nothing for upstream's apps/); pi-mcp-adapter installed with --legacy-peer-deps (CONTRIBUTING.md); overrides include recheck 4.6.2 (pi-mcp-adapter pins 4.6.0-beta.3) and miniflare's undici 7.30.1
+package.json	PENpi version, workspaces (no apps/*), checks and pins, context engine suite and tokenizer scripts; no npm publishing or model-catalog scripts
 packages/ai/package.json	build uses the committed model-data snapshot (offline); vitest 4.1.12 security update (as upstream 2685de7a1)
 packages/ai/src/providers/data/.manifest.json	committed model-data snapshot (offline builds)
 packages/ai/src/providers/data/amazon-bedrock.json	committed model-data snapshot (offline builds)
@@ -352,4 +357,6 @@ scripts/release-notes.mjs	accepts PENpi's changelog heading format; carries the 
 scripts/release-notes.test.mjs	tests a PENpi script
 scripts/release.mjs	bumps and tags PENpi's version, not upstream's
 scripts/release.test.mjs	tests a PENpi script
+scripts/sync-versions.js	upstream's version from before apps/: PENpi deletes upstream's apps/
+scripts/sync-versions.test.mjs	upstream's test from before apps/: PENpi deletes upstream's apps/
 scripts/zod-override.test.mjs	tests a PENpi dependency override

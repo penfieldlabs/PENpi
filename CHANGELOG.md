@@ -22,6 +22,9 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
     user comes back before the cache expires. PENpi 0.7.0's default was `"streaming"`, which
     warms only while a run streams. Set `"cacheWarming": "off"` or `"streaming"` in settings to
     change it.
+  - Upstream v1.5.1 added `apps/`, with p2, an experimental web and server app that upstream
+    calls an unsupported prototype. PENpi leaves `apps/` out, and `npm ci` installs nothing for
+    it. See "Upstream's apps" in the README.
 - **A tool result found by `context_search` names the call that made it.** A hit on a tool result
   showed only `tool result bash` and a snippet of its output, so the results of two similar
   commands could look the same. It now also shows the command or path, after `from: `, clipped at

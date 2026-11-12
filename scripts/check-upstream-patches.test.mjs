@@ -4,7 +4,14 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { compare, differingPaths, indexPaths, parseManifest, unlistedWorkflows } from "./check-upstream-patches.mjs";
+import {
+	compare,
+	deletedDirectories,
+	differingPaths,
+	indexPaths,
+	parseManifest,
+	unlistedWorkflows,
+} from "./check-upstream-patches.mjs";
 
 const BASE = "a".repeat(40);
 const REV = "b".repeat(40);
@@ -47,6 +54,42 @@ test("reports unlisted and stale paths", () => {
 	]);
 	assert.deepEqual(compare(listed, new Set(["a.ts", "new.ts"])), { unlisted: ["new.ts"], stale: ["stale.ts"] });
 	assert.deepEqual(compare(listed, new Set(["a.ts", "stale.ts"])), { unlisted: [], stale: [] });
+});
+
+test("a directory line covers the paths under it, and is stale when none of them differs", () => {
+	const listed = new Map([
+		["apps/", "deleted: upstream apps"],
+		["README.md", "r"],
+	]);
+	assert.deepEqual(deletedDirectories(listed), ["apps/"]);
+	assert.deepEqual(compare(listed, new Set(["apps/p2/a.ts", "apps/p3/b.md", "README.md"])), { unlisted: [], stale: [] });
+	// Only the prefix with its slash: apps-extra/ is another directory.
+	assert.deepEqual(compare(listed, new Set(["apps/p2/a.ts", "apps-extra/c.ts", "README.md"])), {
+		unlisted: ["apps-extra/c.ts"],
+		stale: [],
+	});
+	assert.deepEqual(compare(listed, new Set(["README.md"])), { unlisted: [], stale: ["apps/"] });
+});
+
+test("finds a file the index still holds under a directory listed as deleted", () => {
+	const root = mkdtempSync(join(tmpdir(), "upstream-patches-"));
+	const git = (...args) => execFileSync("git", args, { cwd: root, encoding: "utf8" });
+	try {
+		git("init", "-q");
+		git("config", "user.email", "test@example.invalid");
+		git("config", "user.name", "test");
+		mkdirSync(join(root, "apps/p2"), { recursive: true });
+		for (const name of ["apps/p2/a.ts", "apps/p2/b.ts", "README.md"]) writeFileSync(join(root, name), `${name}\n`);
+		git("add", ".");
+		git("commit", "-q", "-m", "base");
+		git("rm", "-q", "apps/p2/a.ts");
+		// What a merge would bring back: a file under the directory, unchanged from upstream.
+		assert.deepEqual([...indexPaths(root, "apps/")], ["apps/p2/b.ts"]);
+		git("rm", "-q", "apps/p2/b.ts");
+		assert.deepEqual([...indexPaths(root, "apps/")], []);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
 });
 
 test("diffs the index, including additions, deletions and mode changes", () => {

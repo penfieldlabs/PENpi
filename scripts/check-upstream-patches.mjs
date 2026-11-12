@@ -4,7 +4,9 @@
 // upstream as merged, an unlisted difference would survive the next upstream merge
 // silently as if it were a deliberate PENpi change. Every workflow under .github/workflows
 // must be listed as well: an upstream workflow that a merge brings in unchanged differs from
-// nothing, so it would otherwise run in PENpi's repository unseen.
+// nothing, so it would otherwise run in PENpi's repository unseen. A line for a directory, ending
+// in "/", says PENpi deletes all of it: it covers every differing path under it, and the index
+// must hold nothing under it, so a merge that brings back any file there, even unchanged, fails.
 //
 // Compares the index (what is committed, or about to be) with the base, so the result is
 // the same in CI and in a pre-commit run. Fetches the base commit by SHA when it is not
@@ -48,11 +50,23 @@ export function parseManifest(text) {
 	return { base, e2Corpus, entries, errors };
 }
 
-/** Paths listed but not differing, and differing but not listed. `listed` is the manifest's path -> reason map. */
+/** The manifest's directory lines (ending in "/"): directories PENpi deletes whole. */
+export function deletedDirectories(listed) {
+	return [...listed.keys()].filter((path) => path.endsWith("/")).sort();
+}
+
+/**
+ * Paths listed but not differing, and differing but not listed. `listed` is the manifest's path -> reason map. A
+ * directory line covers the paths under it, and is stale when none of them differs.
+ */
 export function compare(listed, differing) {
+	const directories = deletedDirectories(listed);
+	const under = (directory) => (path) => path.startsWith(directory);
 	return {
-		unlisted: [...differing].filter((path) => !listed.has(path)).sort(),
-		stale: [...listed.keys()].filter((path) => !differing.has(path)).sort(),
+		unlisted: [...differing].filter((path) => !listed.has(path) && !directories.some((d) => under(d)(path))).sort(),
+		stale: [...listed.keys()]
+			.filter((path) => (path.endsWith("/") ? ![...differing].some(under(path)) : !differing.has(path)))
+			.sort(),
 	};
 }
 
@@ -95,11 +109,13 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 	const workflows = unlistedWorkflows(entries, indexPaths(repoRoot, WORKFLOWS)).filter(
 		(path) => !unlisted.includes(path),
 	);
-	if (unlisted.length > 0 || stale.length > 0 || workflows.length > 0) {
+	const kept = deletedDirectories(entries).flatMap((directory) => [...indexPaths(repoRoot, directory)]);
+	if (unlisted.length > 0 || stale.length > 0 || workflows.length > 0 || kept.length > 0) {
 		for (const path of unlisted) console.error(`differs from upstream ${base.slice(0, 9)} but is not in ${MANIFEST}: ${path}`);
 		for (const path of stale) console.error(`listed in ${MANIFEST} but identical to upstream: ${path}`);
 		for (const path of workflows)
 			console.error(`an upstream workflow, unchanged, is not in ${MANIFEST}: ${path} (patch or delete it, and list it)`);
+		for (const path of kept) console.error(`in a directory ${MANIFEST} lists as deleted, but in the index: ${path}`);
 		process.exit(1);
 	}
 	console.log(`All ${entries.size} paths that differ from upstream ${base.slice(0, 9)} are listed in ${MANIFEST}.`);

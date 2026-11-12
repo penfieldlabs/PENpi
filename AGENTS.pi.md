@@ -45,7 +45,6 @@ Binding for Chord v2 (`packages/chord/src/`) and its tests, when writing and whe
 ## Commands
 
 - After code changes (not docs): `npm run check` (full output, no tail). Fix all errors, warnings, and infos before committing. Does not run tests.
-- `apps/p2` is outside the root check and the root tests. After p2 changes also run `cd apps/p2 && npm run check`; p2's suite is `cd apps/p2 && npm test` (TUI tests need Node 26, browser tests need `CHROMIUM_BIN`).
 - Run `npm run build` whenever something needs built output (`dist/`): tests or benchmarks that import built packages, Durable's workerd suite. The full suites of Chord and Durable need it: Chord's tests that start Node processes or bundle with esbuild load workspace packages from `dist/` (the rest run from source by its vitest config), and Durable imports pi-ai's `utils/*`, which have no source export. Never use it to type check or lint: that is `npm run check`, the preferred check.
 - Never run `npm test` unless requested by the user.
 - Never run the full vitest suite directly: it includes e2e tests that activate when endpoint/auth env vars are present. For all non-e2e tests, run `./test.sh` from the repo root. It runs `packages/*` only. Otherwise run specific tests from the package root:
@@ -113,14 +112,6 @@ When closing issues via commit:
 
 - Include `fixes #<number>` or `closes #<number>` in the message so merging auto-closes the issue. For multiple issues, repeat the keyword per issue (`closes #1, closes #2`); a shared keyword (`closes #1, #2`) only closes the first.
 
-## Writing p2 plugin code
-
-Before writing or reviewing plugin code in `apps/p2` (server and worker facets, contracts, stores), read [apps/p2/docs/plugin-practices.md](apps/p2/docs/plugin-practices.md) in full and follow it.
-
-## Building p2's web UI
-
-For building or changing p2's web UI (`apps/p2`), load and follow [.pi/skills/p2-ui.md](.pi/skills/p2-ui.md).
-
 ## Testing pi Interactive Mode with tmux
 
 For testing pi's interactive mode, load and follow [.pi/skills/interactive-testing.md](.pi/skills/interactive-testing.md).
@@ -141,6 +132,14 @@ Attribution:
 
 - Internal (from issues): `Fixed foo bar ([#123](https://github.com/earendil-works/pi/issues/123))`
 - External contributions: `Added feature X ([#456](https://github.com/earendil-works/pi/pull/456) by [@username](https://github.com/username))`
+
+## Merging upstream (PENpi)
+
+PENpi merges upstream Pi releases as ordinary merges ([ADR 0031](docs/adr/0031-upstream-ancestry-and-patch-manifest.md)). On each merge:
+
+- Move the `base:` line of `docs/UPSTREAM_PATCHES.txt` to the merged upstream commit, and keep `npm run check:upstream-patches` passing: every path that differs from upstream has a line with its reason.
+- The E2 corpus pin (`e2-corpus:`) moves on its own commit with a full E2 comparison, not with the base.
+- Delete upstream's `apps/` again, whatever it holds, and keep `"apps/*"` out of the root workspaces. Upstream's apps are experimental, and PENpi does not ship them. The manifest lists `apps/` as deleted, and the check fails while the index holds any file under it. Remove from the lockfile only the entries that `apps/` alone brought in. If one of upstream's apps leaves prototype status, raise it with the owner.
 
 ## Releasing
 
