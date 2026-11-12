@@ -411,26 +411,26 @@ describe("SettingsManager", () => {
 	});
 
 	describe("cacheWarming", () => {
-		it("defaults to off and ignores project settings", () => {
-			expect(SettingsManager.create(projectDir, agentDir).getCacheWarmingMode()).toBe("off");
+		it("defaults to idle and ignores project settings", () => {
+			expect(SettingsManager.create(projectDir, agentDir).getCacheWarmingMode()).toBe("idle");
 
 			writeFileSync(join(projectDir, ".pi", "settings.json"), JSON.stringify({ cacheWarming: "streaming" }));
-			expect(SettingsManager.create(projectDir, agentDir).getCacheWarmingMode()).toBe("off");
+			expect(SettingsManager.create(projectDir, agentDir).getCacheWarmingMode()).toBe("idle");
 
 			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ cacheWarming: "streaming" }));
 			expect(SettingsManager.create(projectDir, agentDir).getCacheWarmingMode()).toBe("streaming");
 
 			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ cacheWarming: "bogus" }));
-			expect(SettingsManager.create(projectDir, agentDir).getCacheWarmingMode()).toBe("off");
+			expect(SettingsManager.create(projectDir, agentDir).getCacheWarmingMode()).toBe("idle");
 		});
 
 		it("persists the mode globally", async () => {
 			const manager = SettingsManager.create(projectDir, agentDir);
-			manager.setCacheWarmingMode("idle");
+			manager.setCacheWarmingMode("off");
 			await manager.flush();
 
-			expect(SettingsManager.create(projectDir, agentDir).getCacheWarmingMode()).toBe("idle");
-			expect(JSON.parse(readFileSync(join(agentDir, "settings.json"), "utf8"))).toEqual({ cacheWarming: "idle" });
+			expect(SettingsManager.create(projectDir, agentDir).getCacheWarmingMode()).toBe("off");
+			expect(JSON.parse(readFileSync(join(agentDir, "settings.json"), "utf8"))).toEqual({ cacheWarming: "off" });
 		});
 	});
 

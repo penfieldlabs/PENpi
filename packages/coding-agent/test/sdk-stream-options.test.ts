@@ -147,10 +147,7 @@ describe("createAgentSession stream options", () => {
 		}
 	}
 
-	async function createCacheWarmingSession(
-		populate?: (manager: SessionManager, model: Model<Api>) => void,
-		settings: Partial<Settings> = { cacheWarming: "idle" },
-	) {
+	async function createCacheWarmingSession(populate?: (manager: SessionManager, model: Model<Api>) => void) {
 		const model: Model<Api> = {
 			...createModel("anthropic-messages"),
 			cost: { input: 10, output: 50, cacheRead: 0.25, cacheWrite: 12.5 },
@@ -174,7 +171,7 @@ describe("createAgentSession stream options", () => {
 			agentDir,
 			model,
 			modelRuntime: getModelRuntime(modelRegistry),
-			settingsManager: SettingsManager.inMemory(settings),
+			settingsManager: SettingsManager.inMemory({ cacheWarming: "idle" }),
 			sessionManager,
 		});
 		return {
@@ -199,17 +196,6 @@ describe("createAgentSession stream options", () => {
 			expect(fixture.session.cacheWarmingStatus?.nextWarmAt).toBeGreaterThan(Date.now());
 			fixture.session.agent.state.messages = fixture.session.agent.state.messages.slice(1);
 			expect(fixture.session.cacheWarmingStatus?.reason).toBe("conversation context changed");
-		} finally {
-			fixture.dispose();
-		}
-	});
-
-	it("does not warm the cache with the default settings", async () => {
-		const fixture = await createCacheWarmingSession(undefined, {});
-		try {
-			await fixture.session.prompt("test");
-			expect(fixture.providerCalls()).toBe(1);
-			expect(fixture.session.cacheWarmingStatus).toEqual({ state: "inactive", reason: "cache warming disabled" });
 		} finally {
 			fixture.dispose();
 		}
