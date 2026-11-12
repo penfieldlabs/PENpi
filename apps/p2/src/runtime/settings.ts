@@ -48,8 +48,8 @@ const schema = obj({
 	 */
 	codemode: opt(bool()),
 	/**
-	 * pi's `cacheWarming`, kept by the cache-warming plugin: "idle" (default) keeps a conversation's prompt cache entry
-	 * warm while its run streams and for up to 30 minutes after it settled, "streaming" only while it streams, "off"
+	 * pi's `cacheWarming`, kept by the cache-warming plugin: "idle" keeps a conversation's prompt cache entry warm while
+	 * its run streams and for up to 30 minutes after it settled, "streaming" only while it streams, "off" (default)
 	 * never.
 	 */
 	cacheWarming: opt(StringEnum(["off", "streaming", "idle"] as const)),

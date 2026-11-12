@@ -26,7 +26,7 @@ export default defineFacet((host) => {
 		const warmers = self.open(
 			async () =>
 				new ConversationWarmers({
-					mode: () => settings.settings.value.cacheWarming ?? "idle",
+					mode: () => settings.settings.value.cacheWarming ?? "off",
 					phase: async (conversationId, request) => {
 						const live = await durable().snapshot(LiveDoc, conversationId, context);
 						// A request is in flight, backing off or being polled: its response replaces the run.
@@ -66,10 +66,10 @@ export default defineFacet((host) => {
 				}),
 			],
 		});
-		// `cacheWarming: "off"` uninstalls the hook live; runs already warming stop at their next refresh.
+		// `cacheWarming: "off"`, the default, uninstalls the hook live; runs already warming stop at their next refresh.
 		self.contribute(
 			ExtensionSwitches,
-			self.derive([settings.settings], ([value]) => ({ [extension.name]: value.cacheWarming !== "off" })),
+			self.derive([settings.settings], ([value]) => ({ [extension.name]: (value.cacheWarming ?? "off") !== "off" })),
 		);
 		self.contribute(Extensions, { [extension.name]: extension });
 		return {};

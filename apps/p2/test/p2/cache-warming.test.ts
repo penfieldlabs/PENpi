@@ -21,9 +21,16 @@ import type { ConversationId, ConversationView, LiveState, UsageState } from "@e
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
 import type { ModelRequest } from "@p2/app/v1/worker";
 import { type CacheWarmingMode, ConversationWarmers } from "../../plugins/cache-warming/warmer.ts";
+import cacheWarmingWorker from "../../plugins/cache-warming/worker.ts";
 import { Chat } from "../../plugins/chat/contract.ts";
+import { WorkerModels } from "../../plugins/models/contract.ts";
 import { Sessions } from "../../plugins/sessions/contract.ts";
-import { holdIn, startFixture, until } from "./helpers.ts";
+import type { Ctx } from "../../src/runtime/chord.ts";
+import { Session } from "../../src/runtime/chord.ts";
+import { ExtensionSwitches } from "../../src/runtime/durable.ts";
+import type { MobileSettings } from "../../src/runtime/settings.ts";
+import type { HarnessParts } from "../../src/runtime/worker.ts";
+import { holdIn, poll, startFixture, testHost, until, workerFacet } from "./helpers.ts";
 
 const MODEL: Model<"pi-messages"> = {
 	id: "claude-opus-5-5",
@@ -217,6 +224,7 @@ test(
 				},
 			}),
 		);
+		writeFileSync(join(fixture.dataDir, "settings.json"), JSON.stringify({ cacheWarming: "idle" }));
 		const owner = fixture.browser();
 		const session = (
 			await (await holdIn(owner, Sessions, {}, "owner")).create({ cwd: fixture.workspace }, BACKGROUND_CONTEXT)
@@ -237,3 +245,30 @@ test(
 		for (const refresh of refreshes) assert.equal(refresh, sent);
 	},
 );
+
+test("the cache-warming hook is off without a setting and follows `cacheWarming`", async (t) => {
+	let set: ((value: MobileSettings, ctx: Ctx) => void) | undefined;
+	// No response arrives here, so the Harness is never used.
+	const fixture = await testHost({
+		address: Session({ id: "cache-warming" }),
+		kind: "worker",
+		facets: [workerFacet({ harness: {} as HarnessParts }), cacheWarmingWorker],
+		stubs: [
+			[
+				WorkerModels,
+				(_params, _principal, self) => {
+					const settings = self.state<MobileSettings>({});
+					set = (value, ctx) => settings.replace(ctx, value);
+					return { settings };
+				},
+			],
+		],
+	});
+	t.after(() => fixture.close());
+	const switches = await fixture.host.registry(ExtensionSwitches, BACKGROUND_CONTEXT);
+	await poll(() => switches.value.get("cache-warming") === false, 5000, "the switch to be off");
+	set?.({ cacheWarming: "streaming" }, BACKGROUND_CONTEXT as Ctx);
+	await poll(() => switches.value.get("cache-warming") === true, 5000, "the switch to follow the setting");
+	set?.({}, BACKGROUND_CONTEXT as Ctx);
+	await poll(() => switches.value.get("cache-warming") === false, 5000, "the switch to be off again");
+});

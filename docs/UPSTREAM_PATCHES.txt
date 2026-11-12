@@ -85,6 +85,12 @@ LICENSE	adds the Penfield copyright line; MIT terms and Mario Zechner's notice u
 README.md	PENpi README
 README.pi.md	upstream README kept as Pi's README, minus upstream-only banner and binary section
 SECURITY.md	PENpi reporting and trust boundaries, upstream policy preserved below
+apps/p2/README.md	documents PENpi's cache-warming-off default
+apps/p2/docs/p2-notes.md	documents PENpi's cache-warming-off default
+apps/p2/plugins/cache-warming/worker.ts	PENpi: cache warming off without a setting, as pi-coding-agent's default
+apps/p2/plugins/familiar/worker.ts	PENpi: cache warming off without a setting, as pi-coding-agent's default
+apps/p2/src/runtime/settings.ts	documents PENpi's cache-warming-off default
+apps/p2/test/p2/cache-warming.test.ts	upstream test adapted to PENpi's cache-warming-off default; tests the hook is off without a setting
 assets/penpi-logo.png	PENpi logo
 biome.json	lint and format the PENpi extension
 docs/ARCHITECTURE.md	PENpi documentation
@@ -177,15 +183,15 @@ packages/ai/src/providers/data/xiaomi.json	committed model-data snapshot (offlin
 packages/ai/src/providers/data/zai-coding-cn.json	committed model-data snapshot (offline builds)
 packages/ai/src/providers/data/zai.json	committed model-data snapshot (offline builds)
 packages/coding-agent/README.md	upstream README plus a PENpi note
-packages/coding-agent/docs/settings.md	documents PENpi's compaction-off default
+packages/coding-agent/docs/settings.md	documents PENpi's compaction-off and cache-warming-off defaults
 packages/coding-agent/install-lock/package-lock.json	generated from packages/coding-agent/package.json: undici 8.12.3 security update; minimatch 11.0.3 security update (GHSA-g3hv-75wg-m249) in place of 10.2.6, with its new dependency @isaacs/nonrecursive-glob-match 1.0.3
-packages/coding-agent/schemas/settings.schema.json	generated: compaction.enabled defaults to false (settings-defaults.ts)
+packages/coding-agent/schemas/settings.schema.json	generated: compaction.enabled defaults to false and cacheWarming to "off" (settings-defaults.ts)
 packages/coding-agent/src/cli/args.ts	core patch: hidden extension CLI flags
 packages/coding-agent/src/core/extensions/loader.ts	core patch: hidden extension CLI flags
 packages/coding-agent/src/core/extensions/types.ts	core patch: hidden extension CLI flags
 packages/coding-agent/src/core/http-dispatcher.ts	core patch: a Pool to the proxy, as undici's default, so a CONNECT the proxy holds open no longer blocks other requests (0.6.0)
 packages/coding-agent/src/core/package-manager.ts	core patch: exact pins for managed installs (ADR 0020)
-packages/coding-agent/src/core/settings-defaults.ts	core patch: compaction off by default; the context engine replaces it (ADR 0032)
+packages/coding-agent/src/core/settings-defaults.ts	core patch: compaction off by default, the context engine replaces it (ADR 0032); cache warming off by default, each refresh is a paid request
 packages/coding-agent/src/modes/interactive/interactive-mode.ts	core patch: no upstream update banner (ADR 0019)
 packages/coding-agent/src/modes/print-mode.ts	core patch: print every continuation part (ADR 0032)
 packages/coding-agent/src/utils/shell.ts	core patch: strip Penfield credentials from shell commands
@@ -196,7 +202,9 @@ packages/coding-agent/test/penpi-builtin-mcp-disabled.test.ts	PENpi test against
 packages/coding-agent/test/penpi-http-proxy-held-connect.test.ts	PENpi test: a held proxy CONNECT does not block a request to another host
 packages/coding-agent/test/penpi-print-mode-continuation.test.ts	PENpi test against the real session
 packages/coding-agent/test/penpi-shell-env.test.ts	PENpi test against the real session
+packages/coding-agent/test/sdk-stream-options.test.ts	upstream test adapted to PENpi's cache-warming-off default; tests that the default warms nothing
 packages/coding-agent/test/settings-manager-compaction.test.ts	upstream test adapted to PENpi's compaction-off default
+packages/coding-agent/test/settings-manager.test.ts	upstream test adapted to PENpi's cache-warming-off default
 packages/coding-agent/test/suite/agent-session-boundaries.test.ts	upstream test adapted to PENpi's compaction-off default
 packages/coding-agent/test/suite/agent-session-compaction-model-overrides.test.ts	upstream test adapted to PENpi's compaction-off default
 packages/coding-agent/test/suite/agent-session-compaction.test.ts	upstream test adapted to PENpi's compaction-off default

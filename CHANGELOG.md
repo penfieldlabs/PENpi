@@ -18,10 +18,11 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
   - The read tool streams large files, and grep no longer reads every matched file into memory,
     so neither runs out of memory on large files.
   - Internal cursor markers no longer leak into terminal output.
-  - Prompt cache warming now defaults to `"idle"` (it was `"streaming"`): for models with a
-    prompt-cache lifetime, Pi also keeps the cache warm for up to 30 minutes between runs, when
-    a refresh is expected to cost less than it saves. Set `"cacheWarming": "off"` or
-    `"streaming"` in global settings to change it.
+  - Prompt cache warming is now off by default: with it on, Pi sends paid requests the user did
+    not ask for. In 0.7.0 it was on while a run streamed (`"streaming"`), so this is a change
+    users will notice. Upstream v1.5.1 made `"idle"` its default, which also keeps the cache
+    warm for up to 30 minutes between runs; PENpi does not follow it. Set
+    `"cacheWarming": "streaming"` or `"idle"` in global settings to turn it on.
 - **A tool result found by `context_search` names the call that made it.** A hit on a tool result
   showed only `tool result bash` and a snippet of its output, so the results of two similar
   commands could look the same. It now also shows the command or path, after `from: `, clipped at

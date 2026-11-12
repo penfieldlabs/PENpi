@@ -80,8 +80,7 @@ export default defineFacet((host) => {
 		const cacheGoneAt = (answeredAt: number, model: Model<Api>, stream: HarnessSettings["stream"]) => {
 			const ttl = getPromptCacheTtlMs(model, { cacheRetention: stream?.cacheRetention });
 			if (ttl === undefined) return answeredAt;
-			const warming =
-				(settings.settings.value.cacheWarming ?? "idle") === "idle" ? CACHE_WARMING_MAX_IDLE_AGE_MS : 0;
+			const warming = settings.settings.value.cacheWarming === "idle" ? CACHE_WARMING_MAX_IDLE_AGE_MS : 0;
 			return coldAt(answeredAt, ttl, warming);
 		};
 
