@@ -150,9 +150,16 @@ Attribution:
 > manually dispatched**. PENpi's sequence is:
 >
 > 1. Run the full gate from a clean checkout (`docs/TEST_PROTOCOL.md`).
-> 2. Stamp the CHANGELOG date and squash `dev` onto `origin/main`.
-> 3. Open a PR, let CI pass, squash-merge with `--match-head-commit`.
-> 4. Verify the merged tree equals the gated tree, then tag `vX.Y.Z`.
+> 2. Stamp the CHANGELOG date on the release branch. Keep the branch's history as it is:
+>    the upstream merge, if any, and PENpi's commits on top of it.
+> 3. Open a PR to `main`, let CI pass, and merge it with a merge commit
+>    (`gh pr merge --merge --match-head-commit <sha>`), never a squash. A squash drops the
+>    upstream merge from `main`'s history, and with it the patch base and the E2 corpus pin
+>    (`docs/UPSTREAM_PATCHES.txt`), which CI's engine-on-upstream job, the weekly E2 and the
+>    release workflow's corpus-pin job need in the clone. 0.6.0 was squashed and lost its
+>    base; 0.7.0 was merged this way.
+> 4. Verify the merged tree equals the gated tree, then tag the merge commit `vX.Y.Z`. It is
+>    on `main`'s first-parent history, which the release workflow requires.
 > 5. Manually dispatch `.github/workflows/release.yml` with that tag.
 > 6. Verify the published source archive, its `ARCHIVE_MANIFEST.json`, `SHA256SUMS`,
 >    and that the release notes are the real changelog section, not a placeholder.
