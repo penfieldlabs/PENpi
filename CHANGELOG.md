@@ -48,6 +48,18 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
   fails again on the upstream v1.5.1 corpus (see Known issues). This path could not have fired in
   any stored release-gate session, so the evidence for the fix is its unit test and E2, not the
   gate.
+- **Honest tool output with long runs of one character is no longer reported as silent
+  truncation.** Test dot reporters, rules, progress bars and the bars of `git diff --stat` cost
+  many times their real tokens in the engine's estimate: 2,000 dots are 1,285 tokens by the
+  estimate and 32 by the o200k and GLM tokenizers. The engine compares the usage growth a provider
+  reports with what each request appended, so on an honest provider such output could read as
+  most of the append missing. The engine then reported silent truncation, shrank the window for
+  the session, cut the context and named answers as unreliable. The growth check now counts a run
+  of one character as a run, and a sample that reads only a little short joins a detection only
+  when its request is as large as evidence must be (ADR 0033). Of the four cases the outside review
+  found, two date from before 0.8.0: 0.7.0 detects them too. A new engine test on an honest
+  provider counted with the o200k tokenizer passes its five sessions (one before), and all 96 E2
+  runs are unchanged.
 - **An answer produced from silently truncated input is named, even when the warning sign before
   it lowered the engine's estimate.** When the engine finds silent truncation, it names every
   answer that came from cut input. A sample that read only a little short still counted toward

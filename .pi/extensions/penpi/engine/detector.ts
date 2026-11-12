@@ -14,6 +14,14 @@ export function completesMarginalPair(kind: "evidence" | "marginal", evidence: n
 }
 
 /**
+ * The size guard of evidence and of the pair's marginal side: the request is expected at 0.8 or more of the largest
+ * usage reported so far.
+ */
+export function meetsSizeGuard(expected: number, max: number): boolean {
+	return expected >= 0.8 * max;
+}
+
+/**
  * ADR 0033: whether a clean sample forgets the marginal samples. As for evidence: a clean sample above everything
  * reported so far, marginal samples included, by more than `flatness` (the provider processed more than they did).
  */
@@ -272,6 +280,11 @@ export function installDetector(core: EngineCore): void {
 			const grow =
 				(reference ? sent.cum - reference.cum : sent.appendedText - sent.noticeDrop + sent.noticeAdd) * ratioBefore;
 			const delta = reported - base.reported;
+			// The shortfall is judged against the append's floor, which counts runs of one character as runs
+			// (textTokensFloor): honest test reporters, rules and bars otherwise read as most of the append missing.
+			// D24: at a provider switch the span is a chain sum, which keeps no floor, so it is judged against the
+			// estimate as before (left for 0.9.0).
+			const judged = reference ? grow : Math.max(0, grow - sent.appendedSlack * ratioBefore);
 			stats.growthChecks.push({ seq: sent.seq, grow, delta, reference: reference !== undefined });
 			const shown = `${Math.round(grow)} tokens appended, reported usage ${delta >= 0 ? "+" : ""}${delta}`;
 			// An honest provider cannot report the same or less after text was appended, however little.
@@ -281,16 +294,18 @@ export function installDetector(core: EngineCore): void {
 			}
 			// Otherwise an absolute floor: an honest provider counts the appended part exactly; only its
 			// estimate varies, so small appends say little.
-			else if (grow >= opts.silentMinGrowth) {
-				if (delta < opts.silentShortfall * grow && expected >= 0.8 * max) {
+			else if (judged >= opts.silentMinGrowth) {
+				if (delta < opts.silentShortfall * judged && meetsSizeGuard(expected, max)) {
 					suspect = shown;
-					// Most of a large append unaccounted for: no tokenizer overcounts text by that much
-					// (the estimator's classes stay within 0.85-1.12 of o200k and GLM; a chars/4 count
-					// within 3x).
-					strong = grow >= opts.silentStrongGrowth && delta < opts.silentStrongShortfall * grow;
-				} else if (delta < opts.silentMarginal * grow) {
+					// Most of a large append unaccounted for. Outside runs of one character the estimator's classes
+					// stay within 0.85-1.12 of o200k and GLM (a chars/4 count within 3x); textTokens overcounts runs
+					// many times over, which is why the check is made against the floor.
+					strong = judged >= opts.silentStrongGrowth && delta < opts.silentStrongShortfall * judged;
+				} else if (delta < opts.silentMarginal * judged) {
 					marginal = true;
-					short = `${shown} (marginal)`;
+					// ADR 0033: the pair's marginal side has the evidence side's size guard. A request far below the
+					// largest usage the provider already reported cannot have been truncated by it.
+					if (meetsSizeGuard(expected, max)) short = `${shown} (marginal)`;
 				}
 			}
 		}

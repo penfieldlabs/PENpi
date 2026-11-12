@@ -90,10 +90,43 @@ The full E2 and the replay of bench sessions are in the 0.8.0 gate. Both known-f
 
 - **The residual risk is one honest marginal sample and one honest evidence sample within 30 samples.** In the
   replay, honest marginal samples were rare (8 in 720 sessions, all `+`-bar outputs at 32k), and the one honest
-  evidence sample had none near it. Such a false detection learns a window from the largest usage reported, for that
-  session only. A window below a quarter of the planning window is re-probed, and `/penpi reset-limits` clears it.
+  evidence sample had none near it. Neither the replay nor E2 has much output made of runs of one character, so that
+  rate understated the risk (below). Such a false detection learns a window from the largest usage reported, for
+  that session only. A window below a quarter of the planning window is re-probed, and `/penpi reset-limits` clears
+  it.
+- **What the outside review of 0.8.0 found.** `textTokens` charges every punctuation character, and tokenizers
+  merge a run of one character: 2,000 dots are 1,285 tokens by the estimate and 32 with o200k and GLM-5.3-Flash.
+  Honest tool output made of such runs (test dot reporters, rules, progress bars, the bars of `git diff --stat`,
+  padded table rules) then reads as most of the append missing. On an honest provider counted with o200k, four
+  ordinary sessions detected silent truncation, cut the context and named answers:
+  - one unittest run of 2,000 tests (strong evidence alone), and a run of 600 tests twice in the span (two evidence
+    samples). 0.7.0 detects both: they date from before this ADR.
+  - `git diff --stat` (marginal), then one 600-test run (evidence): a pair under this ADR.
+  - a 600-test run before a cut and again after it: the second is far below the largest usage reported, so it cannot
+    be evidence (the 0.8 size guard), but it was marginal and completed the pair. That gap came with this ADR.
+- **Two fixes, in 0.8.0:**
+  - The growth check judges the shortfall against a floor of the appended text: a run of 4 or more of one character
+    that is not a letter, digit, space or tab costs 1 + length / 64 (`textTokensFloor`; `messageRunSlack` is the
+    difference per message). The appended size in the log, the ratio and the learned window are unchanged.
+  - The pair's marginal side has the evidence side's size guard (`meetsSizeGuard`): a marginal sample expected below
+    0.8 of the largest usage reported is not kept for a pair. It still cannot clear evidence.
+
+  Measured: `honest-provider.test.ts` passes 5 of 5 (1 of 5 before). E2 on the pinned corpus (`dd30101cf`): all 96
+  runs identical to the engine without the fixes, in every result field and every engine log line (timestamps aside),
+  so the 48 silent runs keep their truncated calls, detection, lag, names and cuts; the two known failures are
+  unchanged. E2's honest runs have no marginal or evidence sample at all, which is why it could not see this.
+- **Left for 0.9.0:**
+  - `textTokens` itself. It still budgets runs at the overcount (1,285 tokens for 32), which is safe for fit and
+    wastes window.
+  - The provider-switch path (D24). It judges the span since the new provider's own last sample as a chain sum,
+    which keeps no floor, so it is judged against the estimate as before.
+  - Strong evidence does not join marginal samples, as the outside review also noted. A marginal sample joins a weak
+    evidence sample, but a strong one acts alone; the ratio restored and the names then depend on D14 catching the
+    marginal sample. No change in 0.8.0.
 - **Detection with marginal samples first restores the ratio from before them.** The marginal samples entered the
   calibration ratio when judged, like any clean sample.
 - **Tests:** `v080-marginal-pair.test.ts` (each order detects; two marginal samples do not; a clean sample above the
-  maximum in between forgets the marginal one; the rule off detects nothing) and the detector's unit tests
-  (`completesMarginalPair`, `clearsMarginals`).
+  maximum in between forgets the marginal one; the rule off detects nothing), `honest-provider.test.ts` (the four
+  sessions above and a control, on an honest provider counted with o200k: no detection), and the unit tests
+  (`completesMarginalPair`, `clearsMarginals`, `meetsSizeGuard`; `textTokensFloor` and `messageRunSlack` in
+  `engine/estimator.test.ts`).

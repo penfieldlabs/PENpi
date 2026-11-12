@@ -209,7 +209,8 @@ export function newEngineState(faults: FaultConfig | undefined) {
 		/**
 		 * The request just sent. `seq` numbers every request; `appendOnly` says its message list extends
 		 * the previous request's (request-only notice tails excluded), `appendedText` is the estimate of the
-		 * appended messages without images (`appendedImages` the estimate of their images), `noticeDrop` the
+		 * appended messages without images (`appendedSlack` the part of it in runs of one character, see
+		 * textTokensFloor; `appendedImages` the estimate of their images), `noticeDrop` the
 		 * estimate of the previous request's notice, `noticeAdd` that of this request's own notice,
 		 * `afterLengthStop` that the appended messages include an answer cut at the output limit.
 		 */
@@ -220,6 +221,7 @@ export function newEngineState(faults: FaultConfig | undefined) {
 					seq: number;
 					appendOnly: boolean;
 					appendedText: number;
+					appendedSlack: number;
 					appendedReplay: number;
 					appendedAsText: number;
 					appendedImages: number;

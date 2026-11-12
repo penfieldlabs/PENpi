@@ -9,6 +9,7 @@ export type AgentMessage = Parameters<typeof estimateTokens>[0];
  * Tokens per character class, fitted by least squares (relative error, classes weighted equally) on
  * 4,000-character chunks of 14 content classes counted with o200k_base and GLM-5.3-Flash. Class-level
  * real/estimate ratios with these weights: 0.85-1.12 (chars / 4 gives 0.60-2.95).
+ * Runs of one character are not among the classes, and textTokens overcounts them many times over (textTokensFloor).
  * The engine suite (h6-unit-density, calibration) checks the fit against both tokenizers.
  */
 export const DENSITY = {
@@ -79,6 +80,48 @@ export function textTokens(text: string): number {
 		i++;
 	}
 	return Math.max(Math.ceil(tokens), Math.ceil(n / 8));
+}
+
+/** A run of 4 or more of one character that is not a letter, digit, space or tab. */
+const RUN = /([^A-Za-z0-9 \t])\1{3,}/g;
+
+/**
+ * A lower bound on a text's tokens, for the silent-truncation growth check: as textTokens, but each run of one
+ * character costs 1 + length / 64. BPE vocabularies merge such runs, and textTokens charges every character: 2,000
+ * dots are 32 tokens with o200k and with GLM-5.3-Flash, and 1,285 by textTokens. Test dot reporters, rules, progress
+ * bars and stat bars are made of them.
+ */
+export function textTokensFloor(text: string): number {
+	let runs = 0;
+	const rest = text.replace(RUN, (run) => {
+		runs += 1 + run.length / 64;
+		return "";
+	});
+	if (runs === 0) return textTokens(text);
+	return Math.min(textTokens(text), Math.ceil(textTokens(rest) + runs));
+}
+
+export const runSlackCache = new WeakMap<object, number>();
+
+/**
+ * Estimated tokens of a message's text that sit in runs of one character: textTokens less textTokensFloor, over the
+ * text, the command and output, and the tool-call arguments it sends (cached per message object, as messageTokens).
+ */
+export function messageRunSlack(message: AgentMessage): number {
+	const cached = runSlackCache.get(message);
+	if (cached !== undefined) return cached;
+	const m = message as Record<string, unknown> & { role: string };
+	const of = (text: string) => textTokens(text) - textTokensFloor(text);
+	let slack = 0;
+	const content = m.role === "bashExecution" ? `${m.command ?? ""}\n${m.output ?? ""}` : m.content;
+	if (typeof content === "string") slack += of(content);
+	else if (Array.isArray(content))
+		for (const block of content as Block[]) {
+			if (block.type === "text") slack += of(block.text ?? "");
+			else if (block.type === "toolCall") slack += of(JSON.stringify(block.arguments ?? {}));
+		}
+	runSlackCache.set(message, slack);
+	return slack;
 }
 
 /** Width and height from a base64 PNG, GIF or JPEG header. */

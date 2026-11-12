@@ -3,6 +3,7 @@ import {
 	answersProduced,
 	clearsMarginals,
 	completesMarginalPair,
+	meetsSizeGuard,
 	replayRecommendation,
 	replayVerdict,
 } from "./detector.ts";
@@ -98,5 +99,17 @@ describe("ADR 0033: a marginal sample and an evidence sample within the span", (
 		// The larger of the running maximum and the marginal samples' reports.
 		expect(clearsMarginals(16_149, 16_000, marginals, 0.02)).toBe(false);
 		expect(clearsMarginals(20_000, 15_831, [], 0.02)).toBe(false);
+	});
+});
+
+describe("ADR 0033: the size guard of evidence and of the pair's marginal side", () => {
+	it("a request expected at 0.8 or more of the largest usage reported passes, one below does not", () => {
+		expect(meetsSizeGuard(80_000, 100_000)).toBe(true);
+		expect(meetsSizeGuard(120_000, 100_000)).toBe(true);
+		expect(meetsSizeGuard(79_999, 100_000)).toBe(false);
+		// The honest-provider test's case: about 60% of the largest usage after a cut.
+		expect(meetsSizeGuard(11_312, 18_434)).toBe(false);
+		// Nothing reported yet.
+		expect(meetsSizeGuard(1_000, 0)).toBe(true);
 	});
 });

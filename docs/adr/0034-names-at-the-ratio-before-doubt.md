@@ -106,10 +106,12 @@ On the run's own figures:
 
 - **False names are possible within a chain.** A chain whose first doubtful sample was honest and never cleared,
   followed by a real fall of the ratio within the same chain and honest samples near the window, can name an honest
-  answer. The clearing closes the usual form of it: honest samples that climb past everything reported clear the
-  marginal sample first. A false name
-  adds one "may be unreliable" turn to the warning; it detects nothing and changes no request. E2 reports a wrong name
-  in `named.wronglyNamed`.
+  answer. The clearing closes it only in small contexts: honest samples that climb past everything reported clear
+  the marginal sample first, but that takes a clean sample more than `plateauFlatness` (2%) above the running
+  maximum, a step of over 1,900 tokens at 96,000. In long sessions a marginal sample usually stays for the full span
+  of 30 samples. E2 does not exercise the clearing: in none of its 96 runs is a marginal sample cleared (as the outside
+  review of 0.8.0 found). A false name adds one "may be unreliable" turn to the warning; it detects nothing and changes
+  no request. E2 reports a wrong name in `named.wronglyNamed`.
 - **A truncated answer in a later chain than every doubtful sample is still judged at its own ratio**, as before.
 - **Tests:** `engine/name-rescale.test.ts`, on the run's own figures:
   - `data.o200k.1m.silent-messages` on v1.5.1 names call 31;

@@ -7,6 +7,7 @@ import {
 	imageSize,
 	imageTokens,
 	messageImageTokens,
+	messageRunSlack,
 	messageTokens,
 	requestShape,
 	textTokens,
@@ -840,6 +841,8 @@ export function installPlanner(core: EngineCore): void {
 			shape.keys.length >= st.sentShape.keys.length &&
 			st.sentShape.keys.every((k, i) => shape.keys[i] === k);
 		let appendedText = 0;
+		// The part of it in runs of one character, which the growth check judges at its floor.
+		let appendedSlack = 0;
 		// The replay check (detector): reasoning Pi replays, which providers count or ignore, and thinking
 		// sent as text, which every provider counts.
 		let appendedReplay = 0;
@@ -852,6 +855,7 @@ export function installPlanner(core: EngineCore): void {
 				const sent = core.parts(m);
 				const images = sent.tokens === 0 ? 0 : messageImageTokens(m);
 				appendedText += sent.tokens === 0 ? 0 : sent.tokens - sent.reasoning - images;
+				if (sent.tokens > 0) appendedSlack += messageRunSlack(m);
 				appendedImages += images;
 				if (sent.tokens > 0) {
 					appendedReplay += sent.reasoning - (sent.asText ?? 0);
@@ -877,6 +881,7 @@ export function installPlanner(core: EngineCore): void {
 			seq: ++st.sendSeq,
 			appendOnly,
 			appendedText,
+			appendedSlack,
 			appendedReplay,
 			appendedAsText,
 			appendedImages,
