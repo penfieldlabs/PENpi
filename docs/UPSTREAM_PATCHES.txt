@@ -10,6 +10,7 @@ base: dd30101cfc5b0609411dd80b6f93adbc14db14cf (upstream Pi v1.5.1)
 e2-corpus: dd30101cfc5b0609411dd80b6f93adbc14db14cf e917a3cbd38a1bd6ae8bb72a99be52fe5761ff224ada1908c747a12a015464ab (upstream Pi v1.5.1)
 .github/APPROVED_CONTRIBUTORS	deleted: upstream contributor gate
 .github/ISSUE_TEMPLATE/bug.yml	PENpi links and wording; no upstream auto-close gate
+.github/ISSUE_TEMPLATE/config.yml	PENpi links: questions go to PENpi's issues, not upstream Pi's Discord
 .github/ISSUE_TEMPLATE/contribution.yml	PENpi links; no upstream contributor gate
 .github/ISSUE_TEMPLATE/package-report.yml	deleted: upstream package-report template
 .github/workflows/approve-contributor.yml	deleted: upstream contributor gate
