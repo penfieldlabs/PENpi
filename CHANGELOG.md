@@ -11,8 +11,6 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
 ### Changed
 - **PENpi is on upstream Pi v1.5.1** (from v1.5.0). See Pi's own changelog
   (`packages/coding-agent/CHANGELOG.md`). What PENpi users notice:
-  - MCP sign-in is more reliable: a failed token refresh no longer spoils a sign-in in progress,
-    and a sign-in no longer hangs on "Connecting…" after the browser step.
   - OAuth logins keep working when Pi is stopped during a token refresh, and two refreshes
     through a symlinked `auth.json` share one lock.
   - The read tool streams large files, and grep no longer reads every matched file into memory,
