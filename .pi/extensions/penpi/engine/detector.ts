@@ -280,8 +280,9 @@ export function installDetector(core: EngineCore): void {
 			const grow =
 				(reference ? sent.cum - reference.cum : sent.appendedText - sent.noticeDrop + sent.noticeAdd) * ratioBefore;
 			const delta = reported - base.reported;
-			// The shortfall is judged against the append's floor, which counts runs of one character as runs
-			// (textTokensFloor): honest test reporters, rules and bars otherwise read as most of the append missing.
+			// The shortfall is judged against the append's floor (textTokensFloor), which prices runs of one character
+			// and other repetition near what tokenizers count: honest test reporters, rules, bars and base64 of sparse
+			// data otherwise read as most of the append missing.
 			// D24: at a provider switch the span is a chain sum, which keeps no floor, so it is judged against the
 			// estimate as before (left for 0.9.0).
 			const judged = reference ? grow : Math.max(0, grow - sent.appendedSlack * ratioBefore);
@@ -297,9 +298,10 @@ export function installDetector(core: EngineCore): void {
 			else if (judged >= opts.silentMinGrowth) {
 				if (delta < opts.silentShortfall * judged && meetsSizeGuard(expected, max)) {
 					suspect = shown;
-					// Most of a large append unaccounted for. Outside runs of one character the estimator's classes
-					// stay within 0.85-1.12 of o200k and GLM (a chars/4 count within 3x); textTokens overcounts runs
-					// many times over, which is why the check is made against the floor.
+					// Most of a large append unaccounted for. On ordinary text the estimator's classes stay within
+					// 0.85-1.12 of o200k and GLM (a chars/4 count within 3x), but textTokens overcounts repetition
+					// many times over, so the check is made against the floor: on honest tool output measured with
+					// both tokenizers, real tokens stay at 0.61 or more of it.
 					strong = judged >= opts.silentStrongGrowth && delta < opts.silentStrongShortfall * judged;
 				} else if (delta < opts.silentMarginal * judged) {
 					marginal = true;

@@ -88,12 +88,12 @@ The full E2 and the replay of bench sessions are in the 0.8.0 gate. Both known-f
 
 ## Consequences
 
-- **The residual risk is one honest marginal sample and one honest evidence sample within 30 samples.** In the
-  replay, honest marginal samples were rare (8 in 720 sessions, all `+`-bar outputs at 32k), and the one honest
-  evidence sample had none near it. Neither the replay nor E2 has much output made of runs of one character, so that
-  rate understated the risk (below). Such a false detection learns a window from the largest usage reported, for
-  that session only. A window below a quarter of the planning window is re-probed, and `/penpi reset-limits` clears
-  it.
+- **The residual risk is one honest marginal sample and one honest evidence sample within 30 samples.** In the replay,
+  honest marginal samples were rare (8 in 720 sessions, all `+`-bar outputs at 32k), and the one honest evidence
+  sample had none near it. Neither the replay nor E2 has much repetitive output (runs of one character and the like),
+  so that rate understated the risk (below). Such a false detection learns a window from the largest usage reported,
+  for that session only. A window below a quarter of the planning window is re-probed, and `/penpi reset-limits`
+  clears it.
 - **What the outside review of 0.8.0 found.** `textTokens` charges every punctuation character, and tokenizers
   merge a run of one character: 2,000 dots are 1,285 tokens by the estimate and 32 with o200k and GLM-5.3-Flash.
   Honest tool output made of such runs (test dot reporters, rules, progress bars, the bars of `git diff --stat`,
@@ -104,20 +104,42 @@ The full E2 and the replay of bench sessions are in the 0.8.0 gate. Both known-f
   - `git diff --stat` (marginal), then one 600-test run (evidence): a pair under this ADR.
   - a 600-test run before a cut and again after it: the second is far below the largest usage reported, so it cannot
     be evidence (the 0.8 size guard), but it was marginal and completed the pair. That gap came with this ADR.
+- **What a second review of 0.8.0 found.** A floor for runs of one character is not enough. `textTokens` overcounts
+  other honest output four to six times: base64 of a zero-filled file (2,677 tokens by the estimate, 500 with o200k
+  and GLM), `-=-=` rules (2,738 and 420), lines of one letter (2,849 and 659). Reading either of the first two twice
+  in a long session detected silent truncation on an honest provider, on 0.7.0 and with the run floor alike.
 - **Two fixes, in 0.8.0:**
-  - The growth check judges the shortfall against a floor of the appended text: a run of 4 or more of one character
-    that is not a letter, digit, space or tab costs 1 + length / 64 (`textTokensFloor`; `messageRunSlack` is the
-    difference per message). The appended size in the log, the ratio and the learned window are unchanged.
+  - The growth check judges the shortfall against a floor of the appended text (`textTokensFloor`;
+    `messageFloorSlack` is the difference per message), the least of:
+    - `textTokens`;
+    - `textTokens` with a run of 4 or more of one character that is not a letter, digit, space or tab at 1 +
+      length / 64;
+    - the class costs without `textTokens`' lower bound of length / 8 (text that is mostly spaces);
+    - `textTokens` with its repeatable segments, runs of 48 or more base64 characters and runs of 8 or more ASCII
+      punctuation, at 2 tokens per byte of those segments deflated, when that is less than their price.
+
+    The appended size in the log, the ratio and the learned window are unchanged.
   - The pair's marginal side has the evidence side's size guard (`meetsSizeGuard`): a marginal sample expected below
     0.8 of the largest usage reported is not kept for a pair. It still cannot clear evidence.
 
-  Measured: `honest-provider.test.ts` passes 5 of 5 (1 of 5 before). E2 on the pinned corpus (`dd30101cf`): all 96
-  runs identical to the engine without the fixes, in every result field and every engine log line (timestamps aside),
+  Why a bound on deflated segments: real tokens over the floor must stay at 0.5 or more for any honest text, or an
+  honest append reads as half missing. Measured with o200k and GLM-5.3-Flash on 121 samples of honest tool output (the
+  reviews' cases, runs and short patterns, base64 and hex of zero, sparse and random data, lockfiles, minified code,
+  JSON of hashes, CSV, logs, CJK, emoji, tables, source code, E2's own classes) and 246 of sparse binary data, the
+  lowest is 0.61 (base64 of data with 10% of bytes set); with `textTokens` alone, 32 of the 121 fall below 0.5, and
+  with the run floor alone, 19. A run floor generalised to short periods does not reach base64 of sparse data, and a
+  bound on the whole text deflated also takes repetition across lines, which tokenizers do not merge: on E2's
+  whitespace-heavy output no constant served both. The segments are the text `textTokens` prices character by
+  character. The bound costs about 60 ms on a 1 MB append, 3 ms at 50,000 characters, once per message.
+
+  Measured: `honest-provider.test.ts` passes 7 of 7 (5 of 7 with the run floor alone: the second review's two fail).
+  E2 on the pinned corpus (`dd30101cf`): all 96 runs identical with the run floor to the engine without the fixes, and
+  identical again with the repetition bound added, in every result field and every engine log line (timestamps aside),
   so the 48 silent runs keep their truncated calls, detection, lag, names and cuts; the two known failures are
   unchanged. E2's honest runs have no marginal or evidence sample at all, which is why it could not see this.
 - **Left for 0.9.0:**
-  - `textTokens` itself. It still budgets runs at the overcount (1,285 tokens for 32), which is safe for fit and
-    wastes window.
+  - `textTokens` itself. It still budgets runs and other repetition at the overcount (1,285 tokens for 32), which is
+    safe for fit and wastes window.
   - The provider-switch path (D24). It judges the span since the new provider's own last sample as a chain sum,
     which keeps no floor, so it is judged against the estimate as before.
   - Strong evidence does not join marginal samples, as the outside review also noted. A marginal sample joins a weak
@@ -127,6 +149,7 @@ The full E2 and the replay of bench sessions are in the 0.8.0 gate. Both known-f
   calibration ratio when judged, like any clean sample.
 - **Tests:** `v080-marginal-pair.test.ts` (each order detects; two marginal samples do not; a clean sample above the
   maximum in between forgets the marginal one; the rule off detects nothing), `honest-provider.test.ts` (the four
-  sessions above and a control, on an honest provider counted with o200k: no detection), and the unit tests
-  (`completesMarginalPair`, `clearsMarginals`, `meetsSizeGuard`; `textTokensFloor` and `messageRunSlack` in
+  sessions above, the two of the second review and a control, on an honest provider counted with o200k: no
+  detection), and the unit tests (`completesMarginalPair`, `clearsMarginals`, `meetsSizeGuard`; `textTokensFloor` and
+  `messageFloorSlack` in
   `engine/estimator.test.ts`).

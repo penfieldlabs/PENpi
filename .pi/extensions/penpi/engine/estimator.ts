@@ -1,3 +1,4 @@
+import { deflateRawSync } from "node:zlib";
 import type { estimateTokens } from "@earendil-works/pi-coding-agent";
 import { DEFAULTS, NOTICE_TYPE } from "./options.ts";
 
@@ -9,7 +10,8 @@ export type AgentMessage = Parameters<typeof estimateTokens>[0];
  * Tokens per character class, fitted by least squares (relative error, classes weighted equally) on
  * 4,000-character chunks of 14 content classes counted with o200k_base and GLM-5.3-Flash. Class-level
  * real/estimate ratios with these weights: 0.85-1.12 (chars / 4 gives 0.60-2.95).
- * Runs of one character are not among the classes, and textTokens overcounts them many times over (textTokensFloor).
+ * Repetitive text is not among the classes (runs of one character, short repeated patterns, base64 of sparse data),
+ * and textTokens overcounts it many times over (textTokensFloor).
  * The engine suite (h6-unit-density, calibration) checks the fit against both tokenizers.
  */
 export const DENSITY = {
@@ -38,6 +40,11 @@ export function isCjk(c: number): boolean {
 
 /** Estimated tokens of a text, from its character classes. */
 export function textTokens(text: string): number {
+	return Math.max(Math.ceil(classTokens(text)), Math.ceil(text.length / 8));
+}
+
+/** The sum of a text's character-class costs, before textTokens' lower bound of length / 8. */
+function classTokens(text: string): number {
 	let tokens = 0;
 	const n = text.length;
 	let i = 0;
@@ -79,36 +86,86 @@ export function textTokens(text: string): number {
 		}
 		i++;
 	}
-	return Math.max(Math.ceil(tokens), Math.ceil(n / 8));
+	return tokens;
 }
 
 /** A run of 4 or more of one character that is not a letter, digit, space or tab. */
 const RUN = /([^A-Za-z0-9 \t])\1{3,}/g;
 
+/** ASCII punctuation: printable, not a letter, digit or space (+ / = included). */
+function isAsciiPunct(c: number): boolean {
+	return c >= 33 && c <= 126 && !(c >= 48 && c <= 57) && !(c >= 65 && c <= 90) && !(c >= 97 && c <= 122);
+}
+
 /**
- * A lower bound on a text's tokens, for the silent-truncation growth check: as textTokens, but each run of one
- * character costs 1 + length / 64. BPE vocabularies merge such runs, and textTokens charges every character: 2,000
- * dots are 32 tokens with o200k and with GLM-5.3-Flash, and 1,285 by textTokens. Test dot reporters, rules, progress
- * bars and stat bars are made of them.
+ * The repetition bound of textTokensFloor: tokens per byte of those segments deflated. Fitted on honest tool output
+ * counted with o200k and GLM-5.3-Flash, where base64 of sparse binary data (10% of bytes set) is the closest, at 0.61 of
+ * this bound; at 1.8 the bound reaches E2's base64 of random data.
+ */
+export const FLOOR_TOKENS_PER_BYTE = 2;
+
+/**
+ * A lower bound on a text's real tokens, for the silent-truncation growth check. textTokens prices characters one
+ * by one, and BPE vocabularies merge repetition: 2,000 dots are 32 tokens with o200k and with GLM-5.3-Flash, and
+ * 1,285 by textTokens; base64 of 3,000 zero bytes is 500 and 2,677. The floor is the least of:
+ * - textTokens;
+ * - textTokens with each run of one character (RUN) at 1 + length / 64 (test dot reporters, rules, bars);
+ * - the class costs without textTokens' lower bound of length / 8 (text that is mostly spaces);
+ * - textTokens with the segments (segmentSlack) at FLOOR_TOKENS_PER_BYTE x their deflated size, when that is less than
+ *   their price: runs of letters or digits, short repeated patterns, base64 and hex of sparse data, `-=-=` rules.
  */
 export function textTokensFloor(text: string): number {
+	const classes = Math.ceil(classTokens(text));
+	const estimate = Math.max(classes, Math.ceil(text.length / 8));
 	let runs = 0;
 	const rest = text.replace(RUN, (run) => {
 		runs += 1 + run.length / 64;
 		return "";
 	});
-	if (runs === 0) return textTokens(text);
-	return Math.min(textTokens(text), Math.ceil(textTokens(rest) + runs));
+	const runFloor = runs === 0 ? estimate : Math.ceil(textTokens(rest) + runs);
+	return Math.min(estimate, runFloor, classes, estimate - segmentSlack(text));
 }
 
-export const runSlackCache = new WeakMap<object, number>();
+/**
+ * What textTokens charges for a text's segments over FLOOR_TOKENS_PER_BYTE x their deflated size, if more. The
+ * segments are what textTokens prices character by character and tokenizers merge when they repeat: runs of 48 or
+ * more base64 characters (textTokens' flat base64 price) and runs of 8 or more ASCII punctuation characters (a run
+ * starts at its first character: a base64 run at a letter, digit, + / or =, a punctuation run at other punctuation).
+ */
+function segmentSlack(text: string): number {
+	const segments: string[] = [];
+	let price = 0;
+	const n = text.length;
+	let i = 0;
+	while (i < n) {
+		const c = text.charCodeAt(i);
+		const base64 = isBase64Char(c);
+		if (!base64 && !isAsciiPunct(c)) {
+			i++;
+			continue;
+		}
+		let j = i + 1;
+		while (j < n && (base64 ? isBase64Char(text.charCodeAt(j)) : isAsciiPunct(text.charCodeAt(j)))) j++;
+		if (base64 ? j - i >= 48 : j - i >= 8) {
+			segments.push(text.slice(i, j));
+			price += (j - i) * (base64 ? DENSITY.base64 : DENSITY.punct);
+		}
+		i = j;
+	}
+	if (segments.length === 0) return 0;
+	const packed = FLOOR_TOKENS_PER_BYTE * deflateRawSync(Buffer.from(segments.join("\n"), "utf8")).length;
+	return Math.max(0, Math.floor(price - packed));
+}
+
+export const floorSlackCache = new WeakMap<object, number>();
 
 /**
- * Estimated tokens of a message's text that sit in runs of one character: textTokens less textTokensFloor, over the
- * text, the command and output, and the tool-call arguments it sends (cached per message object, as messageTokens).
+ * Estimated tokens of a message's text that textTokensFloor takes off (runs and other repetition): textTokens less
+ * textTokensFloor, over the text, the command and output, and the tool-call arguments it sends (cached per message
+ * object, as messageTokens).
  */
-export function messageRunSlack(message: AgentMessage): number {
-	const cached = runSlackCache.get(message);
+export function messageFloorSlack(message: AgentMessage): number {
+	const cached = floorSlackCache.get(message);
 	if (cached !== undefined) return cached;
 	const m = message as Record<string, unknown> & { role: string };
 	const of = (text: string) => textTokens(text) - textTokensFloor(text);
@@ -120,7 +177,7 @@ export function messageRunSlack(message: AgentMessage): number {
 			if (block.type === "text") slack += of(block.text ?? "");
 			else if (block.type === "toolCall") slack += of(JSON.stringify(block.arguments ?? {}));
 		}
-	runSlackCache.set(message, slack);
+	floorSlackCache.set(message, slack);
 	return slack;
 }
 

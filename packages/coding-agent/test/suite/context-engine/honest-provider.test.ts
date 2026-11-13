@@ -1,11 +1,13 @@
 /**
- * E3.5: an honest provider is never reported as truncating, with ordinary tool output that is made of runs of one
- * character (test dot reporters, rules, stat bars).
+ * E3.5: an honest provider is never reported as truncating, with ordinary tool output that the engine's estimate
+ * overcounts many times: runs of one character (test dot reporters, rules, stat bars) and other repetition (base64 of
+ * a zero-filled file, `-=-=` rules).
  *
  * The provider here counts every request with the real o200k tokenizer (E2's simulator), accepts everything up to
  * the declared window and never truncates. The session is ordinary coding work: source files, `git diff --stat`,
  * a test run that prints one dot per test. Every test expects no detection. Tests 1 and 2 detected in 0.7.0 too;
- * tests 3 and 4 came with ADR 0033 (the marginal pair) before its size guard.
+ * tests 3 and 4 came with ADR 0033 (the marginal pair) before its size guard. Tests 5 and 6 detected in 0.7.0 and
+ * with the floor for runs of one character alone.
  */
 import { readFileSync } from "node:fs";
 import { fauxAssistantMessage, fauxText, fauxToolCall } from "@earendil-works/pi-ai";
@@ -174,5 +176,26 @@ describe("E3.5: an honest provider and ordinary tool output", () => {
 		const blobs = { ...code, tests: unittest(600) };
 		expectHonest(await session(32_000, steps, blobs, { silentMarginalPair: false }), 32_000);
 		expectHonest(await session(32_000, steps, blobs), 32_000);
+	});
+
+	// Repetition that is not a run of one character: the floor's bound on repeated segments (textTokensFloor).
+	it("5: `base64` of a zero-filled 3,000-byte file, read twice, no detection", async () => {
+		const blob = `${Buffer.alloc(3_000).toString("base64")}\n`;
+		const r = await session(
+			200_000,
+			[...preload, ...smalls(0, 3), { blob: "b64" }, ...smalls(3, 3), { blob: "b64" }, ...smalls(6, 6)],
+			{ ...big, ...small, b64: blob },
+		);
+		expectHonest(r, 200_000);
+	});
+
+	it("6: a report ruled with `-=-=` lines, twice, no detection", async () => {
+		const report = Array.from({ length: 30 }, (_, i) => `section ${i}\n${"-=".repeat(35)}`).join("\n");
+		const r = await session(
+			200_000,
+			[...preload, ...smalls(0, 3), { blob: "rules" }, ...smalls(3, 3), { blob: "rules" }, ...smalls(6, 6)],
+			{ ...big, ...small, rules: report },
+		);
+		expectHonest(r, 200_000);
 	});
 });
