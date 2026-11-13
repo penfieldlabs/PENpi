@@ -102,3 +102,34 @@ describe("E3.5: the floor bounds other repetition by its deflated size", () => {
 		expect(messageFloorSlack(result as unknown as AgentMessage)).toBeGreaterThan(2_500);
 	});
 });
+
+describe("E3.5: the floor prices runs of a short period, whitespace and control characters included", () => {
+	it("blank CRLF lines and lines of one tab or one space fall far below textTokens", () => {
+		// Real tokens, o200k and GLM-5.3-Flash alike: 1,500 blank CRLF lines about 375.
+		const crlf = `Output:\r\n${"\r\n".repeat(1_500)}Done.\r\n`;
+		expect(textTokens(crlf)).toBe(1_970);
+		expect(textTokensFloor(crlf)).toBe(52);
+		expect(textTokensFloor("\t\n".repeat(1_500))).toBe(48);
+		expect(textTokensFloor(" \n".repeat(1_500))).toBe(48);
+		// A unit of 8 and its CRLF: a period of 10.
+		expect(textTokensFloor("\r\n\r\n\r\n\t\r\n".repeat(200))).toBe(30);
+	});
+
+	it("a period across classes costs half a token per change of class: `!` lines are one token each", () => {
+		expect(textTokensFloor("!\r\n".repeat(500))).toBe(500);
+	});
+
+	it("next to sparse data, both are taken off", () => {
+		const text = `${"\r\n".repeat(500)}${Buffer.alloc(3_000).toString("base64")}`;
+		expect(textTokensFloor(text)).toBe(62);
+	});
+
+	it("short repetition keeps its estimate; letters alone and spaces and tabs alone keep the other arms' floor", () => {
+		expect(textTokensFloor("\t});\n\t});\n")).toBe(textTokens("\t});\n\t});\n"));
+		expect(textTokensFloor("|---|---|---|---|---|")).toBe(textTokens("|---|---|---|---|---|"));
+		// The base64 segments' floor, as before the arm.
+		expect(textTokensFloor("abab".repeat(50))).toBe(15);
+		// The class costs' floor, as before the arm.
+		expect(textTokensFloor(" \t".repeat(100))).toBe(2);
+	});
+});

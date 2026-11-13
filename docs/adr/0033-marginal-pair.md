@@ -108,7 +108,10 @@ The full E2 and the replay of bench sessions are in the 0.8.0 gate. Both known-f
   other honest output four to six times: base64 of a zero-filled file (2,677 tokens by the estimate, 500 with o200k
   and GLM), `-=-=` rules (2,738 and 420), lines of one letter (2,849 and 659). Reading either of the first two twice
   in a long session detected silent truncation on an honest provider, on 0.7.0 and with the run floor alike.
-- **Two fixes, in 0.8.0:**
+- **What a recheck of the floor found.** Whitespace that repeats with a period of two escaped every arm: 1,500 blank
+  CRLF lines read 0.19 of the floor in real tokens, lines of one tab 0.19, lines of one space 0.38. Blank CRLF lines
+  read twice in a long session detected silent truncation on an honest provider.
+- **The fixes, in 0.8.0:**
   - The growth check judges the shortfall against a floor of the appended text (`textTokensFloor`;
     `messageFloorSlack` is the difference per message), the least of:
     - `textTokens`;
@@ -116,7 +119,13 @@ The full E2 and the replay of bench sessions are in the 0.8.0 gate. Both known-f
       length / 64;
     - the class costs without `textTokens`' lower bound of length / 8 (text that is mostly spaces);
     - `textTokens` with its repeatable segments, runs of 48 or more base64 characters and runs of 8 or more ASCII
-      punctuation, at 2 tokens per byte of those segments deflated, when that is less than their price.
+      punctuation, at 2 tokens per byte of those segments deflated, when that is less than their price;
+    - the text with its runs of a short period at a floor of their own, and the rest as the segment arm prices it. A
+      run has a period of 1 to 10 characters (a unit of up to 8 and its CRLF), is 32 or more long and holds 4 or
+      more periods; runs only of letters, only of digits or only of spaces and tabs are left to the other arms.
+      Within one character class (whitespace, letters, digits, other) a run costs 1 + length / 64, as a run of one
+      character; across classes, half a token per change of class in each period, since a tokenizer merges over at
+      most one change (o200k keeps punctuation and the newlines after it together).
 
     The appended size in the log, the ratio and the learned window are unchanged.
   - The pair's marginal side has the evidence side's size guard (`meetsSizeGuard`): a marginal sample expected below
@@ -130,16 +139,33 @@ The full E2 and the replay of bench sessions are in the 0.8.0 gate. Both known-f
   with the run floor alone, 19. A run floor generalised to short periods does not reach base64 of sparse data, and a
   bound on the whole text deflated also takes repetition across lines, which tokenizers do not merge: on E2's
   whitespace-heavy output no constant served both. The segments are the text `textTokens` prices character by
-  character. The bound costs about 60 ms on a 1 MB append, 3 ms at 50,000 characters, once per message.
+  character. The arm for short periods covers what neither reaches: whitespace and control characters, which are
+  neither base64 nor punctuation, and periods that alternate classes.
 
-  Measured: `honest-provider.test.ts` passes 7 of 7 (5 of 7 with the run floor alone: the second review's two fail).
-  E2 on the pinned corpus (`dd30101cf`): all 96 runs identical with the run floor to the engine without the fixes, and
-  identical again with the repetition bound added, in every result field and every engine log line (timestamps aside),
-  so the 48 silent runs keep their truncated calls, detection, lag, names and cuts; the two known failures are
-  unchanged. E2's honest runs have no marginal or evidence sample at all, which is why it could not see this.
+  The floor sweep (`floor-sweep.test.ts`, seeded, so it reruns) checks the floor against both tokenizers: every period
+  of 1 to 8 drawn from all ASCII characters and common non-ASCII ones (box drawing, block elements, emoji, CJK,
+  combining marks), 474 units, each at 1,000, 10,000 and 100,000 characters in five layouts (alone, one per line with
+  LF or CRLF, numbered lines, timestamped CRLF lines): 7,110 cases. With them, every case named above and the
+  sparse-data samples. In all 7,280 cases real tokens are 0.5 or more of the floor with both tokenizers. The lowest is
+  0.540 (numbered lines of two spaces); 26 cases fall between 0.54 and 0.6 (numbered whitespace lines, base64 of data
+  with 13 to 21% of bytes set, a CRLF log with blank lines), and the median is 2.25. Before the arm, 81 of the 7,110
+  generated cases were below 0.5. The engine suite runs the sweep at 1,000 and 10,000 characters (about 4 minutes);
+  `FLOOR_SWEEP_FULL=1` adds 100,000 (about 40). This is what was measured, not a bound for every text. The floor costs
+  about 120 ms on a 1 MB append of source code and 175 ms on 1 MB of one character, 6 ms at 50,000 characters, once
+  per message.
+
+  Measured: `honest-provider.test.ts` passes 9 of 9 (8 of 9 on the floor before the arm for short periods: blank CRLF
+  lines read twice take the window to 98,950). E2 on the pinned corpus (`dd30101cf`): all 96 runs identical with the
+  run floor to the engine without the fixes, and identical again with the repetition bound added, and again with the
+  arm for short periods, in every result field and every engine log line (timestamps aside), so the 48 silent runs
+  keep their truncated calls, detection, lag, names and cuts; the two known failures are unchanged. E2's honest runs
+  have no marginal or evidence sample at all, which is why it could not see this.
 - **Left for 0.9.0:**
   - `textTokens` itself. It still budgets runs and other repetition at the overcount (1,285 tokens for 32), which is
     safe for fit and wastes window.
+  - Repetition across lines. The segment bound deflates all of a message's segments together, so the same 64-character
+    hash on 100 lines has a floor of 240 against 3,599 real tokens. That only weakens detection for such appends; it
+    never causes a false one.
   - The provider-switch path (D24). It judges the span since the new provider's own last sample as a chain sum,
     which keeps no floor, so it is judged against the estimate as before.
   - Strong evidence does not join marginal samples, as the outside review also noted. A marginal sample joins a weak

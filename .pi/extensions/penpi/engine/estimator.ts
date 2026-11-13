@@ -112,7 +112,10 @@ export const FLOOR_TOKENS_PER_BYTE = 2;
  * - textTokens with each run of one character (RUN) at 1 + length / 64 (test dot reporters, rules, bars);
  * - the class costs without textTokens' lower bound of length / 8 (text that is mostly spaces);
  * - textTokens with the segments (segmentSlack) at FLOOR_TOKENS_PER_BYTE x their deflated size, when that is less than
- *   their price: runs of letters or digits, short repeated patterns, base64 and hex of sparse data, `-=-=` rules.
+ *   their price: runs of letters or digits, short repeated patterns, base64 and hex of sparse data, `-=-=` rules;
+ * - the text with its runs of a short period (periodRuns) at periodRunCost, and the rest as the segment arm prices it:
+ *   blank CRLF lines, lines of one tab or one space, and other repetition of whitespace, control characters and
+ *   punctuation, alone or next to sparse data.
  */
 export function textTokensFloor(text: string): number {
 	const classes = Math.ceil(classTokens(text));
@@ -123,7 +126,102 @@ export function textTokensFloor(text: string): number {
 		return "";
 	});
 	const runFloor = runs === 0 ? estimate : Math.ceil(textTokens(rest) + runs);
-	return Math.min(estimate, runFloor, classes, estimate - segmentSlack(text));
+	return Math.min(estimate, runFloor, classes, estimate - segmentSlack(text), periodFloor(text));
+}
+
+/** A character's class for a tokenizer's pre-split: 0 whitespace, 1 letter or mark, 2 digit, 3 anything else. */
+function charClass(ch: string): number {
+	if (/\s/u.test(ch)) return 0;
+	if (/[\p{L}\p{M}]/u.test(ch)) return 1;
+	if (/\p{N}/u.test(ch)) return 2;
+	return 3;
+}
+
+/**
+ * The longest period periodRuns looks for, in UTF-16 code units: a unit of up to 8 and its line ending (`\r\n`), so
+ * that lines of a short pattern are one run. The sweep (floor-sweep.test.ts) found `\r\n\r\n\r\n\t` lines at 8.
+ */
+export const PERIOD_MAX = 10;
+/** A run counts from this length and this many periods; shorter repetition (a `});` line twice) is ordinary text. */
+const PERIOD_MIN_LENGTH = 32;
+const PERIOD_MIN_REPEATS = 4;
+/**
+ * The step periodRuns tests at. A run of PERIOD_MIN_LENGTH or more, less its first period (at most PERIOD_MAX), still
+ * spans 22 positions, so it holds a multiple of 16.
+ */
+const PERIOD_STRIDE = 16;
+
+interface PeriodRun {
+	start: number;
+	end: number;
+	period: number;
+}
+
+/**
+ * The runs of a text with a period of 1 to PERIOD_MAX, at least PERIOD_MIN_LENGTH long and PERIOD_MIN_REPEATS periods,
+ * longest first and not overlapping. Left out are runs textTokens already prices near their real count: runs only of
+ * letters or only of digits (the base64 segments take those) and runs only of spaces and tabs (priced per run).
+ */
+function periodRuns(text: string): PeriodRun[] {
+	const n = text.length;
+	const found: PeriodRun[] = [];
+	// Only every PERIOD_STRIDE-th position is tested; a match is widened to its whole run.
+	for (let p = 1; p <= PERIOD_MAX; p++) {
+		let covered = 0;
+		for (let k = PERIOD_STRIDE; k < n; k += PERIOD_STRIDE) {
+			if (k < covered || text.charCodeAt(k) !== text.charCodeAt(k - p)) continue;
+			let a = k;
+			while (a - 1 >= p && text.charCodeAt(a - 1) === text.charCodeAt(a - 1 - p)) a--;
+			let b = k + 1;
+			while (b < n && text.charCodeAt(b) === text.charCodeAt(b - p)) b++;
+			covered = b;
+			const start = a - p;
+			if (b - start >= Math.max(PERIOD_MIN_LENGTH, PERIOD_MIN_REPEATS * p)) found.push({ start, end: b, period: p });
+		}
+	}
+	found.sort((a, b) => b.end - b.start - (a.end - a.start) || a.period - b.period || a.start - b.start);
+	const taken = new Uint8Array(n);
+	const runs: PeriodRun[] = [];
+	for (const r of found) {
+		let free = true;
+		for (let k = r.start; k < r.end && free; k++) if (taken[k]) free = false;
+		if (!free) continue;
+		const unit = text.slice(r.start, r.start + r.period);
+		if (/^[\p{L}\p{M}]+$/u.test(unit) || /^\p{N}+$/u.test(unit) || /^[ \t]+$/.test(unit)) continue;
+		taken.fill(1, r.start, r.end);
+		runs.push(r);
+	}
+	return runs;
+}
+
+/**
+ * A run's floor. Within one character class a tokenizer can merge the whole run, so 1 + length / 64, as for a run of
+ * one character. Across classes it merges at most over one change of class (o200k keeps punctuation and the newlines
+ * after it together), so half a token per change of class in a period.
+ */
+function periodRunCost(text: string, r: PeriodRun): number {
+	const unit = [...text.slice(r.start, r.start + r.period)];
+	let changes = 0;
+	for (let k = 0; k < unit.length; k++) if (charClass(unit[k]) !== charClass(unit[(k + 1) % unit.length])) changes++;
+	const length = r.end - r.start;
+	return changes === 0 ? 1 + length / 64 : (changes * length) / (2 * r.period);
+}
+
+/** The text with its short-period runs at periodRunCost, and the rest as the segment arm prices it. */
+function periodFloor(text: string): number {
+	const runs = periodRuns(text);
+	if (runs.length === 0) return Number.POSITIVE_INFINITY;
+	runs.sort((a, b) => a.start - b.start);
+	let rest = "";
+	let at = 0;
+	let cost = 0;
+	for (const r of runs) {
+		rest += text.slice(at, r.start);
+		cost += periodRunCost(text, r);
+		at = r.end;
+	}
+	rest += text.slice(at);
+	return Math.ceil(classTokens(rest) - segmentSlack(rest) + cost);
 }
 
 /**

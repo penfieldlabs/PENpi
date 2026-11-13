@@ -1,13 +1,13 @@
 /**
  * E3.5: an honest provider is never reported as truncating, with ordinary tool output that the engine's estimate
  * overcounts many times: runs of one character (test dot reporters, rules, stat bars) and other repetition (base64 of
- * a zero-filled file, `-=-=` rules).
+ * a zero-filled file, `-=-=` rules, blank CRLF lines).
  *
  * The provider here counts every request with the real o200k tokenizer (E2's simulator), accepts everything up to
  * the declared window and never truncates. The session is ordinary coding work: source files, `git diff --stat`,
  * a test run that prints one dot per test. Every test expects no detection. Tests 1 and 2 detected in 0.7.0 too;
  * tests 3 and 4 came with ADR 0033 (the marginal pair) before its size guard. Tests 5 and 6 detected in 0.7.0 and
- * with the floor for runs of one character alone.
+ * with the floor for runs of one character alone. Test 7 detected with the floor before its arm for short periods.
  */
 import { readFileSync } from "node:fs";
 import { fauxAssistantMessage, fauxText, fauxToolCall } from "@earendil-works/pi-ai";
@@ -195,6 +195,27 @@ describe("E3.5: an honest provider and ordinary tool output", () => {
 			200_000,
 			[...preload, ...smalls(0, 3), { blob: "rules" }, ...smalls(3, 3), { blob: "rules" }, ...smalls(6, 6)],
 			{ ...big, ...small, rules: report },
+		);
+		expectHonest(r, 200_000);
+	});
+
+	// Whitespace that repeats with a period of two or more: the floor's arm for short periods (textTokensFloor).
+	it("7: a program that prints 1,500 blank CRLF lines, read twice, no detection", async () => {
+		const blob = `Output:\r\n${"\r\n".repeat(1_500)}Done.\r\n`;
+		const r = await session(
+			200_000,
+			[...preload, ...smalls(0, 3), { blob: "crlf" }, ...smalls(3, 3), { blob: "crlf" }, ...smalls(6, 6)],
+			{ ...big, ...small, crlf: blob },
+		);
+		expectHonest(r, 200_000);
+	});
+
+	it("8: a CRLF log with three blank lines after each entry, read twice, no detection", async () => {
+		const blob = Array.from({ length: 300 }, (_, i) => `entry ${i} ok\r\n\r\n\r\n\r\n`).join("");
+		const r = await session(
+			200_000,
+			[...preload, ...smalls(0, 3), { blob: "log" }, ...smalls(3, 3), { blob: "log" }, ...smalls(6, 6)],
+			{ ...big, ...small, log: blob },
 		);
 		expectHonest(r, 200_000);
 	});

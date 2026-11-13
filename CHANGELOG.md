@@ -67,20 +67,22 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
   any stored release-gate session, so the evidence for the fix is its unit test and E2, not the
   gate.
 - **Honest tool output that repeats is no longer reported as silent truncation.** Test dot
-  reporters, rules, progress bars, the bars of `git diff --stat`, base64 of mostly empty files and
-  `-=-=` rules cost many times their real tokens in the engine's estimate: 2,000 dots are 1,285
-  tokens by the estimate and 32 by the o200k and GLM tokenizers, and base64 of a zero-filled
-  3,000-byte file is 2,677 and 500. The engine compares the usage growth a provider reports with
-  what each request appended, so on an honest provider such output could read as most of the
-  append missing. The engine then reported silent truncation, shrank the window for the session,
-  cut the context and named answers as unreliable. The growth check now judges against a floor
-  that prices runs and other repetition close to what tokenizers count, and a sample that reads
-  only a little short joins a detection only when its request is as large as evidence must be
-  (ADR 0033). On 121 samples of honest tool output and 246 of sparse binary data, measured with
-  both tokenizers, real tokens stay at 0.61 or more of the floor. Of the six cases the reviews of
-  0.8.0 found, four date from before 0.8.0: 0.7.0 detects them too. A new engine test on an
-  honest provider counted with the o200k tokenizer passes its seven sessions, and all 96 E2 runs
-  are unchanged.
+  reporters, rules, progress bars, the bars of `git diff --stat`, base64 of mostly empty files,
+  `-=-=` rules and blank CRLF lines cost many times their real tokens in the engine's estimate:
+  2,000 dots are 1,285 tokens by the estimate and 32 by the o200k and GLM tokenizers, and base64
+  of a zero-filled 3,000-byte file is 2,677 and 500. The engine compares the usage growth a
+  provider reports with what each request appended, so on an honest provider such output could
+  read as most of the append missing. The engine then reported silent truncation, shrank the
+  window for the session, cut the context and named answers as unreliable. The growth check now
+  judges against a floor that prices runs, short repeated patterns (whitespace and control
+  characters included) and other repetition close to what tokenizers count, and a sample that
+  reads only a little short joins a detection only when its request is as large as evidence must
+  be (ADR 0033). A seeded sweep of honest text, counted with both tokenizers, checks it: 7,280
+  cases (periods of 1 to 8 characters of any kind in five layouts, at 1,000 to 100,000 characters,
+  and every case the reviews found), all at 0.54 or more of the floor in real tokens. The floor
+  costs about 120 ms on a 1 MB append. Of the eight cases the reviews of 0.8.0 found, at least
+  four date from before 0.8.0: 0.7.0 detects them too. A new engine test on an honest provider
+  counted with the o200k tokenizer passes its nine sessions, and all 96 E2 runs are unchanged.
 - **An answer produced from silently truncated input is named, even when the warning sign before
   it lowered the engine's estimate.** When the engine finds silent truncation, it names every
   answer that came from cut input. A sample that read only a little short still counted toward
