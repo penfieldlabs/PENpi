@@ -16,6 +16,22 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
   - The read tool streams large files, and grep no longer reads every matched file into memory,
     so neither runs out of memory on large files.
   - Internal cursor markers no longer leak into terminal output.
+  - The default model of each provider changed. For `anthropic` it is now Claude Opus 5.5
+    (`claude-opus-5-5`, $4 and $20 per million input and output tokens) instead of Claude Opus
+    4.8 ($5 and $25); upstream's changelog lists the others. Pi uses a provider's default when
+    settings name no model or the saved model is not available. A model saved in settings stays.
+  - The default output limit now leaves 15% of the estimated input unused, and near a full window
+    asks for at most 32,768 output tokens. PENpi's context engine also lowers `max_tokens` to what
+    its learned window leaves, and never raises it, so a request asks for the lower of the two.
+  - Anthropic message threads are on, as upstream has them, for the `anthropic` provider on
+    `api.anthropic.com`: a request sends only the new messages, and the server continues from its
+    previous reply. The server still reports usage for the whole conversation, so the context
+    engine's silent-truncation check works as before. A thread expires 5 minutes after its last
+    request, and Anthropic deletes it no more than 1 hour after its last use. Threads are not
+    eligible for zero data retention or HIPAA. For an organization with HIPAA readiness, Anthropic
+    rejects the thread; Pi then sends the request in full and leaves threads off for the rest of
+    the session. To turn them off, set `"compat": { "supportsMessageThreads": false }` for the
+    `anthropic` provider in `models.json`, or for one model under its `modelOverrides`.
   - Prompt cache warming follows upstream v1.5.1's default, `"idle"`. For models with a
     prompt-cache lifetime, Pi also keeps the cache warm between runs, for up to 30 minutes. It
     sends a refresh only when it expects to save at least $0.05, counting a 15% chance that the
