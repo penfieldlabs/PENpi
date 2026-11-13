@@ -115,7 +115,9 @@ export const FLOOR_TOKENS_PER_BYTE = 2;
  *   their price: runs of letters or digits, short repeated patterns, base64 and hex of sparse data, `-=-=` rules;
  * - the text with its runs of a short period (periodRuns) at periodRunCost, and the rest as the segment arm prices it:
  *   blank CRLF lines, lines of one tab or one space, and other repetition of whitespace, control characters and
- *   punctuation, alone or next to sparse data.
+ *   punctuation, alone or next to sparse data;
+ * - as that, and with each run of whitespace that holds a line break at breakRunCost (breakFloor): blank lines of any
+ *   count, trailing whitespace, indented blank lines, with no period needed.
  */
 export function textTokensFloor(text: string): number {
 	const classes = Math.ceil(classTokens(text));
@@ -126,7 +128,15 @@ export function textTokensFloor(text: string): number {
 		return "";
 	});
 	const runFloor = runs === 0 ? estimate : Math.ceil(textTokens(rest) + runs);
-	return Math.min(estimate, runFloor, classes, estimate - segmentSlack(text), periodFloor(text));
+	const periods = periodRuns(text);
+	return Math.min(
+		estimate,
+		runFloor,
+		classes,
+		estimate - segmentSlack(text),
+		periodFloor(text, periods),
+		breakFloor(text, periods),
+	);
 }
 
 /** A character's class for a tokenizer's pre-split: 0 whitespace, 1 letter or mark, 2 digit, 3 anything else. */
@@ -208,19 +218,64 @@ function periodRunCost(text: string, r: PeriodRun): number {
 }
 
 /** The text with its short-period runs at periodRunCost, and the rest as the segment arm prices it. */
-function periodFloor(text: string): number {
-	const runs = periodRuns(text);
+function periodFloor(text: string, runs: PeriodRun[]): number {
 	if (runs.length === 0) return Number.POSITIVE_INFINITY;
-	runs.sort((a, b) => a.start - b.start);
+	return withoutRuns(text, runs, (piece) => ({ rest: piece, cost: 0 }));
+}
+
+/** Maximal runs of whitespace (spaces, tabs, line breaks, Unicode spaces). */
+const WHITESPACE = /\s+/gu;
+const LINE_BREAK = /[\r\n]/;
+/** One line break and the indentation after it: how ordinary text starts a line, which textTokens prices near its count. */
+const LINE_START = /^(?:\r\n|\r|\n)[^\S\r\n]*$/;
+const BREAK_RUN_BASE = 1.25;
+const BREAK_RUN_PER_UNIT = 1 / 16;
+
+/**
+ * A whitespace run's floor when it holds a line break: tokenizers split it into one or a few pieces and merge
+ * repeated breaks, so a run of any length and mix costs BREAK_RUN_BASE + length x BREAK_RUN_PER_UNIT. Fitted on the
+ * floor sweep (floor-sweep.test.ts), which it keeps at 0.5 or more, with the fewest changes to E2's content.
+ */
+function breakRunCost(run: string): number {
+	return BREAK_RUN_BASE + run.length * BREAK_RUN_PER_UNIT;
+}
+
+/**
+ * As periodFloor, and with each run of whitespace that holds a line break, other than one break and its indentation,
+ * at breakRunCost.
+ */
+function breakFloor(text: string, runs: PeriodRun[]): number {
+	return withoutRuns(text, runs, (piece) => {
+		let cost = 0;
+		const rest = piece.replace(WHITESPACE, (w) => {
+			if (!LINE_BREAK.test(w) || LINE_START.test(w)) return w;
+			cost += breakRunCost(w);
+			return "";
+		});
+		return { rest, cost };
+	});
+}
+
+/**
+ * The floor of a text with its short-period runs at periodRunCost and each piece between them passed through `cut`,
+ * which takes out what it prices itself; the rest as the segment arm prices it.
+ */
+function withoutRuns(text: string, runs: PeriodRun[], cut: (piece: string) => { rest: string; cost: number }): number {
+	const sorted = [...runs].sort((a, b) => a.start - b.start);
 	let rest = "";
 	let at = 0;
 	let cost = 0;
-	for (const r of runs) {
-		rest += text.slice(at, r.start);
+	const take = (piece: string) => {
+		const c = cut(piece);
+		rest += c.rest;
+		cost += c.cost;
+	};
+	for (const r of sorted) {
+		take(text.slice(at, r.start));
 		cost += periodRunCost(text, r);
 		at = r.end;
 	}
-	rest += text.slice(at);
+	take(text.slice(at));
 	return Math.ceil(classTokens(rest) - segmentSlack(rest) + cost);
 }
 

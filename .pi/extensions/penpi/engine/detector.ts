@@ -281,8 +281,8 @@ export function installDetector(core: EngineCore): void {
 				(reference ? sent.cum - reference.cum : sent.appendedText - sent.noticeDrop + sent.noticeAdd) * ratioBefore;
 			const delta = reported - base.reported;
 			// The shortfall is judged against the append's floor (textTokensFloor), which prices runs of one character
-			// and other repetition near what tokenizers count: honest test reporters, rules, bars and base64 of sparse
-			// data otherwise read as most of the append missing.
+			// and other repetition near what tokenizers count: honest test reporters, rules, bars, base64 of sparse
+			// data and blank lines otherwise read as most of the append missing.
 			// D24: at a provider switch the span is a chain sum, which keeps no floor, so it is judged against the
 			// estimate as before (left for 0.9.0).
 			const judged = reference ? grow : Math.max(0, grow - sent.appendedSlack * ratioBefore);

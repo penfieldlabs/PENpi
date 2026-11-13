@@ -7,7 +7,8 @@
  * the declared window and never truncates. The session is ordinary coding work: source files, `git diff --stat`,
  * a test run that prints one dot per test. Every test expects no detection. Tests 1 and 2 detected in 0.7.0 too;
  * tests 3 and 4 came with ADR 0033 (the marginal pair) before its size guard. Tests 5 and 6 detected in 0.7.0 and
- * with the floor for runs of one character alone. Test 7 detected with the floor before its arm for short periods.
+ * with the floor for runs of one character alone. Test 7 detected with the floor before its arm for short periods,
+ * test 9 before its arm for whitespace that holds a line break; tests 10 to 13 are whitespace of that kind too.
  */
 import { readFileSync } from "node:fs";
 import { fauxAssistantMessage, fauxText, fauxToolCall } from "@earendil-works/pi-ai";
@@ -218,5 +219,43 @@ describe("E3.5: an honest provider and ordinary tool output", () => {
 			{ ...big, ...small, log: blob },
 		);
 		expectHonest(r, 200_000);
+	});
+
+	// Whitespace that holds a line break, of any length and with no period: the floor's arm for it.
+	let seed = 987654321;
+	const rnd = () => {
+		seed = (seed * 1103515245 + 12345) % 2147483648;
+		return seed / 2147483648;
+	};
+	const twice = async (name: string, text: string) => {
+		const r = await session(
+			200_000,
+			[...preload, ...smalls(0, 3), { blob: name }, ...smalls(3, 3), { blob: name }, ...smalls(6, 6)],
+			{ ...big, ...small, [name]: text },
+		);
+		expectHonest(r, 200_000);
+	};
+
+	it("9: a counter line, then 7 blank CRLF lines, 400 times, read twice, no detection", async () => {
+		await twice("counter", Array.from({ length: 400 }, (_, i) => `${i}${"\r\n".repeat(8)}`).join(""));
+	});
+
+	it("10: CRLF x5 and a tab, 400 times (period 11), read twice, no detection", async () => {
+		await twice("p11", "\r\n\r\n\r\n\r\n\r\n\t".repeat(400));
+	});
+
+	it("11: CRLF lines with blank stretches of 1 to 15 lines, read twice, no detection", async () => {
+		await twice(
+			"gaps",
+			Array.from({ length: 300 }, (_, i) => `l${i}\r\n${"\r\n".repeat(1 + Math.floor(rnd() * 15))}`).join(""),
+		);
+	});
+
+	it("12: 1,500 blank lines with 0 to 6 trailing spaces, read twice, no detection", async () => {
+		await twice("trail", Array.from({ length: 1500 }, () => `${" ".repeat(Math.floor(rnd() * 7))}\n`).join(""));
+	});
+
+	it("13: 14 blank CRLF lines after each of 150 entries, read twice, no detection", async () => {
+		await twice("blank14", Array.from({ length: 150 }, (_, i) => `ok ${i}\r\n${"\r\n".repeat(14)}`).join(""));
 	});
 });

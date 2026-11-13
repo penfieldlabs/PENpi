@@ -66,6 +66,16 @@ export function sweepUnits(seed = 805): string[] {
 		for (let k = 0; k < 8; k++) out.push(pick(PUNCT, p));
 	}
 	out.push("\r\n", "\t\n", " \n", "\t\r\n", " \r\n", "\r\n\r\n\r\n\t", "  \n", "\n\n\t");
+	// Periods 9 to 32, from a generator of their own: 6 from whitespace and control, 2 from whitespace and
+	// punctuation, 2 from all characters.
+	const r2 = rng(seed + 32);
+	const pick2 = (pool: string[], p: number) =>
+		Array.from({ length: p }, () => pool[Math.floor(r2() * pool.length)]).join("");
+	for (let p = 9; p <= 32; p++) {
+		for (let k = 0; k < 6; k++) out.push(pick2(WHITE, p));
+		for (let k = 0; k < 2; k++) out.push(pick2([...WHITE, ...PUNCT], p));
+		for (let k = 0; k < 2; k++) out.push(pick2(POOL, p));
+	}
 	return [...new Set(out)];
 }
 
@@ -96,6 +106,141 @@ export function generatedCases(sizes = SWEEP_SIZES): SweepCase[] {
 		for (const [layout, make] of Object.entries(LAYOUTS))
 			for (const size of sizes)
 				cases.push({ name: `${JSON.stringify(u)} ${layout} ${size}`, text: () => make(u, size) });
+	return cases;
+}
+
+/** Unicode spaces besides space and tab: NBSP, the U+2000 block, narrow NBSP, medium mathematical space, ideographic. */
+const USPACES = [
+	"\u00a0",
+	..."\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a",
+	"\u202f",
+	"\u205f",
+	"\u3000",
+];
+/** The mixes whitespace stretches are drawn from. */
+const MIXES: Record<string, string[]> = {
+	LF: ["\n"],
+	CRLF: ["\r\n"],
+	CR: ["\r"],
+	"LF and CRLF": ["\n", "\r\n"],
+	"space and LF": [" ", "\n"],
+	"tab and LF": ["\t", "\n"],
+	"space, tab and CRLF": [" ", "\t", "\r\n"],
+	"space, tab, CR and LF": [" ", "\t", "\r", "\n"],
+	"NBSP and LF": ["\u00a0", "\n"],
+	"Unicode spaces and LF": [...USPACES, "\n"],
+	"VT, FF and LF": ["\v", "\f", "\n"],
+	"all whitespace": [" ", "\t", "\r", "\n", "\v", "\f", ...USPACES],
+};
+const BREAK = /[\r\n]/;
+
+/** A text line of 1 to 80 characters: words, numbers and a little punctuation. */
+function textLine(r: () => number): string {
+	const words = [
+		"ok",
+		"INFO",
+		"test",
+		"passed",
+		"x",
+		"value",
+		"=",
+		"42",
+		"src/main.ts",
+		"done",
+		"->",
+		"[1/3]",
+		"line",
+	];
+	const want = 1 + Math.floor(r() * 80);
+	let s = "";
+	while (s.length < want) s += `${s ? " " : ""}${words[Math.floor(r() * words.length)]}`;
+	return s.slice(0, want);
+}
+
+/**
+ * Whitespace that holds a newline, between varying lines, in three families:
+ * - stretches of every length from 1 to 64 code units, of each mix, periodic (a unit repeated) or random, after a
+ *   counter line or a text line of 1 to 80 characters;
+ * - aperiodic lines: random trailing whitespace, random indentation, random blank-line counts;
+ * each about `size` characters.
+ */
+export function whitespaceCases(size = 4_000): SweepCase[] {
+	const cases: SweepCase[] = [];
+	for (const [mixName, mix] of Object.entries(MIXES))
+		for (let length = 1; length <= 64; length++)
+			for (const kind of ["periodic", "random"] as const)
+				for (const head of ["counter", "text"] as const) {
+					const seed = 1_000_003 * length + 7 * kind.length + head.length + mixName.length * 31;
+					cases.push({
+						name: `${length} units of ${mixName}, ${kind}, after ${head} lines`,
+						text: () => {
+							const r = rng(seed);
+							const draw = () => mix[Math.floor(r() * mix.length)];
+							let unit = "";
+							while (unit.length < Math.max(1, Math.min(length, 1 + Math.floor(r() * 8)))) unit += draw();
+							const stretch = () => {
+								let w = "";
+								if (kind === "periodic") while (w.length < length) w += unit;
+								else while (w.length < length) w += draw();
+								w = w.slice(0, length);
+								if (!BREAK.test(w)) w = mix.some((c) => BREAK.test(c)) ? `${w.slice(0, -1)}\n` : `${w}\n`;
+								return w;
+							};
+							let s = "";
+							for (let i = 0; s.length < size; i++) s += `${head === "counter" ? i : textLine(r)}${stretch()}`;
+							return s;
+						},
+					});
+				}
+	const eols: Record<string, (r: () => number) => string> = {
+		LF: () => "\n",
+		CRLF: () => "\r\n",
+		CR: () => "\r",
+		mixed: (r) => ["\n", "\r\n", "\r"][Math.floor(r() * 3)],
+	};
+	const fill = (seed: number, line: (r: () => number, i: number) => string) => () => {
+		const r = rng(seed);
+		let s = "";
+		for (let i = 0; s.length < size; i++) s += line(r, i);
+		return s;
+	};
+	for (const seed of [1, 2, 3])
+		for (const [eolName, eol] of Object.entries(eols)) {
+			for (const most of [1, 2, 4, 8, 16, 32])
+				for (const chars of ["spaces", "spaces and tabs"])
+					for (const body of ["blank", "text"] as const)
+						cases.push({
+							name: `${body} lines, 0 to ${most} trailing ${chars}, ${eolName}, seed ${seed}`,
+							text: fill(seed * 97 + most, (r, _i) => {
+								const pool = chars === "spaces" ? [" "] : [" ", "\t"];
+								const n = Math.floor(r() * (most + 1));
+								const tail = Array.from({ length: n }, () => pool[Math.floor(r() * pool.length)]).join("");
+								return `${body === "text" ? textLine(r) : ""}${tail}${eol(r)}`;
+							}),
+						});
+			for (let depth = 1; depth <= 8; depth++)
+				for (const indent of ["  ", "    ", "\t"])
+					for (const body of ["blank", "text"] as const)
+						cases.push({
+							name: `${body} lines indented 0 to ${depth} x ${JSON.stringify(indent)}, ${eolName}, seed ${seed}`,
+							text: fill(seed * 89 + depth, (r) => {
+								const pad = indent.repeat(Math.floor(r() * (depth + 1)));
+								return `${pad}${body === "text" ? textLine(r) : ""}${eol(r)}`;
+							}),
+						});
+			for (let most = 1; most <= 20; most++)
+				for (const blanks of ["empty", "with trailing whitespace"])
+					cases.push({
+						name: `text lines with 0 to ${most} blank lines ${blanks} between, ${eolName}, seed ${seed}`,
+						text: fill(seed * 83 + most, (r) => {
+							let s = `${textLine(r)}${eol(r)}`;
+							const n = Math.floor(r() * (most + 1));
+							for (let k = 0; k < n; k++)
+								s += `${blanks === "empty" ? "" : " \t".slice(0, Math.floor(r() * 3))}${eol(r)}`;
+							return s;
+						}),
+					});
+		}
 	return cases;
 }
 
@@ -240,4 +385,143 @@ export function namedCases(): SweepCase[] {
 			named.push([`hex of ${n} bytes, ${d}% set`, b.toString("hex")]);
 		}
 	return named.map(([name, text]) => ({ name, text: () => text }));
+}
+
+/**
+ * The second recheck's cases (its round-two measurements, then its sessions 9 to 13), built with its own generator in
+ * its own order, so the texts are the ones it measured.
+ */
+export function recheckCases(): SweepCase[] {
+	const source = repo("packages/coding-agent/src/core/agent-session.ts");
+	let seed = 987654321;
+	const rnd = () => {
+		seed = (seed * 1103515245 + 12345) % 2147483648;
+		return seed / 2147483648;
+	};
+	const pick = <T>(xs: T[]) => xs[Math.floor(rnd() * xs.length)];
+	const join = (n: number, f: (i: number) => string, eol = "\n") =>
+		Array.from({ length: n }, (_, i) => f(i)).join(eol);
+	const measured: Array<[string, () => string]> = [
+		["14 blank CRLF lines after each entry", () => join(150, (i) => `ok ${i}\r\n${"\r\n".repeat(14)}`, "")],
+		["15 blank CRLF lines after each entry", () => join(150, (i) => `ok ${i}\r\n${"\r\n".repeat(15)}`, "")],
+		["7 tab lines after each entry", () => join(300, (i) => `ok ${i}\n${"\t\n".repeat(7)}`, "")],
+		["10 space lines after each entry", () => join(300, (i) => `${i}\n${" \n".repeat(10)}`, "")],
+		["random LF/CRLF blank lines", () => Array.from({ length: 2000 }, () => pick(["\n", "\r\n"])).join("")],
+		["random LF/CRLF/CR blank lines", () => Array.from({ length: 2000 }, () => pick(["\n", "\r\n", "\r"])).join("")],
+		[
+			"blank lines, 0-6 random trailing spaces",
+			() => Array.from({ length: 1500 }, () => `${" ".repeat(Math.floor(rnd() * 7))}\n`).join(""),
+		],
+		[
+			"blank lines, random tabs and spaces, CRLF",
+			() =>
+				Array.from(
+					{ length: 1500 },
+					() => `${Array.from({ length: Math.floor(rnd() * 5) }, () => pick([" ", "\t"])).join("")}\r\n`,
+				).join(""),
+		],
+		[
+			"random whitespace soup (sp tab LF CR VT FF)",
+			() => Array.from({ length: 4000 }, () => pick([" ", "\t", "\n", "\r", "\v", "\f"])).join(""),
+		],
+		[
+			"random LF/tab-LF/space-LF lines",
+			() => Array.from({ length: 2000 }, () => pick(["\n", "\t\n", " \n", "\r\n"])).join(""),
+		],
+		["9 tabs + CRLF lines (period 11)", () => "\t\t\t\t\t\t\t\t\t\r\n".repeat(400)],
+		["10 tabs + LF lines (period 11)", () => "\t\t\t\t\t\t\t\t\t\t\n".repeat(400)],
+		["12 spaces + CRLF lines (period 14)", () => `${" ".repeat(12)}\r\n`.repeat(400)],
+		["CRLF x5 + tab (period 11)", () => "\r\n\r\n\r\n\r\n\r\n\t".repeat(400)],
+		["CRLF x6 + tab CRLF (period 15)", () => "\r\n\r\n\r\n\r\n\r\n\r\n\t\r\n".repeat(300)],
+		["period 13 punct+ws", () => "-- \r\n\t\r\n;; \r\n\r\n".repeat(300)],
+		["period 24 whitespace", () => "\r\n\t\r\n \r\n\t\t\r\n  \r\n\r\n\t\r\n\r\n\r\n".repeat(150)],
+		["CRLF blank lines with a counter every 8", () => join(400, (i) => `${i}${"\r\n".repeat(8)}`, "")],
+		["tab lines with varying tab count", () => join(1500, (i) => "\t".repeat(1 + (i % 7)), "\r\n")],
+		[
+			"indented blank lines in Python (varying depth)",
+			() =>
+				join(
+					600,
+					(i) => (i % 3 === 0 ? `${"    ".repeat(1 + (i % 4))}x_${i} = ${i}` : "    ".repeat(1 + (i % 5))),
+					"\n",
+				),
+		],
+		[
+			"source code with CRLF and doubled blank lines",
+			() =>
+				source
+					.slice(0, 30_000)
+					.replace(/\n/g, "\r\n")
+					.replace(/\r\n\r\n/g, "\r\n\r\n\r\n\r\n"),
+		],
+		["decomposed é repeated", () => "e\u0301".repeat(3000)],
+		[
+			"zalgo combining stacks",
+			() =>
+				Array.from(
+					{ length: 1500 },
+					() =>
+						`a${Array.from({ length: 1 + Math.floor(rnd() * 4) }, () => String.fromCharCode(0x300 + Math.floor(rnd() * 0x6f))).join("")}`,
+				).join(""),
+		],
+		["NFD Vietnamese text repeated lines", () => join(300, () => "Tiếng Việt có dấu".normalize("NFD"))],
+		[
+			"ideographic spaces and LF random",
+			() => Array.from({ length: 2000 }, () => pick(["\u3000", "\n", "\u3000\n"])).join(""),
+		],
+		["NBSP/LF random", () => Array.from({ length: 2000 }, () => pick(["\u00a0", "\n", " "])).join("")],
+		[
+			"zero-width spaces random with LF",
+			() => Array.from({ length: 3000 }, () => pick(["\u200b", "\n", "\u200b\u200b"])).join(""),
+		],
+		[
+			"one 60k line of random '. ' and '.  '",
+			() => Array.from({ length: 20000 }, () => pick([". ", ".  ", ". . "])).join(""),
+		],
+		["one 60k line random box chars", () => Array.from({ length: 30000 }, () => pick(["─", "│", "┼", " "])).join("")],
+		[
+			"one 30k line random whitespace+punct",
+			() => Array.from({ length: 30000 }, () => pick([" ", "\t", ".", ",", ";"])).join(""),
+		],
+		[
+			"random control bytes (latin1 binary, 30% NUL)",
+			() =>
+				Array.from({ length: 6000 }, () =>
+					rnd() < 0.3 ? "\u0000" : String.fromCharCode(1 + Math.floor(rnd() * 31)),
+				).join(""),
+		],
+		[
+			"random NUL/0x01/0x02 binary",
+			() => Array.from({ length: 6000 }, () => pick(["\u0000", "\u0001", "\u0002"])).join(""),
+		],
+		["random NUL/LF", () => Array.from({ length: 6000 }, () => pick(["\u0000", "\n"])).join("")],
+		["random LF/CR/ESC", () => Array.from({ length: 6000 }, () => pick(["\n", "\r", "\u001b"])).join("")],
+		[
+			"mixed: CRLF blank runs of random length 1-15",
+			() => Array.from({ length: 300 }, (_, i) => `l${i}\r\n${"\r\n".repeat(1 + Math.floor(rnd() * 15))}`).join(""),
+		],
+	];
+	// Built in order, as the recheck built them: the random draws run through one generator.
+	const texts = measured.map(([name, f]) => [`recheck: ${name}`, f()] as const);
+	seed = 987654321;
+	const sessions: Array<[string, string]> = [
+		[
+			"session 9: a counter line, then 7 blank CRLF lines, 400 times",
+			Array.from({ length: 400 }, (_, i) => `${i}${"\r\n".repeat(8)}`).join(""),
+		],
+		["session 10: CRLF x5 and a tab, 400 times", "\r\n\r\n\r\n\r\n\r\n\t".repeat(400)],
+		[
+			"session 11: CRLF lines with blank stretches of 1 to 15 lines",
+			Array.from({ length: 300 }, (_, i) => `l${i}\r\n${"\r\n".repeat(1 + Math.floor(rnd() * 15))}`).join(""),
+		],
+		[
+			"session 12: 1,500 blank lines with 0 to 6 trailing spaces",
+			Array.from({ length: 1500 }, () => `${" ".repeat(Math.floor(rnd() * 7))}\n`).join(""),
+		],
+		[
+			"session 13: 14 blank CRLF lines after each of 150 entries",
+			Array.from({ length: 150 }, (_, i) => `ok ${i}\r\n${"\r\n".repeat(14)}`).join(""),
+		],
+	];
+	return [...texts, ...sessions].map(([name, text]) => ({ name, text: () => text }));
 }

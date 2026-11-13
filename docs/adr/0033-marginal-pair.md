@@ -111,6 +111,10 @@ The full E2 and the replay of bench sessions are in the 0.8.0 gate. Both known-f
 - **What a recheck of the floor found.** Whitespace that repeats with a period of two escaped every arm: 1,500 blank
   CRLF lines read 0.19 of the floor in real tokens, lines of one tab 0.19, lines of one space 0.38. Blank CRLF lines
   read twice in a long session detected silent truncation on an honest provider.
+- **What a second recheck found.** Whitespace that holds a line break still escaped where it has no period the arm
+  could see: blank stretches shorter than its 32-unit minimum between short lines, periods of 11 to 24, and
+  aperiodic whitespace (blank lines of random count, random trailing spaces). A counter line, then 7 blank CRLF lines,
+  400 times, read 0.239 of the floor and, read twice, detected silent truncation on an honest provider.
 - **The fixes, in 0.8.0:**
   - The growth check judges the shortfall against a floor of the appended text (`textTokensFloor`;
     `messageFloorSlack` is the difference per message), the least of:
@@ -125,7 +129,11 @@ The full E2 and the replay of bench sessions are in the 0.8.0 gate. Both known-f
       more periods; runs only of letters, only of digits or only of spaces and tabs are left to the other arms.
       Within one character class (whitespace, letters, digits, other) a run costs 1 + length / 64, as a run of one
       character; across classes, half a token per change of class in each period, since a tokenizer merges over at
-      most one change (o200k keeps punctuation and the newlines after it together).
+      most one change (o200k keeps punctuation and the newlines after it together);
+    - as the last, and with each run of whitespace that holds a line break at 1.25 + length / 16, of any length and
+      mix and with no period needed, except one break and the indentation after it (how ordinary text starts a line,
+      which `textTokens` prices near its count). Tokenizers split such a run into one or a few pieces and merge
+      repeated breaks.
 
     The appended size in the log, the ratio and the learned window are unchanged.
   - The pair's marginal side has the evidence side's size guard (`meetsSizeGuard`): a marginal sample expected below
@@ -142,24 +150,34 @@ The full E2 and the replay of bench sessions are in the 0.8.0 gate. Both known-f
   character. The arm for short periods covers what neither reaches: whitespace and control characters, which are
   neither base64 nor punctuation, and periods that alternate classes.
 
-  The floor sweep (`floor-sweep.test.ts`, seeded, so it reruns) checks the floor against both tokenizers: every period
-  of 1 to 8 drawn from all ASCII characters and common non-ASCII ones (box drawing, block elements, emoji, CJK,
-  combining marks), 474 units, each at 1,000, 10,000 and 100,000 characters in five layouts (alone, one per line with
-  LF or CRLF, numbered lines, timestamped CRLF lines): 7,110 cases. With them, every case named above and the
-  sparse-data samples. In all 7,280 cases real tokens are 0.5 or more of the floor with both tokenizers. The lowest is
-  0.540 (numbered lines of two spaces); 26 cases fall between 0.54 and 0.6 (numbered whitespace lines, base64 of data
-  with 13 to 21% of bytes set, a CRLF log with blank lines), and the median is 2.25. Before the arm, 81 of the 7,110
-  generated cases were below 0.5. The engine suite runs the sweep at 1,000 and 10,000 characters (about 4 minutes);
-  `FLOOR_SWEEP_FULL=1` adds 100,000 (about 40). This is what was measured, not a bound for every text. The floor costs
-  about 120 ms on a 1 MB append of source code and 175 ms on 1 MB of one character, 6 ms at 50,000 characters, once
-  per message.
+  The floor sweep (`floor-sweep.test.ts`, seeded, so it reruns) checks the floor against both tokenizers, 15,336 cases:
+  - every period of 1 to 8 drawn from all ASCII characters and common non-ASCII ones (box drawing, block elements,
+    emoji, CJK, combining marks), and periods of 9 to 32 drawn mostly from whitespace and control characters, 714
+    units, each at 1,000, 10,000 and 100,000 characters in five layouts (alone, one per line with LF or CRLF, numbered
+    lines, timestamped CRLF lines);
+  - whitespace stretches of every length from 1 to 64 code units, in 12 mixes of space, tab, CR, LF, NBSP, other
+    Unicode spaces, VT and FF, periodic and random, after counter lines and after text lines of 1 to 80 characters;
+    and lines with random trailing whitespace, random indentation and random blank-line counts;
+  - every case named above, the rechecks' cases and the sparse-data samples.
 
-  Measured: `honest-provider.test.ts` passes 9 of 9 (8 of 9 on the floor before the arm for short periods: blank CRLF
-  lines read twice take the window to 98,950). E2 on the pinned corpus (`dd30101cf`): all 96 runs identical with the
-  run floor to the engine without the fixes, and identical again with the repetition bound added, and again with the
-  arm for short periods, in every result field and every engine log line (timestamps aside), so the 48 silent runs
-  keep their truncated calls, detection, lag, names and cuts; the two known failures are unchanged. E2's honest runs
-  have no marginal or evidence sample at all, which is why it could not see this.
+  On the floor before the arm for line breaks, 327 cases were below 0.5, the lowest 0.214 (26 CRLF units after counter
+  lines); the sweep found the recheck's 0.239 case on its own. Now none is: the lowest is 0.501. Two candidates were
+  measured. The arm for line breaks, fitted on the sweep, closes every case and changes the floor of 53 of 385 E2
+  samples, by 3.0% at most (whitespace-heavy output, then code); counting every run with a break, one break and its
+  indentation included, it changes 143 to 153, by up to 12%. A backstop from the whole text deflated (level 1) does
+  not close the cases at any constant: at 1.5 tokens per byte 54 stay below 0.5 and 64 E2 samples drop by up to 70%;
+  at 5, where it changes one E2 sample, 294 stay below. It takes repetition across lines, which tokenizers do not
+  merge. The engine suite runs the sweep with the periodic cases at 1,000 and 10,000 characters; `FLOOR_SWEEP_FULL=1`
+  adds 100,000. This is what was measured, not a bound for every text. The floor costs about 200 ms on a 1 MB append
+  of source code or of one character, about 10 ms at 50,000 characters, once per message.
+
+  Measured: `honest-provider.test.ts` passes 14 of 14 (13 of 14 on the floor before the arm for line breaks: the
+  counter lines with 7 blank CRLF lines, read twice, take the window to 100,592). E2 on the pinned corpus
+  (`dd30101cf`): all 96 runs identical with the run floor to the engine without the fixes, and identical again with
+  the repetition bound added, with the arm for short periods and with the arm for line breaks, in every result field
+  and every engine log line (timestamps aside), so the 48 silent runs keep their truncated calls, detection, lag,
+  names and cuts; the two known failures are unchanged. E2's honest runs have no marginal or evidence sample at all,
+  which is why it could not see this.
 - **Left for 0.9.0:**
   - `textTokens` itself. It still budgets runs and other repetition at the overcount (1,285 tokens for 32), which is
     safe for fit and wastes window.

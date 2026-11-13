@@ -133,3 +133,26 @@ describe("E3.5: the floor prices runs of a short period, whitespace and control 
 		expect(textTokensFloor(" \t".repeat(100))).toBe(2);
 	});
 });
+
+describe("E3.5: the floor prices whitespace that holds a line break, with no period needed", () => {
+	it("blank lines between short lines fall far below textTokens", () => {
+		// A counter line, then 7 blank CRLF lines, 400 times: real tokens about 1,200 (o200k and GLM).
+		const counter = Array.from({ length: 400 }, (_, i) => `${i}${"\r\n".repeat(8)}`).join("");
+		expect(textTokens(counter)).toBe(5_024);
+		expect(textTokensFloor(counter)).toBe(1_630);
+		const blank14 = Array.from({ length: 150 }, (_, i) => `ok ${i}\r\n${"\r\n".repeat(14)}`).join("");
+		expect(textTokensFloor(blank14)).toBe(849);
+	});
+
+	it("trailing whitespace before a break counts as such a run", () => {
+		const trailing = Array.from({ length: 300 }, (_, i) => `x${i}${" ".repeat(i % 7)}\n`).join("");
+		expect(textTokens(trailing)).toBe(1_170);
+		expect(textTokensFloor(trailing)).toBe(1_047);
+		expect(textTokensFloor("ok  \n\nok")).toBe(2);
+	});
+
+	it("one break and the indentation after it, as ordinary code has, keeps its estimate", () => {
+		for (const text of ["function f() {\n\tconst a = 1;\n\treturn a;\n}\n", "a\n    b\n\t\tc\n"])
+			expect(textTokensFloor(text)).toBe(textTokens(text));
+	});
+});
