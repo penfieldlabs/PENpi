@@ -231,9 +231,11 @@ Notes:
 
 `known-failures.json` lists runs that fail one named criterion within a recorded bound, accepted by decision
 until a PENpi version. Each entry names the run id (exactly; no patterns), the criterion (only
-`C6 detection-lag` is supported), `maxLag`, `until` (a version) and the reason. An entry covers a run only
-when all of these hold: the id matches, that criterion is the run's only failing one, the engine detected at all
-and the lag is at most `maxLag`, and PENpi's version (the root `package.json`) is below `until`.
+`C6 detection-lag` is supported), `maxLag`, `corpus` (the corpus revision it was measured on, 40 hex digits),
+`until` (a version) and the reason. An entry covers a run only when all of these hold: the id matches, the run read
+the entry's corpus (its `corpusRev`), that criterion is the run's only failing one, the engine detected at all and
+the lag is at most `maxLag`, and PENpi's version (the root `package.json`) is below `until`. A run on another
+corpus, such as one with `E2_CORPUS_REV` set, is not excused.
 
 - The run's own `<run>.json` still says FAIL; the criteria and their thresholds do not change.
 - `suite.ts` lets that run's test pass and logs `[E2] KNOWN <id> ...`; `summarize.mjs` counts it as KNOWN

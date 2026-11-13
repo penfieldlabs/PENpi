@@ -49,6 +49,8 @@ function knownReport(runs, fullMatrix) {
 		if (k?.status === "known") return `${head}occurred, lag ${lag}; counted as KNOWN. ${entry.reason}`;
 		if (k?.status === "expired")
 			return `${head}**EXPIRED** at PENpi ${penpi} (lag ${lag}); counted as FAIL: remove the entry, or renew it by decision. ${entry.reason}`;
+		if (m.corpusRev !== entry.corpus)
+			return `${head}measured on corpus ${entry.corpus.slice(0, 9)}, this run read ${m.corpusRev ? m.corpusRev.slice(0, 9) : "no recorded corpus"}: the entry does not apply${m.verdict === "PASS" ? " (the run passed)" : "; counted as FAIL"}. ${entry.reason}`;
 		if (m.verdict === "PASS") return `${head}did not occur (the run passed): remove the entry. ${entry.reason}`;
 		const failing = m.criteria.filter((c) => c.pass === false).map((c) => c.id);
 		return `${head}does not cover this failure (failing: ${failing.join(", ")}; lag ${lag}); counted as FAIL. ${entry.reason}`;
@@ -258,7 +260,7 @@ for (const { dir, engine, runs } of loaded) {
 		"",
 		"## Known failures",
 		"",
-		"Entries of known-failures.json: a run failing one named criterion within a recorded bound, accepted by decision until a PENpi version. The run's own result still says FAIL; the summary counts it as KNOWN.",
+		"Entries of known-failures.json: a run failing one named criterion within a recorded bound, on the corpus revision it was measured on, accepted by decision until a PENpi version. The run's own result still says FAIL; the summary counts it as KNOWN.",
 		"",
 		...knownLines.lines,
 		"",
