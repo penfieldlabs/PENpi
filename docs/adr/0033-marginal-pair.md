@@ -115,6 +115,10 @@ The full E2 and the replay of bench sessions are in the 0.8.0 gate. Both known-f
   could see: blank stretches shorter than its 32-unit minimum between short lines, periods of 11 to 24, and
   aperiodic whitespace (blank lines of random count, random trailing spaces). A counter line, then 7 blank CRLF lines,
   400 times, read 0.239 of the floor and, read twice, detected silent truncation on an honest provider.
+- **What a third recheck found.** Two kinds of honest text read between 0.25 and 0.5 of the floor. Lines of only a
+  comment marker between blank lines (`//` lines, 0.454): o200k takes the marker with the breaks after it, and the
+  arm for line breaks priced only the whitespace. Runs of a non-ASCII character between breaks (`…`, `—`, 0.485):
+  only the run arm priced them, as a separate term of the least. Neither detected end to end.
 - **The fixes, in 0.8.0:**
   - The growth check judges the shortfall against a floor of the appended text (`textTokensFloor`;
     `messageFloorSlack` is the difference per message), the least of:
@@ -133,7 +137,12 @@ The full E2 and the replay of bench sessions are in the 0.8.0 gate. Both known-f
     - as the last, and with each run of whitespace that holds a line break at 1.25 + length / 16, of any length and
       mix and with no period needed, except one break and the indentation after it (how ordinary text starts a line,
       which `textTokens` prices near its count). Tokenizers split such a run into one or a few pieces and merge
-      repeated breaks.
+      repeated breaks. They also take what ends a line with the breaks after it (o200k keeps punctuation and the
+      newlines after it together), so in this arm a run of 4 or more of one character, as above, that only spaces
+      or tabs and a line break follow costs 1 + length / 64, and a marker of 1 to 3 UTF-16 code units that are not
+      letters, digits or whitespace, at the start of a line with no indentation, costs 1.25 + length / 16 together
+      with the whitespace after it, when that holds a line break (`//` comment lines, `>` quote lines, `|` table
+      edges). Indented markers stay out, so the closing brackets of nested code and JSON keep their price.
 
     The appended size in the log, the ratio and the learned window are unchanged.
   - The pair's marginal side has the evidence side's size guard (`meetsSizeGuard`): a marginal sample expected below
@@ -150,7 +159,7 @@ The full E2 and the replay of bench sessions are in the 0.8.0 gate. Both known-f
   character. The arm for short periods covers what neither reaches: whitespace and control characters, which are
   neither base64 nor punctuation, and periods that alternate classes.
 
-  The floor sweep (`floor-sweep.test.ts`, seeded, so it reruns) checks the floor against both tokenizers, 15,336 cases:
+  The floor sweep (`floor-sweep.test.ts`, seeded, so it reruns) checks the floor against both tokenizers, 20,253 cases:
   - every period of 1 to 8 drawn from all ASCII characters and common non-ASCII ones (box drawing, block elements,
     emoji, CJK, combining marks), and periods of 9 to 32 drawn mostly from whitespace and control characters, 714
     units, each at 1,000, 10,000 and 100,000 characters in five layouts (alone, one per line with LF or CRLF, numbered
@@ -158,42 +167,49 @@ The full E2 and the replay of bench sessions are in the 0.8.0 gate. Both known-f
   - whitespace stretches of every length from 1 to 64 code units, in 12 mixes of space, tab, CR, LF, NBSP, other
     Unicode spaces, VT and FF, periodic and random, after counter lines and after text lines of 1 to 80 characters;
     and lines with random trailing whitespace, random indentation and random blank-line counts;
+  - lines of only one of 31 markers (`//`, `#`, `>`, `*`, `|`, `--`, `;`, `%` and others), with no, one or 0 to 3
+    trailing spaces, between 0 to 8 random blank lines, LF and CRLF; and runs of every length from 1 to 64 of 22
+    non-ASCII characters (ellipsis, dashes, box drawing, block elements, dots, CJK, emoji) followed by random spaces
+    or tabs and 1 to 7 breaks;
   - every case named above, the rechecks' cases and the sparse-data samples.
 
   On the floor before the arm for line breaks, 327 cases were below 0.5, the lowest 0.214 (26 CRLF units after counter
-  lines); the sweep found the recheck's 0.239 case on its own. Now none is: the lowest is 0.501. Two candidates were
-  measured. The arm for line breaks, fitted on the sweep, closes every case and changes the floor of 53 of 385 E2
-  samples, by 3.0% at most (whitespace-heavy output, then code); counting every run with a break, one break and its
-  indentation included, it changes 143 to 153, by up to 12%. A backstop from the whole text deflated (level 1) does
-  not close the cases at any constant: at 1.5 tokens per byte 54 stay below 0.5 and 64 E2 samples drop by up to 70%;
-  at 5, where it changes one E2 sample, 294 stay below. It takes repetition across lines, which tokenizers do not
-  merge. The engine suite runs the sweep with the periodic cases at 1,000 and 10,000 characters; `FLOOR_SWEEP_FULL=1`
-  adds 100,000. This is what was measured, not a bound for every text. The floor costs about 200 ms on a 1 MB append
-  of source code or of one character, about 10 ms at 50,000 characters, once per message.
+  lines); the sweep found the recheck's 0.239 case on its own. Two candidates were measured. The arm for line breaks,
+  fitted on the sweep, closes every case and changes the floor of 53 of 385 E2 samples, by 3.0% at most
+  (whitespace-heavy output, then code); counting every run with a break, one break and its indentation included, it
+  changes 143 to 153, by up to 12%. A backstop from the whole text deflated (level 1) does not close the cases at any
+  constant: at 1.5 tokens per byte 54 stay below 0.5 and 64 E2 samples drop by up to 70%; at 5, where it changes one
+  E2 sample, 294 stay below. It takes repetition across lines, which tokenizers do not merge. With the marker lines
+  and non-ASCII runs added, 38 of the 4,917 new cases were below 0.5 on that floor, none below 0.25, the lowest 0.364
+  (`─` runs of 16 between CRLF breaks). Pricing the run or marker of a line with its breaks closes all of them and
+  changes the floor of 71 of 385 E2 samples, by 1.1% at most (top-level closing brackets in code and JSON). Measured
+  against it: pricing every run inside the arm, not only one before a break, changes 49 samples by up to 17.6% (`├──`
+  tree lines); taking indented markers too, 76 by up to 11.6%; markers of up to 64, 79 by up to 2.7%; the run or the
+  marker alone leaves 23 or 15 cases below 0.5. Now none is below: the lowest is 0.501. The engine suite runs the
+  sweep with the periodic cases at 1,000 and 10,000 characters; `FLOOR_SWEEP_FULL=1` adds 100,000. This is what was
+  measured, not a bound for every text. The floor costs, once per message, about 10 ms at 50,000 characters and on a 1
+  MB append about 190 ms of source code, 140 ms of one character, 200 ms of blank lines with random trailing spaces
+  and 290 ms of `//` comment lines between blank lines (the costliest measured); a slower machine took about 1.4 times
+  as long.
 
-  Measured: `honest-provider.test.ts` passes 14 of 14 (13 of 14 on the floor before the arm for line breaks: the
+  Measured: `honest-provider.test.ts` passes 17 of 17 (13 of 14 on the floor before the arm for line breaks: the
   counter lines with 7 blank CRLF lines, read twice, take the window to 100,592). E2 on the pinned corpus
   (`dd30101cf`): all 96 runs identical with the run floor to the engine without the fixes, and identical again with
-  the repetition bound added, with the arm for short periods and with the arm for line breaks, in every result field
-  and every engine log line (timestamps aside), so the 48 silent runs keep their truncated calls, detection, lag,
-  names and cuts; the two known failures are unchanged. E2's honest runs have no marginal or evidence sample at all,
-  which is why it could not see this.
-- **Left for 0.9.0:**
-  - `textTokens` itself. It still budgets runs and other repetition at the overcount (1,285 tokens for 32), which is
-    safe for fit and wastes window.
-  - Repetition across lines. The segment bound deflates all of a message's segments together, so the same 64-character
-    hash on 100 lines has a floor of 240 against 3,599 real tokens. That only weakens detection for such appends; it
-    never causes a false one.
-  - The provider-switch path (D24). It judges the span since the new provider's own last sample as a chain sum,
-    which keeps no floor, so it is judged against the estimate as before.
-  - Strong evidence does not join marginal samples, as the outside review also noted. A marginal sample joins a weak
-    evidence sample, but a strong one acts alone; the ratio restored and the names then depend on D14 catching the
-    marginal sample. No change in 0.8.0.
-- **Detection with marginal samples first restores the ratio from before them.** The marginal samples entered the
-  calibration ratio when judged, like any clean sample.
-- **Tests:** `v080-marginal-pair.test.ts` (each order detects; two marginal samples do not; a clean sample above the
-  maximum in between forgets the marginal one; the rule off detects nothing), `honest-provider.test.ts` (the four
-  sessions above, the two of the second review and a control, on an honest provider counted with o200k: no
-  detection), and the unit tests (`completesMarginalPair`, `clearsMarginals`, `meetsSizeGuard`; `textTokensFloor` and
-  `messageFloorSlack` in
+  the repetition bound added, with the arm for short periods, with the arm for line breaks and with the run or marker
+  of a line priced with its breaks, in every result field and every engine log line (timestamps aside), so the 48
+  silent runs keep their truncated calls, detection, lag, names and cuts; the two known failures are unchanged. E2's
+  honest runs have no marginal or evidence sample at all, which is why it could not see this. - **Left for 0.9.0:** -
+  `textTokens` itself. It still budgets runs and other repetition at the overcount (1,285 tokens for 32), which is
+  safe for fit and wastes window. - Repetition across lines. The segment bound deflates all of a message's segments
+  together, so the same 64-character hash on 100 lines has a floor of 240 against 3,599 real tokens. That only weakens
+  detection for such appends; it never causes a false one. - The provider-switch path (D24). It judges the span since
+  the new provider's own last sample as a chain sum, which keeps no floor, so it is judged against the estimate as
+  before. - Strong evidence does not join marginal samples, as the outside review also noted. A marginal sample joins
+  a weak evidence sample, but a strong one acts alone; the ratio restored and the names then depend on D14 catching
+  the marginal sample. No change in 0.8.0. - **Detection with marginal samples first restores the ratio from before
+  them.** The marginal samples entered the calibration ratio when judged, like any clean sample. - **Tests:**
+  `v080-marginal-pair.test.ts` (each order detects; two marginal samples do not; a clean sample above the maximum in
+  between forgets the marginal one; the rule off detects nothing), `honest-provider.test.ts` (the four sessions above,
+  the two of the second review and a control, on an honest provider counted with o200k: no detection), and the unit
+  tests (`completesMarginalPair`, `clearsMarginals`, `meetsSizeGuard`; `textTokensFloor` and `messageFloorSlack` in
   `engine/estimator.test.ts`).

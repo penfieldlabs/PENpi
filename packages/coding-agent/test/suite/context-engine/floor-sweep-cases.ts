@@ -5,6 +5,8 @@
  *   punctuation, letters and digits) and common non-ASCII ones (box drawing, block elements, symbols, emoji, CJK,
  *   Hangul, accented and combining marks, invisible spaces), each repeated to 1,000, 10,000 and 100,000 characters
  *   in five layouts: alone, one per line with LF, one per line with CRLF, numbered lines, and timestamped CRLF lines.
+ * - Lines of only a comment, quote or table marker between random blank lines, and runs of 1 to 64 of one non-ASCII
+ *   character (ellipsis, dashes, box drawing, blocks, dots, CJK, emoji) between random whitespace and breaks.
  * - Named: the cases the reviews of 0.8.0 and the floor's own measurements found (test reporters, rules, bars, base64
  *   and hex of zero, sparse and random data, blank and whitespace lines, tables, logs, data, CJK, emoji, source).
  */
@@ -524,4 +526,289 @@ export function recheckCases(): SweepCase[] {
 		],
 	];
 	return [...texts, ...sessions].map(([name, text]) => ({ name, text: () => text }));
+}
+
+/**
+ * Lines that hold only a marker (comment, quote, table or list punctuation), with no, one or 0 to 3 trailing spaces,
+ * between 0 to `most` blank lines drawn at random, LF and CRLF: tokenizers take the marker and the breaks after it as
+ * one or two tokens.
+ */
+const MARKERS = [
+	"//",
+	"#",
+	">",
+	"*",
+	" *",
+	"|",
+	"--",
+	";",
+	"%",
+	"##",
+	";;",
+	"::",
+	"/*",
+	"*/",
+	"-->",
+	"'",
+	'"',
+	"REM",
+	"+",
+	"=",
+	"~",
+	"^",
+	"@",
+	"$",
+	"!",
+	":",
+	">>",
+	"%%",
+	"-",
+	"\\",
+	"`",
+];
+
+export function markerLineCases(size = 4_000): SweepCase[] {
+	const cases: SweepCase[] = [];
+	for (const m of MARKERS)
+		for (const trail of ["none", "one space", "0-3 spaces"])
+			for (const most of [0, 1, 2, 4, 8])
+				for (const eol of ["\n", "\r\n"])
+					for (const seed of [1, 2])
+						cases.push({
+							name: `${JSON.stringify(m)} lines, trailing ${trail}, 0 to ${most} blank lines between, ${eol === "\n" ? "LF" : "CRLF"}, seed ${seed}`,
+							text: () => {
+								const r = rng(seed * 7919 + most * 31 + m.length * 131 + trail.length);
+								let s = "";
+								while (s.length < size) {
+									const t =
+										trail === "none" ? "" : trail === "one space" ? " " : " ".repeat(Math.floor(r() * 4));
+									s += `${m}${t}${eol}${eol.repeat(Math.floor(r() * (most + 1)))}`;
+								}
+								return s;
+							},
+						});
+	return cases;
+}
+
+/** Runs of 1 to 64 of one non-ASCII character, each followed by random spaces or tabs and 1 to 7 LF or CRLF breaks. */
+const NON_ASCII = [
+	"…",
+	"—",
+	"–",
+	"‒",
+	"─",
+	"━",
+	"═",
+	"│",
+	"█",
+	"▓",
+	"░",
+	"▪",
+	"·",
+	"•",
+	"・",
+	"‥",
+	"。",
+	"～",
+	"中",
+	"😀",
+	"🚀",
+	"✅",
+];
+
+export function nonAsciiRunCases(size = 4_000): SweepCase[] {
+	const cases: SweepCase[] = [];
+	for (const ch of NON_ASCII)
+		for (let length = 1; length <= 64; length++)
+			for (const eol of ["\n", "\r\n"])
+				cases.push({
+					name: `${JSON.stringify(ch)} runs of ${length}, with breaks and whitespace, ${eol === "\n" ? "LF" : "CRLF"}`,
+					text: () => {
+						const r = rng(length * 104729 + (ch.codePointAt(0) ?? 0) + eol.length);
+						let s = "";
+						while (s.length < size) {
+							const ws = r() < 0.5 ? "" : [" ", "  ", "\t", " \t"][Math.floor(r() * 4)];
+							s += `${ch.repeat(length)}${ws}${eol.repeat(1 + Math.floor(r() * 7))}`;
+						}
+						return s;
+					},
+				});
+	return cases;
+}
+
+/**
+ * The third recheck's cases (its two rounds of measurements, each from its own generator, then its sessions 14 to
+ * 16), built in its order, so the texts are the ones it measured.
+ */
+export function thirdRecheckCases(): SweepCase[] {
+	const src = repo("packages/coding-agent/src/core/agent-session.ts");
+	const b64zero = Buffer.alloc(1500).toString("base64");
+	const rep = (n: number, f: (i: number) => string) => Array.from({ length: n }, (_, i) => f(i)).join("");
+	const lcg = (seed: number) => () => {
+		seed = (seed * 1103515245 + 12345) % 2147483648;
+		return seed / 2147483648;
+	};
+	// Built in insertion order: the random draws of a round run through one generator.
+	const built = (prefix: string, cases: Record<string, () => string>) =>
+		Object.entries(cases).map(([name, f]) => [`${prefix}${name}`, f()] as const);
+
+	let rnd = lcg(24681357);
+	let pick = <T>(xs: T[]) => xs[Math.floor(rnd() * xs.length)];
+	let cases: Record<string, () => string> = {};
+	// 1. Near 19 units after counter lines, several mixes, several lengths.
+	for (const L of [16, 17, 18, 19, 20, 21, 22, 24]) {
+		cases[`counter + ${L} units CRLF-ish (CRLF pairs, odd: +space)`] = () =>
+			rep(400, (i) => `${i}${"\r\n".repeat(Math.floor(L / 2))}${L % 2 ? " " : ""}`);
+		cases[`counter + ${L} LF`] = () => rep(400, (i) => `${i}${"\n".repeat(L)}`);
+		cases[`counter + ${L} units ' \\n'`] = () => rep(400, (i) => `${i}${" \n".repeat(Math.floor(L / 2))}`);
+	}
+	// 2. Punctuation that merges with the breaks after it.
+	for (const p of ["}", ")", ";", ".", "!", ":", "]", ","])
+		for (const k of [2, 4, 8, 10]) cases[`'${p}' + ${k} CRLF`] = () => rep(400, () => `${p}${"\r\n".repeat(k)}`);
+	for (const k of [3, 6, 9])
+		cases[`code close braces + ${k} blank LF lines`] = () =>
+			rep(300, (i) => `\t}${"\n".repeat(k)}${i % 2 ? "" : "\t"}`);
+	// 3. What "leave out one break and its indentation" lets through.
+	for (const sp of [
+		["\u3000"],
+		["\u00a0"],
+		["\u2003"],
+		["\u3000", "\u00a0", "\u2003", "\u2009"],
+		["\t", " "],
+		["\u00a0", " "],
+	])
+		for (const k of [3, 8, 16, 30])
+			cases[`line + break + ${k} indent of ${JSON.stringify(sp.join(""))}`] = () =>
+				rep(400, (i) => `x${i % 10}\n${rep(k, () => pick(sp))}`);
+	cases["one break + 60 tabs indentation, short lines"] = () => rep(200, () => `x\n${"\t".repeat(60)}`);
+	cases["one break + 60 spaces indentation, short lines"] = () => rep(200, () => `x\n${" ".repeat(60)}`);
+	cases["CR alone + 20 spaces"] = () => rep(400, (i) => `${i}\r${" ".repeat(20)}`);
+	// 4. Unicode line separators and other breaks the arm does not count as breaks.
+	for (const [name, set] of [
+		["U+2028", ["\u2028"]],
+		["U+2029", ["\u2029"]],
+		["NEL", ["\u0085"]],
+		["VT/FF", ["\u000b", "\u000c"]],
+		["U+2028/U+2029/NEL mix", ["\u2028", "\u2029", "\u0085"]],
+		["U+2028 + spaces", ["\u2028", " ", " "]],
+		["NEL + LF mix", ["\u0085", "\n"]],
+		["VT/FF/LF mix", ["\u000b", "\u000c", "\n"]],
+		["FEFF/LF mix", ["\ufeff", "\n"]],
+	] as [string, string[]][]) {
+		cases[`counter + 12 random of ${name}`] = () => rep(400, (i) => `${i}${rep(12, () => pick(set))}`);
+		cases[`2000 random of ${name}`] = () => rep(2000, () => pick(set));
+	}
+	// 5. Whitespace runs broken into pieces by non-whitespace the tokenizer may merge.
+	cases["blank lines each holding a ZWSP"] = () => rep(1500, () => (rnd() < 0.5 ? "\u200b\r\n" : "\u200b\n"));
+	cases["blank lines each holding a BOM"] = () => rep(1500, () => pick(["\ufeff\r\n", "\ufeff\n"]));
+	cases["blank lines each holding a soft hyphen"] = () =>
+		rep(1500, () => pick(["\u00ad\r\n", "\u00ad\n", "\u00ad\n\n"]));
+	cases["blank lines each holding an ESC[0m"] = () =>
+		rep(1000, () => pick(["\u001b[0m\r\n", "\u001b[0m\n\n", "\u001b[0m\n"]));
+	cases["blank lines each holding a NUL"] = () => rep(1500, () => pick(["\u0000\r\n", "\u0000\n", "\u0000\n\n"]));
+	cases["blank lines each with a lone '>' (quoted email)"] = () =>
+		rep(1500, () => pick([">\r\n", ">\n", "> \n", ">\n\n"]));
+	cases["blank lines each with '#' (shell comments)"] = () => rep(1500, () => pick(["#\n", "# \n", "#\n\n", "#\r\n"]));
+	cases["blank lines each with '//'"] = () => rep(1500, () => pick(["//\n", "// \n", "//\n\n"]));
+	cases["blank lines each with '*' (doc comment)"] = () => rep(1500, () => pick([" *\n", " * \n", " *\n\n"]));
+	cases["blank lines each with '|' table edges"] = () => rep(1500, () => pick(["|\n", "| |\n", "|\r\n", "|  |\n"]));
+	// 6. Mixes of the arms in one append.
+	cases["base64 zeros + blank CRLF stretches"] = () =>
+		rep(20, (i) => `${b64zero.slice(0, 200)}\r\n${"\r\n".repeat(3 + (i % 9))}`);
+	cases["dot runs (8-30) + blank lines"] = () =>
+		rep(300, (i) => `${".".repeat(8 + (i % 23))}${"\n".repeat(2 + (i % 5))}`);
+	cases["ellipsis runs + blank CRLF"] = () =>
+		rep(300, (i) => `${"…".repeat(4 + (i % 12))}${"\r\n".repeat(2 + (i % 6))}`);
+	cases["box rules (4-31) + blank lines"] = () =>
+		rep(300, (i) => `${"═".repeat(4 + (i % 28))}${"\n".repeat(2 + (i % 4))}`);
+	cases["-=-= rules + random blank lines + base64 zeros"] = () =>
+		rep(
+			100,
+			(i) =>
+				`${"-=".repeat(10 + (i % 25))}${"\n".repeat(1 + Math.floor(rnd() * 6))}${i % 3 ? "" : b64zero.slice(0, 120)}\n`,
+		);
+	cases["test dots + CRLF blanks + spaces"] = () =>
+		rep(200, (i) => `${".".repeat(5 + (i % 50))}${" ".repeat(i % 5)}${"\r\n".repeat(1 + (i % 7))}`);
+	cases["hex zeros spaced + blank lines"] = () =>
+		rep(200, (i) => `${"00 ".repeat(8 + (i % 8))}${"\n".repeat(2 + (i % 5))}`);
+	// 7. Anything else.
+	cases["source with all-blank-line-heavy CRLF and trailing spaces"] = () =>
+		src
+			.slice(0, 30_000)
+			.split("\n")
+			.map((l) => `${l}${" ".repeat(Math.floor(rnd() * 4))}${"\r\n".repeat(1 + Math.floor(rnd() * 3))}`)
+			.join("");
+	cases["markdown with hard-break double spaces"] = () => rep(800, (i) => `word ${i}  \n`);
+	cases["csv with empty fields"] = () => rep(800, () => ",,,,,,,,,,,,\r\n");
+	cases["tsv of empty fields"] = () => rep(800, () => "\t\t\t\t\t\t\t\t\t\t\t\r\n");
+	cases["random whitespace soup incl Unicode separators"] = () =>
+		rep(4000, () => pick([" ", "\t", "\n", "\r", "\u2028", "\u0085", "\u00a0", "\u3000"]));
+	cases["JSON pretty-printed empty arrays"] = () => rep(300, (i) => `${"  ".repeat(1 + (i % 6))}"k${i}": [],\n`);
+	cases["YAML of empty values"] = () => rep(600, (i) => `${"  ".repeat(i % 5)}k${i}:\n`);
+	cases["diff of whitespace-only changes"] = () => rep(400, (i) => `-${" ".repeat(i % 9)}\n+${"\t".repeat(i % 4)}\n`);
+
+	const first = built("third recheck: ", cases);
+
+	rnd = lcg(24681357);
+	pick = <T>(xs: T[]) => xs[Math.floor(rnd() * xs.length)];
+	cases = {};
+	const marks = [
+		"//",
+		"--",
+		"##",
+		"#",
+		"%",
+		"%%",
+		";;",
+		"::",
+		"'",
+		'"""',
+		"*",
+		" *",
+		"/*",
+		"-->",
+		"!",
+		"REM",
+		">",
+		">>",
+		"|",
+		"+",
+		"=",
+		"~",
+		"^",
+		"@",
+		"$",
+	];
+	for (const m of marks) {
+		cases[`random mix of '${m}' lines`] = () => rep(1500, () => pick([`${m}\n`, `${m} \n`, `${m}\n\n`]));
+		cases[`random mix of '${m}' lines CRLF`] = () =>
+			rep(1500, () => pick([`${m}\r\n`, `${m} \r\n`, `${m}\r\n\r\n`, `${m}\r\n\r\n\r\n`]));
+		cases[`'${m}' + random 0-3 spaces + LF`] = () => rep(1500, () => `${m}${" ".repeat(Math.floor(rnd() * 4))}\n`);
+	}
+	for (const ch of ["…", "—", "─", "═", "・", "‥", "·", "•", "。", "～", "‒", "━", "▪", "█", "░"])
+		for (const [eol, nm] of [
+			["\n", "LF"],
+			["\r\n", "CRLF"],
+		])
+			cases[`'${ch}' runs 4-31 + 2-7 ${nm} breaks`] = () =>
+				rep(300, () => `${ch.repeat(4 + Math.floor(rnd() * 28))}${eol.repeat(2 + Math.floor(rnd() * 6))}`);
+	cases["ellipsis runs + blank CRLF (as round 3)"] = () =>
+		rep(300, (i) => `${"…".repeat(4 + (i % 12))}${"\r\n".repeat(2 + (i % 6))}`);
+	cases["ellipsis 4-8 + 2-3 CRLF"] = () =>
+		rep(500, () => `${"…".repeat(4 + Math.floor(rnd() * 5))}${"\r\n".repeat(2 + Math.floor(rnd() * 2))}`);
+	cases["ellipsis 4-31 + 1 LF (one break only)"] = () => rep(500, () => `${"…".repeat(4 + Math.floor(rnd() * 28))}\n`);
+	cases["middle dots 4-31 + random spaces + LF"] = () =>
+		rep(500, () => `${"·".repeat(4 + Math.floor(rnd() * 28))}${" ".repeat(Math.floor(rnd() * 4))}\n`);
+	const second = built("third recheck, second round: ", cases);
+
+	rnd = lcg(987654321);
+	const s14 = rep(1500, () => pick(["//\n", "// \n", "//\n\n"]));
+	const s15 = rep(300, (i) => `${"…".repeat(4 + (i % 12))}${"\r\n".repeat(2 + (i % 6))}`);
+	const s16 = rep(1500, () => pick(["//\n", "// \n", "//\n\n"]));
+	const sessions = [
+		["session 14: 1,500 random '//' blank comment lines", s14],
+		["session 15: ellipsis runs between blank CRLF lines", s15],
+		["session 16: '//' lines, the second draw", s16],
+	] as const;
+	return [...first, ...second, ...sessions].map(([name, text]) => ({ name, text: () => text }));
 }

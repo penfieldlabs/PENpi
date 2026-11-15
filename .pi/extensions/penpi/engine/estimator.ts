@@ -117,7 +117,9 @@ export const FLOOR_TOKENS_PER_BYTE = 2;
  *   blank CRLF lines, lines of one tab or one space, and other repetition of whitespace, control characters and
  *   punctuation, alone or next to sparse data;
  * - as that, and with each run of whitespace that holds a line break at breakRunCost (breakFloor): blank lines of any
- *   count, trailing whitespace, indented blank lines, with no period needed.
+ *   count, trailing whitespace, indented blank lines, with no period needed; and with a run of one character that
+ *   ends a line, or a short marker that starts one, priced with the breaks after it: rules and ellipses between
+ *   blank lines, `//` and `#` comment lines, `>` quote lines.
  */
 export function textTokensFloor(text: string): number {
 	const classes = Math.ceil(classTokens(text));
@@ -230,6 +232,16 @@ const LINE_BREAK = /[\r\n]/;
 const LINE_START = /^(?:\r\n|\r|\n)[^\S\r\n]*$/;
 const BREAK_RUN_BASE = 1.25;
 const BREAK_RUN_PER_UNIT = 1 / 16;
+/** A run of RUN that ends a line: only spaces or tabs and then a line break follow it. */
+const RUN_BEFORE_BREAK = /([^A-Za-z0-9 \t\r\n])\1{3,}(?=[^\S\r\n]*[\r\n])/g;
+/**
+ * A marker of characters that are not letters, digits or whitespace (`//`, `#`, `>`, `|`, `-->`) at the start of a
+ * line, with no indentation, and the whitespace after it. Indented markers stay out, so the closing brackets of nested
+ * code and JSON keep their price.
+ */
+const MARKER_LINE = /(?<=^|[\r\n])([^\s\p{L}\p{N}]{1,3})\s+/gu;
+/** The longest marker MARKER_LINE takes, in UTF-16 code units: an emoji counts two. */
+const MARKER_MAX = 3;
 
 /**
  * A whitespace run's floor when it holds a line break: tokenizers split it into one or a few pieces and merge
@@ -242,16 +254,29 @@ function breakRunCost(run: string): number {
 
 /**
  * As periodFloor, and with each run of whitespace that holds a line break, other than one break and its indentation,
- * at breakRunCost.
+ * at breakRunCost. Tokenizers take what ends a line with the breaks after it (o200k keeps punctuation and the line
+ * breaks after it together), so before that, a run of one character that ends a line costs 1 + length / 64, as in
+ * RUN, and a marker at the start of a line with whitespace after it that holds a line break (`//` comment lines,
+ * `>` quote lines, `|` table edges) costs breakRunCost of the marker and the whitespace together.
  */
 function breakFloor(text: string, runs: PeriodRun[]): number {
 	return withoutRuns(text, runs, (piece) => {
 		let cost = 0;
-		const rest = piece.replace(WHITESPACE, (w) => {
-			if (!LINE_BREAK.test(w) || LINE_START.test(w)) return w;
-			cost += breakRunCost(w);
-			return "";
-		});
+		const rest = piece
+			.replace(RUN_BEFORE_BREAK, (run) => {
+				cost += 1 + run.length / 64;
+				return "";
+			})
+			.replace(MARKER_LINE, (line, marker: string) => {
+				if (marker.length > MARKER_MAX || !LINE_BREAK.test(line)) return line;
+				cost += breakRunCost(line);
+				return "";
+			})
+			.replace(WHITESPACE, (w) => {
+				if (!LINE_BREAK.test(w) || LINE_START.test(w)) return w;
+				cost += breakRunCost(w);
+				return "";
+			});
 		return { rest, cost };
 	});
 }

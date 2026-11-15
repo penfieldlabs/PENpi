@@ -68,24 +68,28 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
   gate.
 - **Honest tool output that repeats is no longer reported as silent truncation.** Test dot
   reporters, rules, progress bars, the bars of `git diff --stat`, base64 of mostly empty files,
-  `-=-=` rules, blank CRLF lines and blank lines between short lines cost many times their real
-  tokens in the engine's estimate: 2,000 dots are 1,285 tokens by the estimate and 32 by the o200k
-  and GLM tokenizers, and base64 of a zero-filled 3,000-byte file is 2,677 and 500. The engine
-  compares the usage growth a provider reports with what each request appended, so on an honest
-  provider such output could read as most of the append missing. The engine then reported silent
-  truncation, shrank the window for the session, cut the context and named answers as unreliable.
-  The growth check now judges against a floor that prices runs, short repeated patterns
-  (whitespace and control characters included), whitespace that holds a line break, and other
-  repetition close to what tokenizers count, and a sample that reads only a little short joins a
-  detection only when its request is as large as evidence must be (ADR 0033). A seeded sweep of
-  honest text, counted with both tokenizers, checks it: 15,336 cases (periods of 1 to 32
-  characters in five layouts, at 1,000 to 100,000 characters; whitespace stretches of 1 to 64
-  characters in 12 mixes between varying lines; random trailing whitespace, indentation and blank
-  lines; every case the reviews found), all at 0.5 or more of the floor in real tokens. That is
-  what was measured, not a bound for every text. The floor costs about 200 ms on a 1 MB append. Of
-  the cases the reviews of 0.8.0 found, at least four date from before 0.8.0: 0.7.0 detects them
-  too. A new engine test on an honest provider counted with the o200k tokenizer passes its
-  fourteen sessions, and all 96 E2 runs are unchanged.
+  `-=-=` rules, blank CRLF lines, blank lines between short lines and `//` comment lines cost many
+  times their real tokens in the engine's estimate: 2,000 dots are 1,285 tokens by the estimate
+  and 32 by the o200k and GLM tokenizers, and base64 of a zero-filled 3,000-byte file is 2,677 and
+  500. The engine compares the usage growth a provider reports with what each request appended, so
+  on an honest provider such output could read as most of the append missing. The engine then
+  reported silent truncation, shrank the window for the session, cut the context and named answers
+  as unreliable. The growth check now judges against a floor that prices runs, short repeated
+  patterns (whitespace and control characters included), whitespace that holds a line break (with
+  a run of one character that ends the line before it, or a short marker that starts it, such as
+  `//` or `>`), and other repetition close to what tokenizers count, and a sample that reads only
+  a little short joins a detection only when its request is as large as evidence must be (ADR
+  0033). A seeded sweep of honest text, counted with both tokenizers, checks it: 20,253 cases
+  (periods of 1 to 32 characters in five layouts, at 1,000 to 100,000 characters; whitespace
+  stretches of 1 to 64 characters in 12 mixes between varying lines; random trailing whitespace,
+  indentation and blank lines; lines of only a comment, quote or table marker between random blank
+  lines; runs of 1 to 64 of one non-ASCII character between breaks; every case the reviews found),
+  all at 0.5 or more of the floor in real tokens. That is what was measured, not a bound for every
+  text. The floor costs about 200 ms on a 1 MB append and about 300 ms on 1 MB of comment-marker
+  lines; a slower machine takes up to about 1.4 times that. Of the cases the reviews of 0.8.0
+  found, at least four date from before 0.8.0: 0.7.0 detects them too. A new engine test on an
+  honest provider counted with the o200k tokenizer passes its seventeen sessions, and all 96 E2
+  runs are unchanged.
 - **An answer produced from silently truncated input is named, even when the warning sign before
   it lowered the engine's estimate.** When the engine finds silent truncation, it names every
   answer that came from cut input. A sample that read only a little short still counted toward

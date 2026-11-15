@@ -9,6 +9,8 @@
  * tests 3 and 4 came with ADR 0033 (the marginal pair) before its size guard. Tests 5 and 6 detected in 0.7.0 and
  * with the floor for runs of one character alone. Test 7 detected with the floor before its arm for short periods,
  * test 9 before its arm for whitespace that holds a line break; tests 10 to 13 are whitespace of that kind too.
+ * Tests 14 to 16 are lines of only a comment marker and runs of one non-ASCII character between line breaks, which
+ * that arm prices with the breaks after them.
  */
 import { readFileSync } from "node:fs";
 import { fauxAssistantMessage, fauxText, fauxToolCall } from "@earendil-works/pi-ai";
@@ -222,11 +224,11 @@ describe("E3.5: an honest provider and ordinary tool output", () => {
 	});
 
 	// Whitespace that holds a line break, of any length and with no period: the floor's arm for it.
-	let seed = 987654321;
-	const rnd = () => {
+	const lcg = (seed: number) => () => {
 		seed = (seed * 1103515245 + 12345) % 2147483648;
 		return seed / 2147483648;
 	};
+	const rnd = lcg(987654321);
 	const twice = async (name: string, text: string) => {
 		const r = await session(
 			200_000,
@@ -257,5 +259,39 @@ describe("E3.5: an honest provider and ordinary tool output", () => {
 
 	it("13: 14 blank CRLF lines after each of 150 entries, read twice, no detection", async () => {
 		await twice("blank14", Array.from({ length: 150 }, (_, i) => `ok ${i}\r\n${"\r\n".repeat(14)}`).join(""));
+	});
+
+	// Lines of only a comment marker, and non-ASCII runs, between line breaks: tokenizers take the marker or the run
+	// with the breaks after it, and the floor's arm for line breaks prices them with it.
+	const third = lcg(987654321);
+	const slashes = () =>
+		Array.from({ length: 1500 }, () => ["//\n", "// \n", "//\n\n"][Math.floor(third() * 3)]).join("");
+	const ellipses = () =>
+		Array.from({ length: 300 }, (_, i) => `${"…".repeat(4 + (i % 12))}${"\r\n".repeat(2 + (i % 6))}`).join("");
+
+	it("14: 1,500 random '//' blank comment lines, read twice, no detection", async () => {
+		await twice("slashes", slashes());
+	});
+
+	it("15: ellipsis runs between blank CRLF lines, read twice, no detection", async () => {
+		await twice("dots", ellipses());
+	});
+
+	it("16: both, alternating in one session, no detection", async () => {
+		const a = slashes();
+		const b = ellipses();
+		const steps = [
+			...preload,
+			...smalls(0, 2),
+			{ blob: "a" },
+			...smalls(2, 2),
+			{ blob: "b" },
+			...smalls(4, 2),
+			{ blob: "a" },
+			...smalls(6, 2),
+			{ blob: "b" },
+			...smalls(8, 4),
+		];
+		expectHonest(await session(200_000, steps, { ...big, ...small, a, b }), 200_000);
 	});
 });

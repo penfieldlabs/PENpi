@@ -155,4 +155,26 @@ describe("E3.5: the floor prices whitespace that holds a line break, with no per
 		for (const text of ["function f() {\n\tconst a = 1;\n\treturn a;\n}\n", "a\n    b\n\t\tc\n"])
 			expect(textTokensFloor(text)).toBe(textTokens(text));
 	});
+
+	it("a marker that starts a line, or a run that ends one, is priced with the breaks after it", () => {
+		const rep = (n: number, f: (i: number) => string) => Array.from({ length: n }, (_, i) => f(i)).join("");
+		// `//` comment lines between blank lines: 1,500 o200k tokens, 3,566 by textTokens and the arms before this.
+		const slashes = rep(1500, (i) => ["//\n", "// \n", "//\n\n"][i % 3]);
+		expect(textTokens(slashes)).toBe(3_566);
+		expect(textTokensFloor(slashes)).toBe(2_219);
+		// Ellipsis runs between blank CRLF lines: 1,025 o200k tokens, 2,114 by the arms before this.
+		const ellipsis = rep(300, (i) => `${"…".repeat(4 + (i % 12))}${"\r\n".repeat(2 + (i % 6))}`);
+		expect(textTokensFloor(ellipsis)).toBe(515);
+	});
+
+	it("an indented marker, a marker of 4 or more, and a run with text after it keep the floor they had", () => {
+		const rep = (n: number, f: (i: number) => string) => Array.from({ length: n }, (_, i) => f(i)).join("");
+		// The values on the floor before markers and runs at a line's end were priced with its breaks.
+		expect(textTokensFloor(rep(300, () => "\t}\n\n"))).toBe(300);
+		expect(textTokensFloor(rep(300, () => "////\n\n"))).toBe(300);
+		expect(textTokensFloor(rep(300, (i) => `// c${i}\n\n`))).toBe(1_600);
+		expect(textTokensFloor(rep(300, (i) => `${"─".repeat(16)} x${i}\n`))).toBe(1_393);
+		const code = "function f() {\n\tif (a) {\n\t\treturn 1;\n\t}\n}\n\n// done\n";
+		expect(textTokensFloor(code)).toBe(textTokens(code));
+	});
 });
