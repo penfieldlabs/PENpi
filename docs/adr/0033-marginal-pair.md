@@ -108,17 +108,28 @@ The full E2 and the replay of bench sessions are in the 0.8.0 gate. Both known-f
   other honest output four to six times: base64 of a zero-filled file (2,677 tokens by the estimate, 500 with o200k
   and GLM), `-=-=` rules (2,738 and 420), lines of one letter (2,849 and 659). Reading either of the first two twice
   in a long session detected silent truncation on an honest provider, on 0.7.0 and with the run floor alike.
-- **What a recheck of the floor found.** Whitespace that repeats with a period of two escaped every arm: 1,500 blank
-  CRLF lines read 0.19 of the floor in real tokens, lines of one tab 0.19, lines of one space 0.38. Blank CRLF lines
-  read twice in a long session detected silent truncation on an honest provider.
-- **What a second recheck found.** Whitespace that holds a line break still escaped where it has no period the arm
-  could see: blank stretches shorter than its 32-unit minimum between short lines, periods of 11 to 24, and
-  aperiodic whitespace (blank lines of random count, random trailing spaces). A counter line, then 7 blank CRLF lines,
-  400 times, read 0.239 of the floor and, read twice, detected silent truncation on an honest provider.
-- **What a third recheck found.** Two kinds of honest text read between 0.25 and 0.5 of the floor. Lines of only a
-  comment marker between blank lines (`//` lines, 0.454): o200k takes the marker with the breaks after it, and the
-  arm for line breaks priced only the whitespace. Runs of a non-ASCII character between breaks (`…`, `—`, 0.485):
-  only the run arm priced them, as a separate term of the least. Neither detected end to end.
+- **What a later review found: whitespace with a period of two.** Whitespace that repeats with a period of two escaped
+  every arm: 1,500 blank CRLF lines read 0.19 of the floor in real tokens, lines of one tab 0.19, lines of one space
+  0.38. Blank CRLF lines read twice in a long session detected silent truncation on an honest provider.
+- **What a later review found: whitespace with no period.** Whitespace that holds a line break still escaped where it
+  has no period the arm could see: blank stretches shorter than its 32-unit minimum between short lines, periods of 11
+  to 24, and aperiodic whitespace (blank lines of random count, random trailing spaces). A counter line, then 7 blank
+  CRLF lines, 400 times, read 0.239 of the floor and, read twice, detected silent truncation on an honest provider.
+- **What a later review found: marker lines and non-ASCII runs.** Two kinds of honest text read between 0.25 and 0.5 of
+  the floor. Lines of only a comment marker between blank lines (`//` lines, 0.454): o200k takes the marker with the
+  breaks after it, and the arm for line breaks priced only the whitespace. Runs of a non-ASCII character between breaks
+  (`…`, `—`, 0.485): only the run arm priced them, as a separate term of the least. Neither detected end to end.
+- **Honest shapes left in the marginal band.** Honest text in three shapes still reads between 0.25
+  and 0.5 of the floor: a marker after text on the same line (a counter, a space and `-->`, `*/` or `//`, then 1 to 3
+  breaks; 0.343 the lowest), lines of a marker of two or more words between blank lines (`// //`, `// *`,
+  `// // // //`; 0.420), and closing brackets or markers before a break and the next line's indentation (`});`, `-->`,
+  `],`, `*/`, before 0 to 60 spaces; 0.422). None detects end to end. Widening the marker piece to take them was
+  measured and undone. It closed the sweep's cases, but lowered the floor of ordinary output by 4.3% over 47 files, of
+  nested pretty-printed JSON by 14 to 20% and of source code by up to 8.4%, since nearly every line of nested JSON ends
+  in such a marker before indentation; taken only when the next line holds no letter, by 1.1% and 9 to 10%. Neither
+  closed the deepest cases (`});` or `-->` before 40 to 60 spaces, 0.490; four-word marker lines). A marginal sample
+  never detects alone or with another marginal one; it counts only with an evidence sample. So these shapes are left in
+  the marginal band, written down, and the floor keeps its strength on ordinary output.
 - **The fixes, in 0.8.0:**
   - The growth check judges the shortfall against a floor of the appended text (`textTokensFloor`;
     `messageFloorSlack` is the difference per message), the least of:
@@ -148,18 +159,19 @@ The full E2 and the replay of bench sessions are in the 0.8.0 gate. Both known-f
   - The pair's marginal side has the evidence side's size guard (`meetsSizeGuard`): a marginal sample expected below
     0.8 of the largest usage reported is not kept for a pair. It still cannot clear evidence.
 
-  Why a bound on deflated segments: real tokens over the floor must stay at 0.5 or more for any honest text, or an
-  honest append reads as half missing. Measured with o200k and GLM-5.3-Flash on 121 samples of honest tool output (the
-  reviews' cases, runs and short patterns, base64 and hex of zero, sparse and random data, lockfiles, minified code,
-  JSON of hashes, CSV, logs, CJK, emoji, tables, source code, E2's own classes) and 246 of sparse binary data, the
-  lowest is 0.61 (base64 of data with 10% of bytes set); with `textTokens` alone, 32 of the 121 fall below 0.5, and
-  with the run floor alone, 19. A run floor generalised to short periods does not reach base64 of sparse data, and a
-  bound on the whole text deflated also takes repetition across lines, which tokenizers do not merge: on E2's
-  whitespace-heavy output no constant served both. The segments are the text `textTokens` prices character by
-  character. The arm for short periods covers what neither reaches: whitespace and control characters, which are
-  neither base64 nor punctuation, and periods that alternate classes.
+  Why a bound on deflated segments: real tokens over the floor should stay at 0.5 or more for honest text, and must
+  never fall below 0.25, or an honest append reads as evidence. Between the two it reads marginal (the shapes above).
+  Measured with o200k and GLM-5.3-Flash on 121 samples of honest tool output (the reviews' cases, runs and short
+  patterns, base64 and hex of zero, sparse and random data, lockfiles, minified code, JSON of hashes, CSV, logs, CJK,
+  emoji, tables, source code, E2's own classes) and 246 of sparse binary data, the lowest is 0.61 (base64 of data with
+  10% of bytes set); with `textTokens` alone, 32 of the 121 fall below 0.5, and with the run floor alone, 19. A run
+  floor generalised to short periods does not reach base64 of sparse data, and a bound on the whole text deflated also
+  takes repetition across lines, which tokenizers do not merge: on E2's whitespace-heavy output no constant served
+  both. The segments are the text `textTokens` prices character by character. The arm for short periods covers what
+  neither reaches: whitespace and control characters, which are neither base64 nor punctuation, and periods that
+  alternate classes.
 
-  The floor sweep (`floor-sweep.test.ts`, seeded, so it reruns) checks the floor against both tokenizers, 20,253 cases:
+  The floor sweep (`floor-sweep.test.ts`, seeded, so it reruns) checks the floor against both tokenizers, 24,321 cases:
   - every period of 1 to 8 drawn from all ASCII characters and common non-ASCII ones (box drawing, block elements,
     emoji, CJK, combining marks), and periods of 9 to 32 drawn mostly from whitespace and control characters, 714
     units, each at 1,000, 10,000 and 100,000 characters in five layouts (alone, one per line with LF or CRLF, numbered
@@ -171,28 +183,44 @@ The full E2 and the replay of bench sessions are in the 0.8.0 gate. Both known-f
     trailing spaces, between 0 to 8 random blank lines, LF and CRLF; and runs of every length from 1 to 64 of 22
     non-ASCII characters (ellipsis, dashes, box drawing, block elements, dots, CJK, emoji) followed by random spaces
     or tabs and 1 to 7 breaks;
-  - every case named above, the rechecks' cases and the sparse-data samples.
+  - markers after text on the same line (counters, timestamps, words, code) after a space or a tab, then 1 to 3 or 1 to
+    8 breaks; markers of 1 to 8 characters composed of the 31 markers with or without spaces between, or drawn from
+    punctuation and symbols; markers with 16 short punctuation or symbol texts after them, with or without a space; and
+    14 markers and closing brackets each followed by a break and 0 to 8, 8 to 40 or 0 to 40 spaces, tabs or both, so
+    that the next one is indented (3,672 cases);
+  - every case named above, the reviews' measured cases, with their sessions, and the sparse-data samples.
 
   On the floor before the arm for line breaks, 327 cases were below 0.5, the lowest 0.214 (26 CRLF units after counter
-  lines); the sweep found the recheck's 0.239 case on its own. Two candidates were measured. The arm for line breaks,
-  fitted on the sweep, closes every case and changes the floor of 53 of 385 E2 samples, by 3.0% at most
+  lines); the sweep found on its own the 0.239 case a review had measured. Two candidates were measured. The arm for
+  line breaks, fitted on the sweep, closes every case and changes the floor of 53 of 385 E2 samples, by 3.0% at most
   (whitespace-heavy output, then code); counting every run with a break, one break and its indentation included, it
   changes 143 to 153, by up to 12%. A backstop from the whole text deflated (level 1) does not close the cases at any
-  constant: at 1.5 tokens per byte 54 stay below 0.5 and 64 E2 samples drop by up to 70%; at 5, where it changes one
-  E2 sample, 294 stay below. It takes repetition across lines, which tokenizers do not merge. With the marker lines
-  and non-ASCII runs added, 38 of the 4,917 new cases were below 0.5 on that floor, none below 0.25, the lowest 0.364
-  (`─` runs of 16 between CRLF breaks). Pricing the run or marker of a line with its breaks closes all of them and
-  changes the floor of 71 of 385 E2 samples, by 1.1% at most (top-level closing brackets in code and JSON). Measured
-  against it: pricing every run inside the arm, not only one before a break, changes 49 samples by up to 17.6% (`├──`
-  tree lines); taking indented markers too, 76 by up to 11.6%; markers of up to 64, 79 by up to 2.7%; the run or the
-  marker alone leaves 23 or 15 cases below 0.5. Now none is below: the lowest is 0.501. The engine suite runs the
+  constant: at 1.5 tokens per byte 54 stay below 0.5 and 64 E2 samples drop by up to 70%; at 5, where it changes one E2
+  sample, 294 stay below. It takes repetition across lines, which tokenizers do not merge. With the marker lines and
+  non-ASCII runs added, 38 of the 4,917 new cases were below 0.5 on that floor, none below 0.25, the lowest 0.364 (`─`
+  runs of 16 between CRLF breaks). Pricing the run or marker of a line with its breaks closes all of them and changes
+  the floor of 71 of 385 E2 samples, by 1.1% at most (top-level closing brackets in code and JSON). Measured against
+  it: pricing every run inside the arm, not only one before a break, changes 49 samples by up to 17.6% (`├──` tree
+  lines); taking indented markers too, 76 by up to 11.6%; markers of up to 64, 79 by up to 2.7%; the run or the marker
+  alone leaves 23 or 15 cases below 0.5. Of the sweep's cases then, none was below; the lowest was 0.501. With the
+  marker places and the reviews' later measured cases added (3,672 and 396), 73 cases are between 0.25 and 0.5 and none
+  below 0.25, the lowest 0.343, with `FLOOR_SWEEP_FULL=1` too: the three shapes above. The sweep fails on any case
+  below 0.25, on a new case below 0.5 (more than 73) or on a lowest below 0.343. A known shape can still go lower
+  inside the band without failing: the rule pins the count and the lowest, not each case. The engine suite runs the
   sweep with the periodic cases at 1,000 and 10,000 characters; `FLOOR_SWEEP_FULL=1` adds 100,000. This is what was
-  measured, not a bound for every text. The floor costs, once per message, about 10 ms at 50,000 characters and on a 1
-  MB append about 190 ms of source code, 140 ms of one character, 200 ms of blank lines with random trailing spaces
-  and 290 ms of `//` comment lines between blank lines (the costliest measured); a slower machine took about 1.4 times
-  as long.
+  measured, not a bound for every text. The floor costs, once per message, on a 1 MB append about 260 ms of source
+  code, 160 ms of pretty-printed JSON, 250 ms of one character, 220 ms of blank lines with random trailing spaces, 340
+  ms of `//` comment lines, 290 ms of box-drawing runs between breaks and 405 ms of `});` lines before indentation;
+  `//` lines and `});` lines are the costliest measured, about 340 to 410 ms; a slower machine took about 1.4 times as
+  long, about 570 ms.
 
-  Measured: `honest-provider.test.ts` passes 17 of 17 (13 of 14 on the floor before the arm for line breaks: the
+  Where the floor is lower, the check is weaker there, never falser: a lower floor only raises the growth the check
+  accepts; it never makes a detection. Runs of one character before a break are judged at about half their real tokens
+  (ellipsis runs between blank CRLF lines: a floor of 515 against 1,025 real). On 47 files of ordinary output (source,
+  JSON, Markdown, diffs, logs, `git log`, `ls -laR`, grep, HTML) the floor is 0.1% lower than with the arm for line
+  breaks alone, and nested JSON's not at all.
+
+  Measured: `honest-provider.test.ts` passes 27 of 27 (13 of 14 on the floor before the arm for line breaks: the
   counter lines with 7 blank CRLF lines, read twice, take the window to 100,592). E2 on the pinned corpus
   (`dd30101cf`): all 96 runs identical with the run floor to the engine without the fixes, and identical again with
   the repetition bound added, with the arm for short periods, with the arm for line breaks and with the run or marker

@@ -10,7 +10,9 @@
  * with the floor for runs of one character alone. Test 7 detected with the floor before its arm for short periods,
  * test 9 before its arm for whitespace that holds a line break; tests 10 to 13 are whitespace of that kind too.
  * Tests 14 to 16 are lines of only a comment marker and runs of one non-ASCII character between line breaks, which
- * that arm prices with the breaks after them.
+ * that arm prices with the breaks after them. Tests 17 to 26 are markers mid-line, of two to four words, with text
+ * after them, and closing brackets before deep indentation: the floor does not price those as tokenizers count them,
+ * so they read between 0.25 and 0.5 of it, and the tests show they still never detect.
  */
 import { readFileSync } from "node:fs";
 import { fauxAssistantMessage, fauxText, fauxToolCall } from "@earendil-works/pi-ai";
@@ -293,5 +295,93 @@ describe("E3.5: an honest provider and ordinary tool output", () => {
 			...smalls(8, 4),
 		];
 		expectHonest(await session(200_000, steps, { ...big, ...small, a, b }), 200_000);
+	});
+
+	// Markers mid-line, of two words, with text after them, and closing brackets before the next line's indentation.
+	const fourth = lcg(987654321);
+	const int = (a: number, b: number) => a + Math.floor(fourth() * (b - a + 1));
+	const pickOf = <T>(xs: T[]) => xs[Math.floor(fourth() * xs.length)];
+	const rep = (n: number, f: (i: number) => string) => Array.from({ length: n }, (_, i) => f(i)).join("");
+	const mid = rep(800, (i) => `${i} //${"\n".repeat(int(1, 3))}`);
+	const five = rep(1200, () => pickOf(["// //\n", "// // \n", `// //${"\n".repeat(int(1, 3))}`]));
+
+	it("17: a counter, then ' //' mid-line, then 1 to 3 breaks, read twice, no detection", async () => {
+		await twice("mid", mid);
+	});
+
+	it("18: '// //' lines between blank lines, read twice, no detection", async () => {
+		await twice("five", five);
+	});
+
+	it("19: '// *' lines between blank lines, read twice, no detection", async () => {
+		await twice(
+			"star",
+			rep(1200, () => pickOf(["// *\n", "// *\n\n", "//*\n"])),
+		);
+	});
+
+	it("20: '-->' lines with 8 to 40 spaces of indentation, read twice, no detection", async () => {
+		await twice(
+			"arrow",
+			rep(600, () => `-->\n${" ".repeat(int(8, 40))}`),
+		);
+	});
+
+	it("21: '});' lines with 8 to 40 spaces of indentation, read twice, no detection", async () => {
+		await twice(
+			"close",
+			rep(600, () => `});\n${" ".repeat(int(8, 40))}`),
+		);
+	});
+
+	it("22: the first two, alternating in one session, no detection", async () => {
+		const steps = [
+			...preload,
+			...smalls(0, 2),
+			{ blob: "a" },
+			...smalls(2, 2),
+			{ blob: "b" },
+			...smalls(4, 2),
+			{ blob: "a" },
+			...smalls(6, 2),
+			{ blob: "b" },
+			...smalls(8, 4),
+		];
+		expectHonest(await session(200_000, steps, { ...big, ...small, a: mid, b: five }), 200_000);
+	});
+
+	// Closing brackets before deeper indentation, and markers of four words.
+	const fifth = lcg(987654321);
+	const fifthInt = (a: number, b: number) => a + Math.floor(fifth() * (b - a + 1));
+	const close = rep(600, () => `});\n${" ".repeat(fifthInt(40, 60))}`);
+	const arrow = rep(600, () => `-->\n${" ".repeat(fifthInt(40, 60))}`);
+	const four = rep(600, () => `// // // //${"\n".repeat(fifthInt(1, 3))}`);
+
+	it("23: '});' lines with 40 to 60 spaces of indentation, read twice, no detection", async () => {
+		await twice("close", close);
+	});
+
+	it("24: '-->' lines with 40 to 60 spaces of indentation, read twice, no detection", async () => {
+		await twice("arrow", arrow);
+	});
+
+	it("25: '// // // //' lines between blank lines, read twice, no detection", async () => {
+		await twice("four", four);
+	});
+
+	it("26: the three, alternating in one session, no detection", async () => {
+		const steps = [
+			...preload,
+			...smalls(0, 2),
+			{ blob: "a" },
+			...smalls(2, 2),
+			{ blob: "b" },
+			...smalls(4, 2),
+			{ blob: "c" },
+			...smalls(6, 2),
+			{ blob: "a" },
+			...smalls(8, 4),
+		];
+		expectHonest(await session(200_000, steps, { ...big, ...small, a: close, b: four, c: arrow }), 200_000);
 	});
 });

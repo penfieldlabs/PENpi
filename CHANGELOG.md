@@ -79,16 +79,28 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
   a run of one character that ends the line before it, or a short marker that starts it, such as
   `//` or `>`), and other repetition close to what tokenizers count, and a sample that reads only
   a little short joins a detection only when its request is as large as evidence must be (ADR
-  0033). A seeded sweep of honest text, counted with both tokenizers, checks it: 20,253 cases
+  0033). A seeded sweep of honest text, counted with both tokenizers, checks it: 24,321 cases
   (periods of 1 to 32 characters in five layouts, at 1,000 to 100,000 characters; whitespace
   stretches of 1 to 64 characters in 12 mixes between varying lines; random trailing whitespace,
   indentation and blank lines; lines of only a comment, quote or table marker between random blank
-  lines; runs of 1 to 64 of one non-ASCII character between breaks; every case the reviews found),
-  all at 0.5 or more of the floor in real tokens. That is what was measured, not a bound for every
-  text. The floor costs about 200 ms on a 1 MB append and about 300 ms on 1 MB of comment-marker
-  lines; a slower machine takes up to about 1.4 times that. Of the cases the reviews of 0.8.0
+  lines; runs of 1 to 64 of one non-ASCII character between breaks; markers after text, of up to 8
+  characters, with text after them and before indentation; every case the reviews found). None is
+  below 0.25 of the floor in real tokens, where an honest sample would read as evidence. 73 are
+  between 0.25 and 0.5, the lowest 0.343: a marker after text on the same line (a counter and
+  `-->` or `*/`), lines of a marker of two or more words between blank lines (`// //`, `// *`),
+  and closing brackets or markers before indentation (`});` or `-->` and the next line's
+  indentation). Such a sample reads marginal: it never detects alone or with another marginal
+  sample, and counts only with an evidence sample. The floor leaves these shapes there rather than
+  pricing them lower, so it keeps its strength on ordinary output, and the sweep fails if more of
+  them fall below 0.5, or if any falls below the lowest, 0.343. That is what was measured, not a
+  bound for every text. The trade: runs of one character before a break are priced at about half
+  their real tokens, so detection is weaker there, never falser; on 47 files of ordinary output
+  (source, JSON, Markdown, diffs, logs) the floor is 0.1% lower than with whitespace and line breaks
+  alone. The floor costs about 110 to 410 ms on a 1 MB append (about 260 ms of source code; `//`
+  lines and `});` lines before indentation are the costliest measured, about 340 to 410 ms); a
+  slower machine takes up to about 1.4 times that, about 570 ms. Of the cases the reviews of 0.8.0
   found, at least four date from before 0.8.0: 0.7.0 detects them too. A new engine test on an
-  honest provider counted with the o200k tokenizer passes its seventeen sessions, and all 96 E2
+  honest provider counted with the o200k tokenizer passes its twenty-seven sessions, and all 96 E2
   runs are unchanged.
 - **An answer produced from silently truncated input is named, even when the warning sign before
   it lowered the engine's estimate.** When the engine finds silent truncation, it names every

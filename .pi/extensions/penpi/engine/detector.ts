@@ -301,8 +301,9 @@ export function installDetector(core: EngineCore): void {
 					// Most of a large append unaccounted for. On ordinary text the estimator's classes stay within
 					// 0.85-1.12 of o200k and GLM (a chars/4 count within 3x), but textTokens overcounts repetition
 					// many times over, so the check is made against the floor. Measured, not proved: in the floor
-					// sweep (floor-sweep.test.ts, seeded honest text counted with o200k and GLM) real tokens stay at
-					// 0.5 or more of it; other text can fall lower.
+					// sweep (floor-sweep.test.ts, seeded honest text counted with o200k and GLM) no case is below
+					// 0.25 of it in real tokens, and the known honest shapes between 0.25 and 0.5 are marginal
+					// (ADR 0033); other text can fall lower.
 					strong = judged >= opts.silentStrongGrowth && delta < opts.silentStrongShortfall * judged;
 				} else if (delta < opts.silentMarginal * judged) {
 					marginal = true;

@@ -7,6 +7,8 @@
  *   in five layouts: alone, one per line with LF, one per line with CRLF, numbered lines, and timestamped CRLF lines.
  * - Lines of only a comment, quote or table marker between random blank lines, and runs of 1 to 64 of one non-ASCII
  *   character (ellipsis, dashes, box drawing, blocks, dots, CJK, emoji) between random whitespace and breaks.
+ * - Markers after text on the same line, drawn markers of 1 to 8 punctuation and symbol characters, markers with
+ *   short punctuation after them, and markers and closing brackets followed by a break and indentation.
  * - Named: the cases the reviews of 0.8.0 and the floor's own measurements found (test reporters, rules, bars, base64
  *   and hex of zero, sparse and random data, blank and whitespace lines, tables, logs, data, CJK, emoji, source).
  */
@@ -811,4 +813,345 @@ export function thirdRecheckCases(): SweepCase[] {
 		["session 16: '//' lines, the second draw", s16],
 	] as const;
 	return [...first, ...second, ...sessions].map(([name, text]) => ({ name, text: () => text }));
+}
+
+/** Punctuation and symbols for drawn markers: ASCII punctuation and common non-ASCII ones. */
+const MARK_CHARS = [...PUNCT, ..."—–…·•─│═█░▪→←✓✔✗✘★●○■□▶»«§¶†°±×"];
+/** Short text after a marker, of punctuation and symbols. */
+const TAILS = [".", "-", "*", "~", "..", "--", "|", ">", "#", "//", "—", "…", "·", ":", "=", "+"];
+const EOL_NAMES: Array<[string, string]> = [
+	["\n", "LF"],
+	["\r\n", "CRLF"],
+];
+
+/**
+ * Markers in more places, LF and CRLF, each about `size` characters:
+ * - after text on the same line (a counter, a timestamp, a word, code), after a space or a tab, then 1 to 3 or 1 to
+ *   8 breaks;
+ * - markers of 1 to 8 characters made of the markers above with or without spaces between (`// //`, `#--`), or drawn
+ *   from punctuation and symbols, one per text or a new one each line, between random blank lines;
+ * - a marker with short punctuation or symbol text after it (`// *`, `# --`, `> |`), with or without a space;
+ * - markers and closing brackets each followed by a break and 0 to 40 spaces, tabs or both of indentation, so that
+ *   the next one is indented.
+ */
+export function markerPlaceCases(size = 4_000): SweepCase[] {
+	const cases: SweepCase[] = [];
+	const fill = (seed: number, line: (r: () => number, i: number) => string) => () => {
+		const r = rng(seed);
+		let s = "";
+		for (let i = 0; s.length < size; i++) s += line(r, i);
+		return s;
+	};
+	const pickOf = <T>(r: () => number, xs: T[]) => xs[Math.floor(r() * xs.length)];
+	const breaks = (r: () => number, eol: string, most: number) => eol.repeat(1 + Math.floor(r() * most));
+	const heads: Record<string, (r: () => number, i: number) => string> = {
+		counter: (_r, i) => `${i}`,
+		timestamp: (_r, i) =>
+			`2026-11-15T10:${String(Math.floor(i / 60) % 60).padStart(2, "0")}:${String(i % 60).padStart(2, "0")}Z`,
+		word: (r) => pickOf(r, ["ok", "done", "value", "end", "x", "TODO"]),
+		code: (r) => pickOf(r, ["x = 1;", "return a", "f(x)", "}", "i++;", "let y = [];"]),
+	};
+	const composed = (r: () => number, length: number) => {
+		let m = "";
+		while (m.length < length) m += `${m && r() < 0.5 ? " " : ""}${pickOf(r, MARKERS).trim()}`;
+		return m.slice(0, length).trimEnd() || "#";
+	};
+	for (const [eol, eolName] of EOL_NAMES) {
+		for (const m of MARKERS)
+			for (const [headName, head] of Object.entries(heads))
+				for (const [sep, sepName] of [
+					[" ", "a space"],
+					["\t", "a tab"],
+				])
+					for (const most of [3, 8])
+						cases.push({
+							name: `${headName}, ${sepName}, ${JSON.stringify(m.trim())}, 1 to ${most} breaks, ${eolName}`,
+							text: fill(
+								m.length * 7_919 + headName.length * 131 + most * 31 + sep.length * 3 + eol.length,
+								(r, i) => `${head(r, i)}${sep}${m.trim()}${breaks(r, eol, most)}`,
+							),
+						});
+		for (let length = 1; length <= 8; length++)
+			for (const kind of ["composed", "drawn", "composed, a new one each line"])
+				for (const seed of [1, 2, 3, 4]) {
+					const base = length * 1_009 + kind.length * 17 + seed * 104_729 + eol.length;
+					const draw = (r: () => number) =>
+						kind === "drawn" ? Array.from({ length }, () => pickOf(r, MARK_CHARS)).join("") : composed(r, length);
+					const fixed = draw(rng(base + 1));
+					const each = kind.endsWith("each line");
+					cases.push({
+						name: `${kind} markers of ${length}${each ? "" : ` (${JSON.stringify(fixed)})`}, random blank lines, ${eolName}, seed ${seed}`,
+						text: fill(base, (r) => `${each ? draw(r) : fixed}${breaks(r, eol, 4)}`),
+					});
+				}
+		for (const m of MARKERS)
+			for (const tail of TAILS)
+				for (const sep of [" ", ""])
+					cases.push({
+						name: `${JSON.stringify(m)}, ${sep ? "a space, " : ""}${JSON.stringify(tail)}, random blank lines, ${eolName}`,
+						text: fill(
+							m.length * 131 + tail.length * 17 + sep.length + eol.length * 7,
+							(r) => `${m}${sep}${tail}${breaks(r, eol, 3)}`,
+						),
+					});
+		for (const m of ["});", "})", "]", "],", "}", ")", ");", ";", "-->", "*/", "//", "#", ">", "|"])
+			for (const [low, high] of [
+				[0, 8],
+				[8, 40],
+				[0, 40],
+			])
+				for (const indent of ["spaces", "tabs", "spaces and tabs"])
+					for (const extra of [0, 2])
+						cases.push({
+							name: `${JSON.stringify(m)}, a break${extra ? ", 0 to 2 blank lines" : ""}, ${low} to ${high} ${indent} of indentation, ${eolName}`,
+							text: fill(m.length * 977 + low * 31 + high + indent.length * 7 + extra + eol.length * 3, (r) => {
+								const n = low + Math.floor(r() * (high - low + 1));
+								const ws = Array.from({ length: n }, () =>
+									indent === "spaces" ? " " : indent === "tabs" ? "\t" : pickOf(r, [" ", "\t"]),
+								).join("");
+								return `${m}${breaks(r, eol, extra + 1)}${ws}`;
+							}),
+						});
+	}
+	return cases;
+}
+
+/**
+ * The fourth and fifth rechecks' cases (their measurements, from one generator in their order, then their sessions 17
+ * to 21 and 23 to 25), so the texts are the ones they measured. The fifth's cases draw after the fourth's.
+ */
+function recheckRounds(): { fourth: SweepCase[]; fifth: SweepCase[] } {
+	const lcg = (seed: number) => () => {
+		seed = (seed * 1103515245 + 12345) % 2147483648;
+		return seed / 2147483648;
+	};
+	let rnd = lcg(13572468);
+	const pick = <T>(xs: T[]) => xs[Math.floor(rnd() * xs.length)];
+	const int = (a: number, b: number) => a + Math.floor(rnd() * (b - a + 1));
+	const rep = (n: number, f: (i: number) => string) => Array.from({ length: n }, (_, i) => f(i)).join("");
+	const b64zero = Buffer.alloc(1500).toString("base64");
+	const blanks = (eol: string) => eol.repeat(int(1, 3));
+	const cases: Record<string, () => string> = {};
+	const EOLS: [string, string][] = [
+		["\n", "LF"],
+		["\r\n", "CRLF"],
+	];
+	// 0. Round three's cases below 0.55.
+	cases["r3: random '//' lines"] = () => rep(1500, () => pick(["//\n", "// \n", "//\n\n"]));
+	cases["r3: random '//' lines CRLF"] = () =>
+		rep(1500, () => pick(["//\r\n", "// \r\n", "//\r\n\r\n", "//\r\n\r\n\r\n"]));
+	cases["r3: ellipsis 4-15 + 2-7 CRLF"] = () =>
+		rep(300, (i) => `${"…".repeat(4 + (i % 12))}${"\r\n".repeat(2 + (i % 6))}`);
+	cases["r3: ellipsis 4-31 + 2-7 CRLF"] = () => rep(300, () => `${"…".repeat(int(4, 31))}${"\r\n".repeat(int(2, 7))}`);
+	cases["r3: em dash 4-31 + 2-7 LF"] = () => rep(300, () => `${"—".repeat(int(4, 31))}${"\n".repeat(int(2, 7))}`);
+	// 1. Markers of 4 or more units.
+	for (const m of [
+		"////",
+		"<!--",
+		"//--",
+		"#---",
+		"/***",
+		"// //",
+		"####!",
+		"-->>",
+		">>>>",
+		"||||",
+		"%%%%",
+		"/**/",
+		"#!#!",
+		"::::",
+		"🔥🔥",
+		"✅✅",
+		"⚠️⚠️",
+		"👉👉",
+	])
+		for (const [eol, nm] of EOLS)
+			cases[`4+ marker '${m}' lines + blanks ${nm}`] = () =>
+				rep(1200, () => pick([`${m}${eol}`, `${m} ${eol}`, `${m}${blanks(eol)}`]));
+	// 2. Indented markers.
+	for (const ind of [" ", "  ", "\t", "    ", "\t\t", "        "])
+		for (const m of ["*", "//", "#", ">", "|", "--", ";;"])
+			cases[`indented ${JSON.stringify(ind)} '${m}' lines + blanks`] = () =>
+				rep(1200, () => pick([`${ind}${m}\n`, `${ind}${m} \n`, `${ind}${m}\n\n`]));
+	cases["JSDoc blocks of blank ' *' lines"] = () => rep(200, () => `/**\n${rep(int(2, 8), () => " *\n")} */\n`);
+	cases["JSDoc blank ' *' lines CRLF, deep indentation"] = () =>
+		rep(200, () => `\t\t/**\r\n${rep(int(2, 8), () => "\t\t *\r\n")}\t\t */\r\n`);
+	// 3. A marker with text after it (short text the tokenizer may merge).
+	for (const t of [".", "-", "x", "0", "*", "~", "..", "—", "…"])
+		for (const m of ["//", "#", ">"])
+			cases[`'${m} ${t}' lines + blanks`] = () =>
+				rep(1200, () => pick([`${m} ${t}\n`, `${m} ${t}\n\n`, `${m}${t}\n`]));
+	// 4. Markers mid-line.
+	for (const m of ["//", "#", ">", "|", "\\"]) {
+		cases[`counter + ' ${m}' + blanks`] = () => rep(800, (i) => `${i} ${m}${blanks("\n")}`);
+		cases[`'x ${m}' + blanks`] = () => rep(1200, () => `x ${m}${blanks("\n")}`);
+		cases[`'${m}' after a tab, + blanks CRLF`] = () => rep(1200, () => `\t${m}${blanks("\r\n")}`);
+	}
+	// 5. Runs that a break does not follow, or short runs.
+	for (const ch of ["…", "—", "─", "═", "·", "•", "━", "█", "░", "."]) {
+		cases[`'${ch}' runs 4-31 + space + 'x' + blanks`] = () =>
+			rep(300, () => `${ch.repeat(int(4, 31))} x${blanks("\n")}`);
+		cases[`'${ch}' runs 1-3 + blanks`] = () => rep(1500, () => `${ch.repeat(int(1, 3))}${blanks("\n")}`);
+		cases[`'${ch}' runs 4-31 + ZWSP + blanks`] = () =>
+			rep(300, () => `${ch.repeat(int(4, 31))}\u200b${blanks("\n")}`);
+		cases[`'${ch}' runs 4-31 + U+2028 x2-6`] = () =>
+			rep(300, () => `${ch.repeat(int(4, 31))}${"\u2028".repeat(int(2, 6))}`);
+		cases[`'${ch}${ch === "…" ? "—" : "…"}' alternating 4-31 + blanks CRLF`] = () =>
+			rep(300, () => `${rep(int(4, 31), (k) => (k % 2 ? (ch === "…" ? "—" : "…") : ch))}${blanks("\r\n")}`);
+	}
+	cases["'…' runs 4-31 + NBSP + blanks"] = () => rep(300, () => `${"…".repeat(int(4, 31))}\u00a0${blanks("\n")}`);
+	cases["'…' runs 4-31 + ' |' + blanks"] = () => rep(300, () => `${"…".repeat(int(4, 31))} |${blanks("\n")}`);
+	cases["astral '🔥' runs 4-31 + blanks"] = () => rep(300, () => `${"🔥".repeat(int(4, 31))}${blanks("\n")}`);
+	cases["astral '𝟎' runs 4-31 + blanks"] = () => rep(300, () => `${"𝟎".repeat(int(4, 31))}${blanks("\n")}`);
+	// 6. Markers with Unicode breaks the arm does not count.
+	for (const [b, nm] of [
+		["\u2028", "U+2028"],
+		["\u2029", "U+2029"],
+		["\u0085", "NEL"],
+		["\u000b", "VT"],
+		["\u000c", "FF"],
+	] as [string, string][])
+		for (const m of ["//", "#", ">"])
+			cases[`'${m}' lines with ${nm}`] = () => rep(1500, () => pick([`${m}${b}`, `${m} ${b}`, `${m}${b}${b}`]));
+	// 7. Mixes with the other arms.
+	cases["'//' lines + periodic CRLF/tab whitespace"] = () => rep(400, () => `//\r\n${"\r\n\t".repeat(int(1, 6))}`);
+	cases["'//' lines + base64 zeros"] = () =>
+		rep(60, () => `${b64zero.slice(0, 80)}\n${rep(int(3, 12), () => pick(["//\n", "// \n", "//\n\n"]))}`);
+	cases["'#' lines + dot runs"] = () => rep(400, () => `#\n${".".repeat(int(8, 40))}\n${blanks("\n")}`);
+	cases["'>' lines + ellipsis runs + CRLF"] = () =>
+		rep(400, () => `>\r\n${"…".repeat(int(4, 20))}\r\n${blanks("\r\n")}`);
+	cases["counter + '//' + 16-24 LF"] = () => rep(400, (i) => `${i}\n//${"\n".repeat(int(16, 24))}`);
+	cases["'//' + newline + deep indentation"] = () => rep(600, () => `//\n${" ".repeat(int(8, 40))}`);
+	cases["'#' + newline + deep tab indentation"] = () => rep(600, () => `#\n${"\t".repeat(int(4, 20))}`);
+	cases["'```' fences + blanks"] = () => rep(1200, () => pick(["```\n", "```\n\n", "``` \n"]));
+	cases["'\"\"\"' and \"'''\" lines + blanks"] = () => rep(1200, () => pick(['"""\n', "'''\n", '"""\n\n']));
+	cases["diff of blank lines ('+', '-', ' ')"] = () => rep(1500, () => pick(["+\n", "-\n", " \n", "+\n\n", "-\r\n"]));
+	cases["'_' and '__' lines"] = () => rep(1500, () => pick(["_\n", "__\n", "___\n", "_\n\n"]));
+	cases["'})' '});' '];' lines"] = () => rep(1500, () => pick(["})\n", "});\n", "];\n", "}\n\n", ")\n"]));
+	// 8. Long breaks (not this commit's pieces, but the same per-unit cost).
+	for (const k of [64, 100, 200, 500]) {
+		cases[`counter + ${k} LF`] = () => rep(Math.ceil(40_000 / k), (i) => `${i}${"\n".repeat(k)}`);
+		cases[`counter + ${k / 2} CRLF`] = () => rep(Math.ceil(40_000 / k), (i) => `${i}${"\r\n".repeat(k / 2)}`);
+		cases[`'//' + ${k} LF`] = () => rep(Math.ceil(40_000 / k), () => `//${"\n".repeat(k)}`);
+	}
+	const roundFour = Object.keys(cases).length;
+	// 9. Round five: longer markers and more words, deeper indentation, mixes.
+	const PUN = ["/", "*", "-", "=", "#", "<", ">", "!", ";", ")", "}", "]", "|", "~", "+", ":", "…", "—", "→", "•"];
+	const word = (n: number) => rep(n, () => pick(PUN));
+	for (const n of [8, 9, 10, 12, 16, 24])
+		for (const [eol, nm] of EOLS)
+			cases[`mixed markers of ${n} + blanks ${nm}`] = () =>
+				rep(Math.ceil(5000 / (n + 2)), () => `${word(n)}${blanks(eol)}`);
+	for (const w of [3, 4, 5, 6, 8]) {
+		cases[`${w} words of 1-3 + blanks`] = () =>
+			rep(600, () => `${rep(w, (k) => `${k ? " " : ""}${word(int(1, 3))}`)}${blanks("\n")}`);
+		cases[`'//' x${w} words + blanks`] = () => rep(600, () => `${Array(w).fill("//").join(" ")}${blanks("\n")}`);
+		cases[`counter + ${w} words of '//' + blanks`] = () =>
+			rep(500, (i) => `${i} ${Array(w).fill("//").join(" ")}${blanks("\n")}`);
+	}
+	for (const inner of ["a", "0", "x", "é", "_", "ß", "٣"]) {
+		cases[`marker with '${inner}' inside + blanks`] = () => rep(1000, () => `/${inner}/${blanks("\n")}`);
+		cases[`counter + ' -${inner}->' + blanks`] = () => rep(800, (i) => `${i} -${inner}->${blanks("\n")}`);
+	}
+	for (const gap of ["  ", "\t\t", " \t", "   "]) {
+		cases[`'//${JSON.stringify(gap)}//' + blanks`] = () => rep(1000, () => `//${gap}//${blanks("\n")}`);
+		cases[`counter + ${JSON.stringify(gap)} + '//' + blanks`] = () => rep(800, (i) => `${i}${gap}//${blanks("\n")}`);
+		cases[`counter + ${JSON.stringify(gap)} + '-->' + blanks`] = () =>
+			rep(800, (i) => `${i}${gap}-->${blanks("\n")}`);
+	}
+	for (const sep of ["\u00a0", "\u3000", "\u2009", "\u200b", "\u000b"]) {
+		cases[`counter + ${JSON.stringify(sep)} + '//' + blanks`] = () => rep(800, (i) => `${i}${sep}//${blanks("\n")}`);
+		cases[`'//' + ${JSON.stringify(sep)} + '//' + blanks`] = () => rep(1000, () => `//${sep}//${blanks("\n")}`);
+	}
+	for (const ws of [" ", "  ", "\t", "\u00a0", "\u2028", " \u2028"]) {
+		cases[`'//' before ${JSON.stringify(ws)} without a break, then text`] = () => rep(800, (i) => `//${ws}x${i}\n`);
+		cases[`'});' before ${JSON.stringify(ws)} lines`] = () => rep(1200, () => `});${ws}${blanks("\n")}`);
+	}
+	for (const [lo, hi] of [
+		[40, 60],
+		[60, 100],
+		[100, 200],
+		[200, 400],
+	] as [number, number][])
+		for (const m of ["});", "}", "-->", "//", "*/", "]"]) {
+			cases[`'${m}' + LF + ${lo}-${hi} spaces`] = () =>
+				rep(Math.ceil(20_000 / hi), () => `${m}\n${" ".repeat(int(lo, hi))}`);
+			cases[`'${m}' + LF + ${lo}-${hi} spaces + word`] = () =>
+				rep(Math.ceil(20_000 / hi), (i) => `${m}\n${" ".repeat(int(lo, hi))}w${i % 9}`);
+			cases[`'${m}' + LF + ${lo / 4}-${hi / 4} tabs`] = () =>
+				rep(Math.ceil(20_000 / hi), () => `${m}\n${"\t".repeat(int(lo / 4, hi / 4))}`);
+		}
+	for (const m of ["-->", "});"])
+		cases[`r4 probe: '${m}' + LF + 8-40 spaces`] = () => rep(600, () => `${m}\n${" ".repeat(int(8, 40))}`);
+	for (const k of [16, 40, 100]) {
+		cases[`'});' + ${k} blank lines with indentation`] = () =>
+			rep(Math.ceil(20_000 / k), () => `});${rep(k / 4, () => `\n${" ".repeat(int(0, 8))}`)}`);
+		cases[`counter + ' //' + ${k} LF`] = () => rep(Math.ceil(20_000 / k), (i) => `${i} //${"\n".repeat(k)}`);
+	}
+	cases["'// //' lines + base64 zeros"] = () =>
+		rep(60, () => `${b64zero.slice(0, 80)}\n${rep(int(3, 12), () => pick(["// //\n", "// // \n", "// //\n\n"]))}`);
+	cases["markers + periodic whitespace"] = () => rep(400, () => `}); //${"\r\n\t".repeat(int(1, 6))}`);
+	cases["markers + dot runs"] = () => rep(400, () => `// ${".".repeat(int(8, 40))}\n${blanks("\n")}`);
+	cases["markers + box runs + markers"] = () => rep(400, () => `// ${"─".repeat(int(4, 30))} //${blanks("\n")}`);
+	cases["emoji markers of 1-3 words"] = () =>
+		rep(
+			800,
+			() =>
+				`${rep(int(1, 3), (k) => `${k ? " " : ""}${pick(["🔥", "✅", "⚠️", "👉", "❌"]).repeat(int(1, 4))}`)}${blanks("\n")}`,
+		);
+	cases["combining marks as markers"] = () => rep(1000, () => `${"\u0301".repeat(int(1, 8))}${blanks("\n")}`);
+	cases["CJK punctuation markers"] = () =>
+		rep(1000, () => `${pick(["。", "、", "「」", "【】", "・・", "〜"])}${blanks("\n")}`);
+	cases["markdown list of only '- [ ]'"] = () => rep(1000, () => `- [ ]${blanks("\n")}`);
+	cases["'| --- |' table rows"] = () => rep(800, () => `| --- | --- | --- |${blanks("\n")}`);
+	cases["'* * *' and '- - -' rules"] = () => rep(1000, () => `${pick(["* * *", "- - -", "_ _ _"])}${blanks("\n")}`);
+	cases["counter + ' => {' before indentation"] = () => rep(600, (i) => `x${i} => {\n${" ".repeat(int(8, 40))}`);
+	cases["prompt '$ ' lines"] = () => rep(1500, () => pick(["$\n", "$ \n", "> $ \n", "$\n\n"]));
+	cases["ruby/elixir 'end' style 'do |x|'"] = () => rep(800, (i) => `do |x${i}|\n${" ".repeat(int(2, 12))}`);
+
+	// Built in insertion order: the random draws run through one generator.
+	const measured = Object.entries(cases).map(
+		([name, f], i) => [`${i < roundFour ? "fourth" : "fifth"} recheck: ${name}`, f()] as const,
+	);
+
+	rnd = lcg(987654321);
+	const mid = rep(800, (i) => `${i} //${"\n".repeat(int(1, 3))}`);
+	const five = rep(1200, () => pick(["// //\n", "// // \n", `// //${"\n".repeat(int(1, 3))}`]));
+	const star = rep(1200, () => pick(["// *\n", "// *\n\n", "//*\n"]));
+	const arrow = rep(600, () => `-->\n${" ".repeat(int(8, 40))}`);
+	const close = rep(600, () => `});\n${" ".repeat(int(8, 40))}`);
+	const sessions = [
+		["session 17: a counter, then ' //' mid-line, then 1 to 3 breaks", mid],
+		["session 18: '// //' lines between blank lines", five],
+		["session 19: '// *' lines between blank lines", star],
+		["session 20: '-->' lines with 8 to 40 spaces of indentation", arrow],
+		["session 21: '});' lines with 8 to 40 spaces of indentation", close],
+	] as const;
+	rnd = lcg(987654321);
+	const deepClose = rep(600, () => `});\n${" ".repeat(int(40, 60))}`);
+	const deepArrow = rep(600, () => `-->\n${" ".repeat(int(40, 60))}`);
+	const four = rep(600, () => `// // // //${blanks("\n")}`);
+	const fifthSessions = [
+		["session 23: '});' lines with 40 to 60 spaces of indentation", deepClose],
+		["session 24: '-->' lines with 40 to 60 spaces of indentation", deepArrow],
+		["session 25: '// // // //' lines between blank lines", four],
+	] as const;
+	const toCases = (xs: ReadonlyArray<readonly [string, string]>) =>
+		xs.map(([name, text]) => ({ name, text: () => text }));
+	return {
+		fourth: toCases([...measured.slice(0, roundFour), ...sessions]),
+		fifth: toCases([...measured.slice(roundFour), ...fifthSessions]),
+	};
+}
+
+let rounds: ReturnType<typeof recheckRounds> | undefined;
+/** The fourth recheck's cases and its sessions 17 to 21. */
+export function fourthRecheckCases(): SweepCase[] {
+	rounds ??= recheckRounds();
+	return rounds.fourth;
+}
+/** The fifth recheck's cases and its sessions 23 to 25. */
+export function fifthRecheckCases(): SweepCase[] {
+	rounds ??= recheckRounds();
+	return rounds.fifth;
 }
