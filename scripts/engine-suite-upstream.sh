@@ -3,9 +3,9 @@
 # docs/UPSTREAM_PATCHES.txt): the engine is a plain Pi extension, so it must work without PENpi's core
 # patches. Checks out the base as a detached worktree in .cache/upstream-<sha12> (git-ignored), copies the
 # engine and the suite into it, installs and builds it (upstream's offline build, with the fork's
-# committed model data), and runs the suite there with the tokenizer cache of this checkout
-# (`npm run setup:tokenizers` first). PENpi-only tests are left out: engine-log and penpi-briefing load
-# PENpi's extension, which is not part of stock Pi.
+# committed model data), and runs the suite there with the tokenizer cache of this checkout, the npm
+# tokenizers and the GLM files both (`npm run setup:tokenizers` first). PENpi-only tests are left out:
+# engine-log and penpi-briefing load PENpi's extension, which is not part of stock Pi.
 #
 #   scripts/engine-suite-upstream.sh            # needs the full history (the base commit)
 set -euo pipefail
@@ -44,4 +44,5 @@ if [ ! -d node_modules ] || [ package-lock.json -nt node_modules ]; then npm ci 
 npm run build:offline
 cd packages/coding-agent
 E2_TOK_DIR="${E2_TOK_DIR:-$root/$suite/context-engine-e2/.cache/tok}" \
+	E2_HF_DIR="${E2_HF_DIR:-$root/$suite/context-engine-e2/.cache/hf}" \
 	npx vitest --run --config test/suite/context-engine/vitest.config.ts
