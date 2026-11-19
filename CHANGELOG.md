@@ -53,6 +53,15 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
   case: the first search for the first of six similar runs hit the 10-hit cap on 7 of 8 facts. That
   case is in-sample, so it shows the problem, not what the change gains.
 
+### Security
+- **`hono` 4.13.18 replaces 4.13.13 and `@hono/node-server` 2.1.8 replaces 2.1.4** (four moderate
+  advisories against `hono`: GHSA-4m76-xfj5-7975, GHSA-h7mg-cq63-vhpq, GHSA-46wx-v44x-9hh2 and
+  GHSA-4h7h-rv7c-7m2v; two against `@hono/node-server`: GHSA-qv5m-9pm6-hqp3 and
+  GHSA-jpvv-r467-5p4w). Both come in through the MCP SDK that PENpi's extension uses. PENpi's
+  override of `hono` moves to 4.13.18, which also has security fixes not yet in an advisory, and a
+  new override holds `@hono/node-server` at 2.1.8, which `npm update` alone would move to the
+  newest. `npm audit` reports no vulnerabilities.
+
 ### Fixed
 - **Silent truncation that first reads only a little short is detected sooner.** The context engine
   compares the usage growth a provider reports with what each request appended. Growth below a
