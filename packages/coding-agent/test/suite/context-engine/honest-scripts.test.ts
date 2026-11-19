@@ -11,7 +11,8 @@
  * about 1.2 to 1.35, and at that ratio a Russian document read as evidence of truncation: test 1 detected in 0.7.0
  * too, and test 2 detected with ADR 0033's pair, an evidence sample and a marginal one. The floor now prices those
  * letters and marks as ASCII letters (textTokensFloor). The last test checks prose in each script (prose-scripts.ts)
- * at a session ratio of 1: none may read below 0.5 of the floor in real tokens.
+ * at a session ratio of 1: none may read below 0.5 of the floor in real tokens. With the ratio cap (ADR 0033), the
+ * sessions pass without the prose fix too, so the last test is the one that guards the floor.
  */
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";

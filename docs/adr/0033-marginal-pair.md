@@ -147,6 +147,34 @@ The full E2 and the replay of bench sessions are in the 0.8.0 gate. Both known-f
   scripts the check is less sensitive, since a truncation must cut a larger share to show; one that leaves growth near
   zero still does. E2 has no text in these scripts, so detection lag on a truncating provider in such a session is not
   measured.
+- **The session ratio, at most 1, for the floor.** The growth check judged an append's floor times the session ratio.
+  The floor prices text near what tokenizers count, so a session ratio above 1 inflated it: repository listings and
+  search output lift the ratio to 1.2 to 1.35, and source maps to about 3. The sweep's lowest case reads 0.343 of the
+  floor, and at a ratio of 1.34 the evidence line is 0.335 of it, a margin of 0.008; at 3.1, 1,580 of the default
+  sweep's 20,751 cases read as evidence. The floor's judged growth now takes the ratio at most 1; a ratio below 1
+  still applies, and the provider-switch path, judged against the estimate, keeps the full ratio. The sweep now reads
+  the same at every ratio: at 1.0, 1.1, 1.2, 1.3, 1.34 and 3.1, 73 cases below 0.5 and none below 0.25, as at 1.
+  `honest-ratio-cap.test.ts` lifts the ratio to about 2.9 with source maps on an honest provider, then appends the
+  sweep's lowest shapes: no detection, where the full ratio detected (o200k at the first append, strong; GLM at the
+  second) and learned a window of about 110,000 tokens. The trade: where the estimate undercounts ordinary text, the
+  check is that much less sensitive. On a provider that counts 1.3 times the estimate, a truncation must leave growth
+  below about 0.19 of the honest growth to be evidence, not 0.25, and below about 0.115 to be strong:
+  `b13-quarantine-ratio.test.ts` reported a fifth of the honest growth, which now reads 0.26 (marginal), and reports
+  0.15 now. On E2 (`dd30101cf`), 94 of the 96 runs are identical in every result field and engine log line, and the
+  48 silent runs keep their truncated calls, detection, lag, names and cuts. Two GLM runs at 1m differ in a sample:
+  in `data.glm.1m.silent-front` a sample with 13,621 tokens appended and +3,209 reported was evidence and is now
+  marginal, and the next sample (+0, strong) detects at the same call, with the plateau's expected value and two cut
+  entry ids shifted; in `research.glm.1m.silent-messages` a marginal sample (4,335 appended, +2,010 reported) is gone.
+  Three more effects. The size gates take the capped value too: an append is judged only when its judged growth is
+  256 or more and strong only at 1,000 or more, so at a ratio R above 1 its floor must reach 256 and 1,000 where
+  before 256 / R and 1,000 / R were enough; at 1.3, strong needs an append about 1.3 times larger. At higher ratios
+  the trade is larger: at 2.9, an append the estimate undercounts as much as the context must keep less than about
+  0.086 of its honest growth to be evidence and less than about 0.052 to be strong. Growth near zero (judged on the
+  full ratio), the exact-repeat rule and the plateau still detect as before. And a sample that was evidence and is
+  now marginal is not quarantined, so it enters the ratio: that is why the expected value moved in
+  `data.glm.1m.silent-front`. A strong detection takes it back out only when D14 names it, as there: it reported the
+  same count as the strong sample, and every ratio after detection is as before. Otherwise it stays in the ratio, as
+  strong evidence does not join marginal samples (left for 0.9.0, below).
 - **The fixes, in 0.8.0:**
   - The growth check judges the shortfall against a floor of the appended text (`textTokensFloor`;
     `messageFloorSlack` is the difference per message), the least of the terms below, where every term but the first
@@ -267,6 +295,7 @@ The full E2 and the replay of bench sessions are in the 0.8.0 gate. Both known-f
   maximum in between forgets the marginal one; the rule off detects nothing), `honest-provider.test.ts` (the four
   sessions above, the two of the second review and a control, on an honest provider counted with o200k: no
   detection), `honest-scripts.test.ts` (repository exploration output, then Russian or Bulgarian documents, with o200k
-  and GLM: no detection; and prose in 13 languages at 0.5 or more of the floor), and the unit tests
+  and GLM: no detection; and prose in 13 languages at 0.5 or more of the floor), `honest-ratio-cap.test.ts` (source
+  maps lift the ratio to about 2.9, then the sweep's lowest shapes, with o200k and GLM: no detection), and the unit tests
   (`completesMarginalPair`, `clearsMarginals`, `meetsSizeGuard`; `textTokensFloor` and `messageFloorSlack` in
   `engine/estimator.test.ts`).

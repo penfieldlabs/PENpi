@@ -129,6 +129,20 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
   the growth check is less sensitive, since a truncation must now cut a larger share of it to show;
   one that leaves growth near zero still does. E2 has no text in these scripts, so detection lag on
   a truncating provider in such a session is not measured.
+- **Output the estimate undercounts no longer makes honest text read as silent truncation.**
+  The growth check judged an append's floor times the session ratio. The floor prices text near
+  what tokenizers count, so a session ratio above 1 inflated it: repository listings and search
+  output lift the ratio to 1.2 to 1.35, where the sweep's lowest honest case was 0.008 above the
+  evidence line, and source maps lift it to about 3, where 1,580 of the sweep's 20,751 cases read
+  as evidence. On an honest provider, source maps then marker and bracket lines detected silent
+  truncation and lowered the window to about 110,000 tokens. The floor's judged growth now takes
+  the ratio at most 1, and the sweep reads the same at every ratio. The trade: where the estimate
+  undercounts ordinary text, the check is that much less sensitive. On a provider that counts 1.3
+  times the estimate, a truncation must leave growth below about 0.19 of the honest growth to be
+  evidence, not 0.25. At a ratio of 2.9 that is about 0.086, appends must be larger to be judged,
+  and a sample that now reads marginal enters the ratio; growth near zero still detects as before.
+  On E2, 94 of the 96 runs are identical; in two, one sample reads differently,
+  and every silent run keeps its truncated calls, detection, lag, names and cuts.
 - **A long run of one letter no longer stalls the engine.** The floor's pattern for a run that ends
   a line tested for the line break with a lookahead, which was retried from every position of a
   long run with nothing after it but text: 100,000 characters of one non-ASCII letter (such as `é`)

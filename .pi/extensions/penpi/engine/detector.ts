@@ -285,7 +285,12 @@ export function installDetector(core: EngineCore): void {
 			// data, blank lines and comment-marker lines otherwise read as most of the append missing.
 			// D24: at a provider switch the span is a chain sum, which keeps no floor, so it is judged against the
 			// estimate as before (left for 0.9.0).
-			const judged = reference ? grow : Math.max(0, grow - sent.appendedSlack * ratioBefore);
+			// The floor prices text near what tokenizers count, so a session ratio above 1 (repository listings and search
+			// output reach 1.2 to 1.35, source maps about 3) would inflate it: the floor's judged growth takes the ratio at
+			// most 1. A ratio below 1 still applies.
+			const judged = reference
+				? grow
+				: Math.max(0, (grow / ratioBefore - sent.appendedSlack) * Math.min(ratioBefore, 1));
 			stats.growthChecks.push({ seq: sent.seq, grow, delta, reference: reference !== undefined });
 			const shown = `${Math.round(grow)} tokens appended, reported usage ${delta >= 0 ? "+" : ""}${delta}`;
 			// An honest provider cannot report the same or less after text was appended, however little.
