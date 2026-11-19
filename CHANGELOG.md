@@ -111,6 +111,12 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
   found, at least four date from before 0.8.0: 0.7.0 detects them too. A new engine test on an
   honest provider counted with the o200k tokenizer passes its twenty-seven sessions, and all 96 E2
   runs are unchanged.
+- **A long run of one letter no longer stalls the engine.** The floor's pattern for a run that ends
+  a line tested for the line break with a lookahead, which was retried from every position of a
+  long run with nothing after it but text: 100,000 characters of one non-ASCII letter (such as `é`)
+  took about 30 seconds, once per appended message, and blocked the agent. The run is now matched
+  alone and the line break tested once after it; that text takes well under a second, and the floor
+  is the same on every case of the sweep.
 - **An answer produced from silently truncated input is named, even when the warning sign before
   it lowered the engine's estimate.** When the engine finds silent truncation, it names every
   answer that came from cut input. A sample that read only a little short still counted toward

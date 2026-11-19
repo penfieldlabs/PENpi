@@ -232,8 +232,13 @@ const LINE_BREAK = /[\r\n]/;
 const LINE_START = /^(?:\r\n|\r|\n)[^\S\r\n]*$/;
 const BREAK_RUN_BASE = 1.25;
 const BREAK_RUN_PER_UNIT = 1 / 16;
-/** A run of RUN that ends a line: only spaces or tabs and then a line break follow it. */
-const RUN_BEFORE_BREAK = /([^A-Za-z0-9 \t\r\n])\1{3,}(?=[^\S\r\n]*[\r\n])/g;
+/**
+ * A run of RUN that ends a line: only spaces or tabs and then a line break follow it. The run is matched alone and what
+ * follows it is tested once (THEN_BREAK). With the lookahead inside the pattern, a long run that no line break follows
+ * was retried from every position in it: 100,000 of one non-ASCII letter took about 30 s.
+ */
+const RUN_BEFORE_BREAK = /([^A-Za-z0-9 \t\r\n])\1{3,}/g;
+const THEN_BREAK = /[^\S\r\n]*[\r\n]/y;
 /**
  * A marker of characters that are not letters, digits or whitespace (`//`, `#`, `>`, `|`, `-->`) at the start of a
  * line, with no indentation, and the whitespace after it. Indented markers stay out, so the closing brackets of nested
@@ -263,7 +268,9 @@ function breakFloor(text: string, runs: PeriodRun[]): number {
 	return withoutRuns(text, runs, (piece) => {
 		let cost = 0;
 		const rest = piece
-			.replace(RUN_BEFORE_BREAK, (run) => {
+			.replace(RUN_BEFORE_BREAK, (run: string, _c: string, at: number) => {
+				THEN_BREAK.lastIndex = at + run.length;
+				if (!THEN_BREAK.test(piece)) return run;
 				cost += 1 + run.length / 64;
 				return "";
 			})

@@ -178,3 +178,15 @@ describe("E3.5: the floor prices whitespace that holds a line break, with no per
 		expect(textTokensFloor(code)).toBe(textTokens(code));
 	});
 });
+
+describe("E3.5: the floor's time on a long run with no line break after it", () => {
+	it("a 100,000-character run of one letter takes well under a second, at the end of the text or before other text", () => {
+		// The pattern for a run that ends a line once had its line-break test as a lookahead, retried from every position
+		// of such a run: about 30 s for this text.
+		for (const text of ["é".repeat(100_000), `${"é".repeat(100_000)}x`, `${"ㅋ".repeat(100_000)} y`]) {
+			const start = performance.now();
+			textTokensFloor(text);
+			expect(performance.now() - start).toBeLessThan(1_000);
+		}
+	});
+});
