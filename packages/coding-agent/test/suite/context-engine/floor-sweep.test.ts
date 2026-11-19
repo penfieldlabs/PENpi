@@ -4,7 +4,8 @@
  * read as evidence of truncation: no case may. Between 0.25 and 0.5 it reads marginal, which never detects alone or
  * with another marginal sample (ADR 0033). The honest shapes known to read there (markers after text on the same
  * line, marker lines of two or more words, closing brackets and markers before indentation) are left there, so the
- * floor keeps its strength on ordinary output; the sweep fails if they grow in number or go lower.
+ * floor keeps its strength on ordinary output. The sweep fails if more of them fall below 0.5, or if any falls below
+ * the lowest measured; a known shape can still go lower inside the band without failing.
  *
  * The default run takes the periodic cases at 1,000 and 10,000 characters, the whitespace, marker-line and non-ASCII
  * cases at about 4,000, and every named case. FLOOR_SWEEP_FULL=1 adds the periodic cases at 100,000 characters (about 80 minutes).

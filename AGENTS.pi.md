@@ -140,6 +140,7 @@ PENpi merges upstream Pi releases as ordinary merges ([ADR 0031](docs/adr/0031-u
 - Move the `base:` line of `docs/UPSTREAM_PATCHES.txt` to the merged upstream commit, and keep `npm run check:upstream-patches` passing: every path that differs from upstream has a line with its reason.
 - The E2 corpus pin (`e2-corpus:`) moves on its own commit with a full E2 comparison, not with the base.
 - Delete upstream's `apps/` again, whatever it holds, and keep `"apps/*"` out of the root workspaces. Upstream's apps are experimental, and PENpi does not ship them. The manifest lists `apps/` as deleted, and the check fails while the index holds any file under it. Remove from the lockfile only the entries that `apps/` alone brought in. If one of upstream's apps leaves prototype status, raise it with the owner.
+- At release, after the release PR is merged into `main`, tag the merged upstream commit `upstream/pi-vX.Y.Z` (for 0.8.0: `upstream/pi-v1.5.1` on `dd30101cf`, upstream's "Release v1.5.1") and push that one tag by name, with the owner's approval. The tags `upstream/pi-v1.4.0` and `upstream/pi-v1.5.0` mark the earlier bases.
 
 ## Releasing
 

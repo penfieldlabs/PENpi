@@ -289,6 +289,8 @@ packages/coding-agent/test/suite/context-engine/h8-ceiling-table.test.ts	PENpi: 
 packages/coding-agent/test/suite/context-engine/h8-ceiling.test.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/context-engine/helpers.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/context-engine/honest-provider.test.ts	PENpi: context engine behaviour suite (ADR 0032)
+packages/coding-agent/test/suite/context-engine/honest-scripts.test.ts	PENpi: context engine behaviour suite (ADR 0032)
+packages/coding-agent/test/suite/context-engine/prose-scripts.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/context-engine/length.test.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/context-engine/limits.test.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/context-engine/long-session.test.ts	PENpi: context engine behaviour suite (ADR 0032)

@@ -43,8 +43,27 @@ export function textTokens(text: string): number {
 	return Math.max(Math.ceil(classTokens(text)), Math.ceil(text.length / 8));
 }
 
-/** The sum of a text's character-class costs, before textTokens' lower bound of length / 8. */
-function classTokens(text: string): number {
+/**
+ * A letter or mark outside ASCII and CJK: Cyrillic, Greek, Arabic, Hebrew, Indic and other scripts, accented Latin.
+ * textTokens prices each at DENSITY.other; tokenizers count words, so ordinary Russian prose is about 0.3 of textTokens
+ * with o200k and with GLM-5.3-Flash. The floor prices them as letters.
+ */
+const LETTER_OR_MARK = /[\p{L}\p{M}]/u;
+/** For code units below U+3000, filled on first use: 1 a letter or mark, 2 not. */
+const letterTable = new Uint8Array(0x3000);
+function isOtherLetter(text: string, i: number, c: number): boolean {
+	if (c < 0x3000) {
+		if (letterTable[c] === 0) letterTable[c] = LETTER_OR_MARK.test(String.fromCharCode(c)) ? 1 : 2;
+		return letterTable[c] === 1;
+	}
+	return LETTER_OR_MARK.test(String.fromCodePoint(text.codePointAt(i) ?? c));
+}
+
+/**
+ * The sum of a text's character-class costs, before textTokens' lower bound of length / 8. With `floor`, letters and
+ * marks outside ASCII and CJK cost DENSITY.letter (textTokensFloor).
+ */
+function classTokens(text: string, floor = false): number {
 	let tokens = 0;
 	const n = text.length;
 	let i = 0;
@@ -81,7 +100,7 @@ function classTokens(text: string): number {
 		else if (isCjk(c)) tokens += DENSITY.cjk;
 		else if (c < 128) tokens += DENSITY.punct;
 		else {
-			tokens += DENSITY.other;
+			tokens += floor && isOtherLetter(text, i, c) ? DENSITY.letter : DENSITY.other;
 			if (c >= 0xd800 && c <= 0xdbff) i++;
 		}
 		i++;
@@ -107,8 +126,10 @@ export const FLOOR_TOKENS_PER_BYTE = 2;
 /**
  * A lower bound on a text's real tokens, for the silent-truncation growth check. textTokens prices characters one
  * by one, and BPE vocabularies merge repetition: 2,000 dots are 32 tokens with o200k and with GLM-5.3-Flash, and
- * 1,285 by textTokens; base64 of 3,000 zero bytes is 500 and 2,677. The floor is the least of:
- * - textTokens;
+ * 1,285 by textTokens; base64 of 3,000 zero bytes is 500 and 2,677. Every arm prices letters and marks outside ASCII
+ * and CJK as ASCII letters (isOtherLetter), since tokenizers merge them into words as they do Latin letters. The floor is
+ * the least of:
+ * - textTokens, and textTokens with those letters at the letter price;
  * - textTokens with each run of one character (RUN) at 1 + length / 64 (test dot reporters, rules, bars);
  * - the class costs without textTokens' lower bound of length / 8 (text that is mostly spaces);
  * - textTokens with the segments (segmentSlack) at FLOOR_TOKENS_PER_BYTE x their deflated size, when that is less than
@@ -122,16 +143,21 @@ export const FLOOR_TOKENS_PER_BYTE = 2;
  *   blank lines, `//` and `#` comment lines, `>` quote lines.
  */
 export function textTokensFloor(text: string): number {
-	const classes = Math.ceil(classTokens(text));
+	// Every arm prices letters of other scripts as letters (classTokens with `floor`).
+	const classes = Math.ceil(classTokens(text, true));
 	const estimate = Math.max(classes, Math.ceil(text.length / 8));
 	let runs = 0;
 	const rest = text.replace(RUN, (run) => {
 		runs += 1 + run.length / 64;
 		return "";
 	});
-	const runFloor = runs === 0 ? estimate : Math.ceil(textTokens(rest) + runs);
+	const runFloor =
+		runs === 0
+			? estimate
+			: Math.ceil(Math.max(Math.ceil(classTokens(rest, true)), Math.ceil(rest.length / 8)) + runs);
 	const periods = periodRuns(text);
 	return Math.min(
+		textTokens(text),
 		estimate,
 		runFloor,
 		classes,
@@ -308,7 +334,7 @@ function withoutRuns(text: string, runs: PeriodRun[], cut: (piece: string) => { 
 		at = r.end;
 	}
 	take(text.slice(at));
-	return Math.ceil(classTokens(rest) - segmentSlack(rest) + cost);
+	return Math.ceil(classTokens(rest, true) - segmentSlack(rest) + cost);
 }
 
 /**

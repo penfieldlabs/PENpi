@@ -130,10 +130,28 @@ The full E2 and the replay of bench sessions are in the 0.8.0 gate. Both known-f
   closed the deepest cases (`});` or `-->` before 40 to 60 spaces, 0.490; four-word marker lines). A marginal sample
   never detects alone or with another marginal one; it counts only with an evidence sample. So these shapes are left in
   the marginal band, written down, and the floor keeps its strength on ordinary output.
+- **Prose in other scripts.** `textTokens` prices every letter outside ASCII and CJK at the price of an unknown
+  character (`DENSITY.other`, 0.7154, against 0.0739 for an ASCII letter), and no arm of the floor covered prose, so
+  the floor of prose was its estimate. Ordinary Russian prose read about 0.3 of it in real tokens (0.27 to 0.37), Hindi,
+  Bulgarian and Arabic 0.38 to 0.45 with o200k. The growth check judges the floor times the session ratio, and repository
+  exploration output (search hits and file listings) calibrates that ratio to about 1.2 to 1.35. At that ratio a
+  Russian document read as evidence: on an honest provider counted with o200k or GLM, two Russian documents after such
+  output detected (0.7.0 too), and a Russian document then a Bulgarian one detected as an evidence sample and a
+  marginal one, a pair this ADR made. The floor now prices letters and marks (`\p{L}`, `\p{M}`) outside ASCII and
+  CJK at `DENSITY.letter`, in every arm, and `textTokens` itself is among its terms, so it is never above the estimate.
+  `textTokens` is unchanged, so budgets and calibration are too. Measured against the floor before: never higher on
+  the 24,321 cases of the sweep, 20 documents in 13 languages and E2's 385 samples; equal on all ASCII-only text; lower
+  on 219 of the default sweep's 20,751 cases (letters of other scripts, combining marks), by up to 86% there (zalgo
+  combining stacks, 2,777 to 387), and on 19 of E2's samples, by 0.6% at most there. Prose in each script reads 0.85
+  or more of the floor with o200k and GLM (Korean, priced as CJK, is unchanged at 0.85). The cost: for text in these
+  scripts the check is less sensitive, since a truncation must cut a larger share to show; one that leaves growth near
+  zero still does. E2 has no text in these scripts, so detection lag on a truncating provider in such a session is not
+  measured.
 - **The fixes, in 0.8.0:**
   - The growth check judges the shortfall against a floor of the appended text (`textTokensFloor`;
-    `messageFloorSlack` is the difference per message), the least of:
-    - `textTokens`;
+    `messageFloorSlack` is the difference per message), the least of the terms below, where every term but the first
+    prices letters and marks outside ASCII and CJK at the price of an ASCII letter:
+    - `textTokens`, and `textTokens` at that letter price;
     - `textTokens` with a run of 4 or more of one character that is not a letter, digit, space or tab at 1 +
       length / 64;
     - the class costs without `textTokens`' lower bound of length / 8 (text that is mostly spaces);
@@ -226,18 +244,29 @@ The full E2 and the replay of bench sessions are in the 0.8.0 gate. Both known-f
   the repetition bound added, with the arm for short periods, with the arm for line breaks and with the run or marker
   of a line priced with its breaks, in every result field and every engine log line (timestamps aside), so the 48
   silent runs keep their truncated calls, detection, lag, names and cuts; the two known failures are unchanged. E2's
-  honest runs have no marginal or evidence sample at all, which is why it could not see this. - **Left for 0.9.0:** -
-  `textTokens` itself. It still budgets runs and other repetition at the overcount (1,285 tokens for 32), which is
-  safe for fit and wastes window. - Repetition across lines. The segment bound deflates all of a message's segments
-  together, so the same 64-character hash on 100 lines has a floor of 240 against 3,599 real tokens. That only weakens
-  detection for such appends; it never causes a false one. - The provider-switch path (D24). It judges the span since
-  the new provider's own last sample as a chain sum, which keeps no floor, so it is judged against the estimate as
-  before. - Strong evidence does not join marginal samples, as the outside review also noted. A marginal sample joins
-  a weak evidence sample, but a strong one acts alone; the ratio restored and the names then depend on D14 catching
-  the marginal sample. No change in 0.8.0. - **Detection with marginal samples first restores the ratio from before
-  them.** The marginal samples entered the calibration ratio when judged, like any clean sample. - **Tests:**
-  `v080-marginal-pair.test.ts` (each order detects; two marginal samples do not; a clean sample above the maximum in
-  between forgets the marginal one; the rule off detects nothing), `honest-provider.test.ts` (the four sessions above,
-  the two of the second review and a control, on an honest provider counted with o200k: no detection), and the unit
-  tests (`completesMarginalPair`, `clearsMarginals`, `meetsSizeGuard`; `textTokensFloor` and `messageFloorSlack` in
+  honest runs have no marginal or evidence sample at all, which is why it could not see this.
+- **Left for 0.9.0:**
+  - `textTokens` itself. It still budgets runs and other repetition at the overcount (1,285 tokens for 32), which is
+    safe for fit and wastes window. It also prices letters outside ASCII and CJK at the price of an unknown
+    character, 2.4 to 3.6 times the real count for Cyrillic prose, so the planner cuts such text that much early
+    until the ratio adapts.
+  - Repetition across lines. The segment bound deflates all of a message's segments together, so the same 64-character
+    hash on 100 lines has a floor of 240 against 3,599 real tokens. That only weakens detection for such appends; it
+    never causes a false one.
+  - The provider-switch path (D24). It judges the span since the new provider's own last sample as a chain sum,
+    which keeps no floor, so it is judged against the estimate as before.
+  - Strong evidence does not join marginal samples, as the outside review also noted. A marginal sample joins a weak
+    evidence sample, but a strong one acts alone; the ratio restored and the names then depend on D14 catching the
+    marginal sample. No change in 0.8.0.
+  - Prose in other scripts in E2's mixes, and whether the growth check should rest on a bound that does not depend on
+    character classes, with the repetition arms on top. Each finding above was a class of text the arms missed; the
+    last was whole scripts.
+- **Detection with marginal samples first restores the ratio from before them.** The marginal samples entered the
+  calibration ratio when judged, like any clean sample.
+- **Tests:** `v080-marginal-pair.test.ts` (each order detects; two marginal samples do not; a clean sample above the
+  maximum in between forgets the marginal one; the rule off detects nothing), `honest-provider.test.ts` (the four
+  sessions above, the two of the second review and a control, on an honest provider counted with o200k: no
+  detection), `honest-scripts.test.ts` (repository exploration output, then Russian or Bulgarian documents, with o200k
+  and GLM: no detection; and prose in 13 languages at 0.5 or more of the floor), and the unit tests
+  (`completesMarginalPair`, `clearsMarginals`, `meetsSizeGuard`; `textTokensFloor` and `messageFloorSlack` in
   `engine/estimator.test.ts`).

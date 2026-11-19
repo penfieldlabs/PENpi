@@ -111,6 +111,24 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
   found, at least four date from before 0.8.0: 0.7.0 detects them too. A new engine test on an
   honest provider counted with the o200k tokenizer passes its twenty-seven sessions, and all 96 E2
   runs are unchanged.
+- **Prose in Cyrillic and other scripts is no longer reported as silent truncation.** The engine's
+  estimate prices each letter outside ASCII and CJK (Cyrillic, Greek, Arabic, Hebrew, Indic
+  scripts, Georgian, Thai, accented Latin) as an unknown character, so ordinary Russian prose costs
+  three to four times its real tokens there, and the growth check's floor had no arm for prose: a
+  Russian document read about 0.3 of the floor in real tokens. Repository exploration output (search
+  hits and file listings) calibrates the session ratio to about 1.2 to 1.35, and at that ratio a
+  Russian document read as evidence: on an honest provider, two Russian documents after such output
+  detected silent truncation (0.7.0 too), and so did a Russian document then a Bulgarian one, as an
+  evidence sample and a marginal one (ADR 0033). The floor now prices letters and marks outside
+  ASCII and CJK as ASCII letters, in every arm, and is never above the estimate; the estimate itself
+  is unchanged, so budgets and calibration are too. Measured, not proved: the floor is never higher
+  than before on the 24,321 cases of the sweep, 20 documents in 13 languages and E2's 385 samples, and equal
+  on all ASCII-only text; it is lower on 219 of the default sweep's 20,751 cases, by up to 86%
+  there (zalgo combining stacks), and on 19 of E2's samples, by 0.6% at most there. Prose in each
+  script now reads 0.85 or more of the floor with o200k and GLM. The cost: for text in these scripts
+  the growth check is less sensitive, since a truncation must now cut a larger share of it to show;
+  one that leaves growth near zero still does. E2 has no text in these scripts, so detection lag on
+  a truncating provider in such a session is not measured.
 - **A long run of one letter no longer stalls the engine.** The floor's pattern for a run that ends
   a line tested for the line break with a lookahead, which was retried from every position of a
   long run with nothing after it but text: 100,000 characters of one non-ASCII letter (such as `é`)
