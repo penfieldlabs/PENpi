@@ -6,7 +6,7 @@
 import type { Message, Model } from "@earendil-works/pi-ai";
 import { fauxAssistantMessage, fauxText, fauxToolCall } from "@earendil-works/pi-ai";
 import { streamSimple as anthropicStreamSimple } from "@earendil-works/pi-ai/api/anthropic-messages";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createHarness, type Harness } from "../harness.ts";
 import { resetEntryIds } from "./deterministic-ids.ts";
 import { createContextEngine, ENGINE_LABEL, type EngineOptions, newStats } from "./engine.ts";
@@ -27,7 +27,12 @@ describe("pre-cut notice", () => {
 	async function run(seed: number, noticeRepeats?: boolean, engine: Partial<EngineOptions> = {}) {
 		resetEntryIds();
 		const stats = newStats();
-		const harness = await createHarness({
+		// The harness names its directory from the clock and Math.random, and the directory is the cwd in the system
+		// prompt. The random part varies in length and in how many digits it has, which moves the estimate by up to a
+		// few tokens, and that can move a cut planned at the edge by one request between the runs this file compares.
+		// One constant fixes it; the clock's digits price the same at any value and keep the runs' directories apart.
+		const random = vi.spyOn(Math, "random").mockReturnValue(0.25);
+		const created = createHarness({
 			models: [{ id: "faux-32k", contextWindow: 32_000, maxTokens: 4_000 }],
 			settings: { compaction: { enabled: false } },
 			extensionFactories: [
@@ -42,6 +47,8 @@ describe("pre-cut notice", () => {
 				}),
 			],
 		});
+		random.mockRestore();
+		const harness = await created;
 		harnesses.push(harness);
 		await harness.session.bindExtensions({});
 		const model = scriptedModel(harness);
