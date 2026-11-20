@@ -127,8 +127,14 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
   there (zalgo combining stacks), and on 19 of E2's samples, by 0.6% at most there. Prose in each
   script now reads 0.85 or more of the floor with o200k and GLM. The cost: for text in these scripts
   the growth check is less sensitive, since a truncation must now cut a larger share of it to show;
-  one that leaves growth near zero still does. E2 has no text in these scripts, so detection lag on
-  a truncating provider in such a session is not measured.
+  one that leaves growth near zero still does. On a provider that silently keeps 30,000 tokens of a
+  declared 200,000, with documents of about 1,500 real tokens, detection comes after 2 truncated
+  requests in Russian and after 1 or 2 in English, with o200k and GLM. Sessions in Cyrillic keep a
+  fraction of the window English keeps and are cut more often, and so do Greek, Arabic, Hebrew or
+  Hindi with a tokenizer that counts them below the estimate (such as o200k), until 0.9.0: in a
+  64,000-token window, a session reading Russian documents averages about 0.23 of the window after
+  its first cut where English averages 0.51, and is cut 10 or 11 times where English is cut 4.
+  Detection is unaffected.
 - **Output the estimate undercounts no longer makes honest text read as silent truncation.**
   The growth check judged an append's floor times the session ratio. The floor prices text near
   what tokenizers count, so a session ratio above 1 inflated it: repository listings and search
@@ -143,6 +149,16 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
   and a sample that now reads marginal enters the ratio; growth near zero still detects as before.
   On E2, 94 of the 96 runs are identical; in two, one sample reads differently,
   and every silent run keeps its truncated calls, detection, lag, names and cuts.
+- **A provider switch behind a router judges the span against the floor.** When a router
+  (OpenRouter) moves a request to another upstream provider, the sample is judged against that
+  provider's own last sample, and the span between them was judged against the estimate, without
+  the floor. On two honest providers, output the estimate prices far above its real tokens then
+  read as silent truncation: the dot report of 16,000 passing tests on the second provider lowered
+  the window from 200,000 to about 69,000, as it did with the providers alternating, and so did an
+  8,000-test dot report then base64 of a zero-filled file. The span is now judged against its floor,
+  as any append is. The trade: at a switch the check is as sensitive as everywhere else, which for
+  repetitive text and at ratios above 1 is less sensitive than before; growth near zero still
+  detects.
 - **A long run of one letter no longer stalls the engine.** The floor's pattern for a run that ends
   a line tested for the line break with a lookahead, which was retried from every position of a
   long run with nothing after it but text: 100,000 characters of one non-ASCII letter (such as `é`)

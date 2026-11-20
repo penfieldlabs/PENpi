@@ -211,7 +211,7 @@ export function installDetector(core: EngineCore): void {
 		// D24: at a switch, the previous provider's running maximum and evidence are set aside and the new one's
 		// restored (N1, N2: evidence and a learned window come from one provider). The new provider's last sample
 		// in the same append chain, if any, is the reference this sample is judged against (S1).
-		let reference: { seq: number; reported: number; chain: number; cum: number } | undefined;
+		let reference: { seq: number; reported: number; chain: number; cum: number; slack: number } | undefined;
 		if (switched && servedBefore !== undefined && servedBy !== undefined) {
 			if (!state.providerParked) state.providerParked = new Map();
 			const parked = state.providerParked;
@@ -283,14 +283,12 @@ export function installDetector(core: EngineCore): void {
 			// The shortfall is judged against the append's floor (textTokensFloor), which prices runs of one character
 			// and other repetition near what tokenizers count: honest test reporters, rules, bars, base64 of sparse
 			// data, blank lines and comment-marker lines otherwise read as most of the append missing.
-			// D24: at a provider switch the span is a chain sum, which keeps no floor, so it is judged against the
-			// estimate as before (left for 0.9.0).
+			// D24: at a provider switch the span is a chain sum, and so is what its floor takes off it.
 			// The floor prices text near what tokenizers count, so a session ratio above 1 (repository listings and search
 			// output reach 1.2 to 1.35, source maps about 3) would inflate it: the floor's judged growth takes the ratio at
 			// most 1. A ratio below 1 still applies.
-			const judged = reference
-				? grow
-				: Math.max(0, (grow / ratioBefore - sent.appendedSlack) * Math.min(ratioBefore, 1));
+			const slack = reference ? sent.slack - reference.slack : sent.appendedSlack;
+			const judged = Math.max(0, (grow / ratioBefore - slack) * Math.min(ratioBefore, 1));
 			stats.growthChecks.push({ seq: sent.seq, grow, delta, reference: reference !== undefined });
 			const shown = `${Math.round(grow)} tokens appended, reported usage ${delta >= 0 ? "+" : ""}${delta}`;
 			// An honest provider cannot report the same or less after text was appended, however little.
@@ -350,6 +348,7 @@ export function installDetector(core: EngineCore): void {
 				reported,
 				chain: sent.chain,
 				cum: sent.cum,
+				slack: sent.slack,
 			});
 		}
 		// D14: as long as the evidence span, so an answer truncated long before detection can still be named.

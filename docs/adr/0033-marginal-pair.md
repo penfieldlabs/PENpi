@@ -152,7 +152,7 @@ The full E2 and the replay of bench sessions are in the 0.8.0 gate. Both known-f
   search output lift the ratio to 1.2 to 1.35, and source maps to about 3. The sweep's lowest case reads 0.343 of the
   floor, and at a ratio of 1.34 the evidence line is 0.335 of it, a margin of 0.008; at 3.1, 1,580 of the default
   sweep's 20,751 cases read as evidence. The floor's judged growth now takes the ratio at most 1; a ratio below 1
-  still applies, and the provider-switch path, judged against the estimate, keeps the full ratio. The sweep now reads
+  still applies. At a provider switch the span takes the floor and the cap too (next item). The sweep now reads
   the same at every ratio: at 1.0, 1.1, 1.2, 1.3, 1.34 and 3.1, 73 cases below 0.5 and none below 0.25, as at 1.
   `honest-ratio-cap.test.ts` lifts the ratio to about 2.9 with source maps on an honest provider, then appends the
   sweep's lowest shapes: no detection, where the full ratio detected (o200k at the first append, strong; GLM at the
@@ -175,6 +175,25 @@ The full E2 and the replay of bench sessions are in the 0.8.0 gate. Both known-f
   `data.glm.1m.silent-front`. A strong detection takes it back out only when D14 names it, as there: it reported the
   same count as the strong sample, and every ratio after detection is as before. Otherwise it stays in the ratio, as
   strong evidence does not join marginal samples (left for 0.9.0, below).
+- **A provider switch judges the span against the floor.** At a switch (D24) a sample is judged against the serving
+  provider's own last sample in the same append chain, and the span between them is a chain sum. The chain kept no
+  floor, so the span was judged against the estimate times the full ratio, and everything the floor was built for read
+  there as it did before the floor. On two honest providers behind a router, counted with o200k and GLM, a session
+  that reads source files and then the dot report of 16,000 passing tests on the second provider detected silent
+  truncation at the next sample (10,279 tokens appended, +650 reported, strong) and learned a window of about 69,300;
+  so did the same session with the providers alternating on every request. An 8,000-test dot report then base64 of a
+  zero-filled file, each on the second provider, read as an evidence sample and a marginal one with o200k (this ADR's
+  pair, window about 71,100) and as one strong sample with GLM (5,753 appended, +862, just under 0.15). The counts are
+  from one checkout and shift by about 100 tokens a request with the install path, which the system prompt carries; at
+  another path, the 8,000-test session can detect with o200k as one strong sample instead of the pair. The chain now
+  sums `appendedSlack` beside the text (`appendSlack`), each sent request and each provider's last sample keep that sum,
+  and the span is judged as a plain append is: `(span - its slack) * min(ratio, 1)`. The notice handling at a switch and
+  the zero-growth rule are unchanged. The trade: at a switch the check is as sensitive as everywhere else, which for
+  repetitive text and at ratios above 1 is less sensitive than before; growth near zero still detects.
+  `d24-honest-switch.test.ts` runs those three sessions and three controls (one provider; more source on the second
+  provider; more source with the providers alternating) with each tokenizer: no detection. Without the change,
+  sessions 1 to 3 detect with both tokenizers. `d24-provider-switch.test.ts` passes unchanged, so truncation at a
+  switch is still detected.
 - **The fixes, in 0.8.0:**
   - The growth check judges the shortfall against a floor of the appended text (`textTokensFloor`;
     `messageFloorSlack` is the difference per message), the least of the terms below, where every term but the first
@@ -276,13 +295,16 @@ The full E2 and the replay of bench sessions are in the 0.8.0 gate. Both known-f
 - **Left for 0.9.0:**
   - `textTokens` itself. It still budgets runs and other repetition at the overcount (1,285 tokens for 32), which is
     safe for fit and wastes window. It also prices letters outside ASCII and CJK at the price of an unknown
-    character, 2.4 to 3.6 times the real count for Cyrillic prose, so the planner cuts such text that much early
-    until the ratio adapts.
+    character, 2.3 to 3.5 times the real count for Russian prose: such prose needs a session ratio of 0.29 to 0.44
+    (o200k and GLM), and the ratio stops at its floor of 0.8, so it never adapts and the planner cuts such text early
+    for the whole session. Measured on an honest provider with a 64,000-token window and 90 documents of about 1,000
+    real tokens each: after the first cut, a Russian session's requests average 0.22 to 0.24 of the window where
+    English averages 0.51, and it is cut 10 or 11 times where English is cut 4. Greek, Arabic, Hebrew and Hindi
+    average 0.30 with o200k, and as much as English with GLM, which counts those scripts above the estimate. The cost
+    is context kept; detection is unaffected.
   - Repetition across lines. The segment bound deflates all of a message's segments together, so the same 64-character
     hash on 100 lines has a floor of 240 against 3,599 real tokens. That only weakens detection for such appends; it
     never causes a false one.
-  - The provider-switch path (D24). It judges the span since the new provider's own last sample as a chain sum,
-    which keeps no floor, so it is judged against the estimate as before.
   - Strong evidence does not join marginal samples, as the outside review also noted. A marginal sample joins a weak
     evidence sample, but a strong one acts alone; the ratio restored and the names then depend on D14 catching the
     marginal sample. No change in 0.8.0.
@@ -296,6 +318,8 @@ The full E2 and the replay of bench sessions are in the 0.8.0 gate. Both known-f
   sessions above, the two of the second review and a control, on an honest provider counted with o200k: no
   detection), `honest-scripts.test.ts` (repository exploration output, then Russian or Bulgarian documents, with o200k
   and GLM: no detection; and prose in 13 languages at 0.5 or more of the floor), `honest-ratio-cap.test.ts` (source
-  maps lift the ratio to about 2.9, then the sweep's lowest shapes, with o200k and GLM: no detection), and the unit tests
+  maps lift the ratio to about 2.9, then the sweep's lowest shapes, with o200k and GLM: no detection),
+  `d24-honest-switch.test.ts` (two honest providers behind a router, a dot report or base64 of zeros read across a
+  switch, with o200k and GLM: no detection), and the unit tests
   (`completesMarginalPair`, `clearsMarginals`, `meetsSizeGuard`; `textTokensFloor` and `messageFloorSlack` in
   `engine/estimator.test.ts`).

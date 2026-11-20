@@ -86,7 +86,7 @@ export interface ModelState {
 	 * sample against it), and the detector state of providers not serving now (their running maximum and
 	 * evidence, set aside at a switch and restored when they serve again). Not persisted.
 	 */
-	providerLast?: Map<string, { seq: number; reported: number; chain: number; cum: number }>;
+	providerLast?: Map<string, { seq: number; reported: number; chain: number; cum: number; slack: number }>;
 	providerParked?: Map<
 		string,
 		{
@@ -228,20 +228,25 @@ export function newEngineState(faults: FaultConfig | undefined) {
 					noticeDrop: number;
 					noticeAdd: number;
 					afterLengthStop: boolean;
-					/** D24: the append chain this request belongs to, and the text appended along it so far. */
+					/**
+					 * D24: the append chain this request belongs to, the text appended along it so far, and what the
+					 * floor takes off that.
+					 */
 					chain: number;
 					cum: number;
+					slack: number;
 			  }
 			| undefined,
 		sendSeq: 0,
 		/**
 		 * D24: the append chain. Consecutive append-only requests form one chain (a cut, a rebuild, any other
 		 * request that is not append-only, or one right after a length stop starts the next); `appendCum` is the
-		 * text appended along the chain.
+		 * text appended along the chain, `appendSlack` what the floor takes off it.
 		 * The usage difference between two samples of one chain should be about the difference of their sums.
 		 */
 		appendChain: 0,
 		appendCum: 0,
+		appendSlack: 0,
 		/** D25: per capped section, the cap (and window) the last request saw; reset at each session start. */
 		sectionCapSeen: {} as Record<string, { cap: number; window: number }>,
 		/** Whether this session's first aligned request has checked the latest cut's header format. */

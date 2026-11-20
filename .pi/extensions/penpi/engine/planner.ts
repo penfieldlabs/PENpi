@@ -870,10 +870,13 @@ export function installPlanner(core: EngineCore): void {
 		// D24 notice gap (0.6.0): the chain sum counts this request's own notice, which the provider counts, so a span
 		// between two requests of the chain is what was appended plus the later notice minus the earlier one.
 		const noticeAdd = shape.noticeTokens;
-		if (appendOnly && !afterLengthStop) st.appendCum += appendedText - noticeDrop + noticeAdd;
-		else {
+		if (appendOnly && !afterLengthStop) {
+			st.appendCum += appendedText - noticeDrop + noticeAdd;
+			st.appendSlack += appendedSlack;
+		} else {
 			st.appendChain++;
 			st.appendCum = noticeAdd;
+			st.appendSlack = 0;
 		}
 		st.lastSent = {
 			estimate,
@@ -890,6 +893,7 @@ export function installPlanner(core: EngineCore): void {
 			afterLengthStop,
 			chain: st.appendChain,
 			cum: st.appendCum,
+			slack: st.appendSlack,
 		};
 		st.sentShape = shape;
 		stats.sent.push({ estimate, ratio: core.ratioFor(limits.key), budget: limits.budget, appended: appendedText });
