@@ -78,27 +78,27 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
 - **Honest tool output that repeats is no longer reported as silent truncation.** Test dot
   reporters, rules, progress bars, the bars of `git diff --stat`, base64 of mostly empty files,
   `-=-=` rules, blank CRLF lines, blank lines between short lines and `//` comment lines cost many
-  times their real tokens in the engine's estimate: 2,000 dots are 1,285 tokens by the estimate
-  and 32 by the o200k and GLM tokenizers, and base64 of a zero-filled 3,000-byte file is 2,677 and
-  500. The engine compares the usage growth a provider reports with what each request appended, so
-  on an honest provider such output could read as most of the append missing. The engine then
-  reported silent truncation, shrank the window for the session, cut the context and named answers
-  as unreliable. The growth check now judges against a floor that prices runs, short repeated
-  patterns (whitespace and control characters included), whitespace that holds a line break (with
-  a run of one character that ends the line before it, or a short marker that starts it, such as
-  `//` or `>`), and other repetition close to what tokenizers count, and a sample that reads only
-  a little short joins a detection only when its request is as large as evidence must be (ADR
-  0033). A seeded sweep of honest text, counted with both tokenizers, checks it: 24,321 cases
-  (periods of 1 to 32 characters in five layouts, at 1,000 to 100,000 characters; whitespace
-  stretches of 1 to 64 characters in 12 mixes between varying lines; random trailing whitespace,
-  indentation and blank lines; lines of only a comment, quote or table marker between random blank
-  lines; runs of 1 to 64 of one non-ASCII character between breaks; markers after text, of up to 8
-  characters, with text after them and before indentation; every case the reviews found). None is
-  below 0.25 of the floor in real tokens, where an honest sample would read as evidence. 73 are
-  between 0.25 and 0.5, the lowest 0.343: a marker after text on the same line (a counter and
-  `-->` or `*/`), lines of a marker of two or more words between blank lines (`// //`, `// *`),
-  and closing brackets or markers before indentation (`});` or `-->` and the next line's
-  indentation). Such a sample reads marginal: it never detects alone or with another marginal
+  times their real tokens in the engine's estimate: 2,000 dots are 1,285 tokens by the estimate and
+  32 by the o200k and GLM tokenizers, and base64 of a zero-filled 3,000-byte file is 2,677 and 500.
+  The engine compares the usage growth a provider reports with what each request appended, so on an
+  honest provider such output could read as most of the append missing. The engine then reported
+  silent truncation, shrank the window for the session, cut the context and named answers as
+  unreliable. The growth check now judges against a floor that prices runs, short repeated patterns
+  (whitespace and control characters included), whitespace that holds a line break (with a run of
+  one character that ends the line before it, or a short marker that starts it, such as `//` or
+  `>`), and other repetition close to what tokenizers count, and a sample that reads only a little
+  short joins a detection only when its request is as large as evidence must be (ADR 0033). A seeded
+  sweep of honest text, counted with both tokenizers, checks it: 24,321 cases (periods of 1 to 32
+  characters in five layouts, at 1,000 to 100,000 characters; whitespace stretches of 1 to 64
+  characters in 12 mixes between varying lines; random trailing whitespace, indentation and blank
+  lines; lines of only a comment, quote or table marker between random blank lines; runs of 1 to 64
+  of one non-ASCII character between breaks; markers after text, of up to 8 characters, with text
+  after them and before indentation; every case the reviews found). None is below 0.25 of the floor
+  in real tokens, where an honest sample would read as evidence. 54 are between 0.25 and 0.5 (73
+  before the fix below for control characters), the lowest 0.343: a marker after text on the same
+  line (a counter and `-->` or `*/`), lines of a marker of two or more words between blank lines
+  (`// //`, `// *`), and closing brackets or markers before indentation (`});` or `-->` and the next
+  line's indentation). Such a sample reads marginal: it never detects alone or with another marginal
   sample, and counts only with an evidence sample. The floor leaves these shapes there rather than
   pricing them lower, so it keeps its strength on ordinary output, and the sweep fails if more of
   them fall below 0.5, or if any falls below the lowest, 0.343. That is what was measured, not a
@@ -165,6 +165,23 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
   took about 30 seconds, once per appended message, and blocked the agent. The run is now matched
   alone and the line break tested once after it; that text takes well under a second, and the floor
   is the same on every case of the sweep.
+- **Output made mostly of control characters no longer reads as silent truncation on Anthropic.**
+  Claude's tokenizers drop the C0 control characters other than NUL, TAB and LF (CR, VT, FF, ESC,
+  backspace and the rest), DEL and the C1 controls, and bill them at nothing: 1,000 of them count 0
+  with Anthropic's token counter, and real requests bill what the counter counts. The growth check's
+  floor priced each of them like punctuation, so on Claude honest text made mostly of them read as
+  most of the append missing: runs of CR, VT or FF, form-feed padding, a run of one control
+  character. None of the common tool output measured looks like that: through Pi's tools, binary
+  files read 0.70 or more of the floor with Claude's counts, and progress bars redrawn with CR 1.03
+  or more. Counted with Anthropic's counter on every Claude model (four tokenizer groups), about
+  1,360 of the floor sweep's 24,341 cases were below 0.25 of the floor. The floor now prices these
+  characters at zero, takes NUL as whitespace in runs, and prices runs of U+2028, U+2029, Unicode
+  spaces and NUL with no line break as it prices runs of line breaks, where that is less. None of
+  the sweep's cases is below 0.25 now with Claude's counts, o200k, or GLM. The trade: the floor only
+  goes down, so the check is less sensitive on such text. Text with only LF line ends is unchanged;
+  a CRLF file's floor is now its LF floor, about 5% lower; output with color codes about 4 to 17%
+  lower and progress lines redrawn with CR 2 to 17% in the samples measured, more where codes or CRs
+  are a larger share of the text. Growth near zero still detects.
 - **An answer produced from silently truncated input is named, even when the warning sign before
   it lowered the engine's estimate.** When the engine finds silent truncation, it names every
   answer that came from cut input. A sample that read only a little short still counted toward

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { type AgentMessage, messageFloorSlack, textTokens, textTokensFloor } from "./estimator.ts";
+import { type AgentMessage, FLOOR_FREE, messageFloorSlack, textTokens, textTokensFloor } from "./estimator.ts";
 
 const unittest = (tests: number) => `${".".repeat(tests)}\n${"-".repeat(70)}\nRan ${tests} tests in 41.512s\n\nOK\n`;
 
@@ -105,14 +105,15 @@ describe("E3.5: the floor bounds other repetition by its deflated size", () => {
 
 describe("E3.5: the floor prices runs of a short period, whitespace and control characters included", () => {
 	it("blank CRLF lines and lines of one tab or one space fall far below textTokens", () => {
-		// Real tokens, o200k and GLM-5.3-Flash alike: 1,500 blank CRLF lines about 375.
+		// Real tokens, o200k and GLM-5.3-Flash alike: 1,500 blank CRLF lines about 375. CR costs nothing (FLOOR_FREE), so
+		// the floor is that of the LF lines.
 		const crlf = `Output:\r\n${"\r\n".repeat(1_500)}Done.\r\n`;
 		expect(textTokens(crlf)).toBe(1_970);
-		expect(textTokensFloor(crlf)).toBe(52);
+		expect(textTokensFloor(crlf)).toBe(28);
 		expect(textTokensFloor("\t\n".repeat(1_500))).toBe(48);
 		expect(textTokensFloor(" \n".repeat(1_500))).toBe(48);
-		// A unit of 8 and its CRLF: a period of 10.
-		expect(textTokensFloor("\r\n\r\n\r\n\t\r\n".repeat(200))).toBe(30);
+		// A unit of 8 and its CRLF: a period of 10, and of 5 without the CRs.
+		expect(textTokensFloor("\r\n\r\n\r\n\t\r\n".repeat(200))).toBe(17);
 	});
 
 	it("a period across classes costs half a token per change of class: `!` lines are one token each", () => {
@@ -121,7 +122,7 @@ describe("E3.5: the floor prices runs of a short period, whitespace and control 
 
 	it("next to sparse data, both are taken off", () => {
 		const text = `${"\r\n".repeat(500)}${Buffer.alloc(3_000).toString("base64")}`;
-		expect(textTokensFloor(text)).toBe(62);
+		expect(textTokensFloor(text)).toBe(54);
 	});
 
 	it("short repetition keeps its estimate; letters alone and spaces and tabs alone keep the other arms' floor", () => {
@@ -136,12 +137,13 @@ describe("E3.5: the floor prices runs of a short period, whitespace and control 
 
 describe("E3.5: the floor prices whitespace that holds a line break, with no period needed", () => {
 	it("blank lines between short lines fall far below textTokens", () => {
-		// A counter line, then 7 blank CRLF lines, 400 times: real tokens about 1,200 (o200k and GLM).
+		// A counter line, then 7 blank CRLF lines, 400 times: real tokens about 1,200 (o200k and GLM). The floors are those
+		// of the LF lines (FLOOR_FREE).
 		const counter = Array.from({ length: 400 }, (_, i) => `${i}${"\r\n".repeat(8)}`).join("");
 		expect(textTokens(counter)).toBe(5_024);
-		expect(textTokensFloor(counter)).toBe(1_630);
+		expect(textTokensFloor(counter)).toBe(1_180);
 		const blank14 = Array.from({ length: 150 }, (_, i) => `ok ${i}\r\n${"\r\n".repeat(14)}`).join("");
-		expect(textTokensFloor(blank14)).toBe(849);
+		expect(textTokensFloor(blank14)).toBe(566);
 	});
 
 	it("trailing whitespace before a break counts as such a run", () => {
@@ -162,9 +164,10 @@ describe("E3.5: the floor prices whitespace that holds a line break, with no per
 		const slashes = rep(1500, (i) => ["//\n", "// \n", "//\n\n"][i % 3]);
 		expect(textTokens(slashes)).toBe(3_566);
 		expect(textTokensFloor(slashes)).toBe(2_219);
-		// Ellipsis runs between blank CRLF lines: 1,025 o200k tokens, 2,114 by the arms before this.
+		// Ellipsis runs between blank CRLF lines: 1,025 o200k tokens, 2,114 by the arms before this, 515 with them, and 431
+		// without the CRs (FLOOR_FREE).
 		const ellipsis = rep(300, (i) => `${"…".repeat(4 + (i % 12))}${"\r\n".repeat(2 + (i % 6))}`);
-		expect(textTokensFloor(ellipsis)).toBe(515);
+		expect(textTokensFloor(ellipsis)).toBe(431);
 	});
 
 	it("an indented marker, a marker of 4 or more, and a run with text after it keep the floor they had", () => {
@@ -188,5 +191,52 @@ describe("E3.5: the floor's time on a long run with no line break after it", () 
 			textTokensFloor(text);
 			expect(performance.now() - start).toBeLessThan(1_000);
 		}
+	});
+});
+
+describe("E3.5: the floor prices at zero the characters Claude's tokenizers drop", () => {
+	it("the set: the C0 controls but NUL, TAB and LF, DEL, and the C1 controls", () => {
+		const free: number[] = [];
+		for (let c = 0; c < 0x10000; c++) if (String.fromCharCode(c).replace(FLOOR_FREE, "") === "") free.push(c);
+		const range = (a: number, b: number) => Array.from({ length: b - a + 1 }, (_, i) => a + i);
+		expect(free).toEqual([...range(0x01, 0x08), ...range(0x0b, 0x1f), ...range(0x7f, 0x9f)]);
+	});
+
+	it("text made only of them has a floor of 0; with other text it is priced as that text, and never above it", () => {
+		expect(textTokensFloor("\u0001\u0013\u001b\u007f\u0085".repeat(1_000))).toBe(0);
+		// Progress lines that each start with a carriage return, test output with color codes, a CRLF file.
+		const progress = Array.from({ length: 200 }, (_, i) => `\r[${"#".repeat(i % 40).padEnd(40)}] ${i % 100}%`).join(
+			"",
+		);
+		const color = Array.from({ length: 300 }, (_, i) => `\x1b[32m✓\x1b[0m test ${i} passed\n`).join("");
+		const crlf = Array.from({ length: 300 }, (_, i) => `line ${i}: const value = compute(${i});\r\n`).join("");
+		for (const text of [progress, color, crlf])
+			expect(textTokensFloor(text)).toBe(textTokensFloor(text.replace(FLOOR_FREE, "")));
+		expect([textTokensFloor(progress), textTokensFloor(color), textTokensFloor(crlf)]).toEqual([1_171, 2_941, 3_813]);
+	});
+
+	it("every C1 control costs nothing, not only NEL: 32 of them, 100 times over, have a floor of 0", () => {
+		const c1 = Array.from({ length: 32 }, (_, i) => String.fromCharCode(0x80 + i)).join("");
+		expect(textTokensFloor(c1.repeat(100))).toBe(0);
+	});
+
+	it("runs of U+2028 and spaces cost as runs of breaks: Claude merges them, with no character it drops", () => {
+		let seed = 24_681_357;
+		const pick = () => {
+			seed = (seed * 1_103_515_245 + 12_345) % 2_147_483_648;
+			return ["\u2028", " ", " "][Math.floor((seed / 2_147_483_648) * 3)];
+		};
+		const rep = (n: number, f: (i: number) => string) => Array.from({ length: n }, (_, i) => f(i)).join("");
+		// The sweep's two shapes, with the same mix (not the sweep's texts): Claude counts the sweep's texts at 125 and 800
+		// in every group. The floors of these were 1,018 and 3,422 before.
+		const random = rep(2_000, pick);
+		const counter = rep(400, (i) => `${i}${rep(12, pick)}`);
+		expect(textTokensFloor(random)).toBe(127);
+		expect(textTokensFloor(counter)).toBe(1_531);
+	});
+
+	it("runs of NUL and spaces cost as whitespace runs: Claude merges them (1,000 NUL count 63)", () => {
+		expect(textTokens(" \u0000 ".repeat(1_000))).toBe(2_139);
+		expect(textTokensFloor(" \u0000 ".repeat(1_000))).toBe(48);
 	});
 });

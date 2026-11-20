@@ -108,6 +108,17 @@ function classTokens(text: string, floor = false): number {
 	return tokens;
 }
 
+/**
+ * The characters the floor prices at zero: the C0 controls but NUL, TAB and LF (so CR, VT, FF, ESC and backspace), DEL,
+ * and the C1 controls (NEL among them). Claude's tokenizers drop them before counting, as Anthropic's token counter
+ * shows on the 4.5 and 4.6 models, on 4.7 and on the later ones, and as requests bill: 1,000 of one count 0 alone, and
+ * between other text they cost nothing and split nothing ("ab " and a control repeated counts as "ab " repeated).
+ * Priced as punctuation, honest text made mostly of them (runs of CR, VT or FF, form-feed padding, a run of one control
+ * character) read as truncation there.
+ * It has the `g` flag and is for `.replace` only: a `.test()` would carry `lastIndex` from one call to the next.
+ */
+export const FLOOR_FREE = /[\u0001-\u0008\u000b-\u001f\u007f-\u009f]/g;
+
 /** A run of 4 or more of one character that is not a letter, digit, space or tab. */
 const RUN = /([^A-Za-z0-9 \t])\1{3,}/g;
 
@@ -141,8 +152,15 @@ export const FLOOR_TOKENS_PER_BYTE = 2;
  *   count, trailing whitespace, indented blank lines, with no period needed; and with a run of one character that
  *   ends a line, or a short marker that starts one, priced with the breaks after it: rules and ellipses between
  *   blank lines, `//` and `#` comment lines, `>` quote lines.
+ * The floor is the lesser of that for the text and that for the text without the characters of FLOOR_FREE.
  */
 export function textTokensFloor(text: string): number {
+	const kept = text.replace(FLOOR_FREE, "");
+	return kept === text ? floorOf(text) : Math.min(floorOf(text), floorOf(kept));
+}
+
+/** textTokensFloor of a text as it is. */
+function floorOf(text: string): number {
 	// Every arm prices letters of other scripts as letters (classTokens with `floor`).
 	const classes = Math.ceil(classTokens(text, true));
 	const estimate = Math.max(classes, Math.ceil(text.length / 8));
@@ -167,8 +185,13 @@ export function textTokensFloor(text: string): number {
 	);
 }
 
-/** A character's class for a tokenizer's pre-split: 0 whitespace, 1 letter or mark, 2 digit, 3 anything else. */
-function charClass(ch: string): number {
+/**
+ * A character's class for a tokenizer's pre-split: 0 whitespace, 1 letter or mark, 2 digit, 3 anything else. NUL is
+ * `nul`: Claude merges runs of NUL and spaces as it does runs of whitespace (1,000 NUL count 63), other tokenizers take
+ * it as a control character.
+ */
+function charClass(ch: string, nul: number): number {
+	if (ch === "\u0000") return nul;
 	if (/\s/u.test(ch)) return 0;
 	if (/[\p{L}\p{M}]/u.test(ch)) return 1;
 	if (/\p{N}/u.test(ch)) return 2;
@@ -239,8 +262,14 @@ function periodRuns(text: string): PeriodRun[] {
  */
 function periodRunCost(text: string, r: PeriodRun): number {
 	const unit = [...text.slice(r.start, r.start + r.period)];
-	let changes = 0;
-	for (let k = 0; k < unit.length; k++) if (charClass(unit[k]) !== charClass(unit[(k + 1) % unit.length])) changes++;
+	const changesWith = (nul: number) => {
+		let changes = 0;
+		for (let k = 0; k < unit.length; k++)
+			if (charClass(unit[k], nul) !== charClass(unit[(k + 1) % unit.length], nul)) changes++;
+		return changes;
+	};
+	// NUL as whitespace and as anything else: the fewer changes.
+	const changes = Math.min(changesWith(0), changesWith(3));
 	const length = r.end - r.start;
 	return changes === 0 ? 1 + length / 64 : (changes * length) / (2 * r.period);
 }
@@ -251,11 +280,13 @@ function periodFloor(text: string, runs: PeriodRun[]): number {
 	return withoutRuns(text, runs, (piece) => ({ rest: piece, cost: 0 }));
 }
 
-/** Maximal runs of whitespace (spaces, tabs, line breaks, Unicode spaces). */
-const WHITESPACE = /\s+/gu;
+/** Maximal runs of whitespace (spaces, tabs, line breaks, Unicode spaces) and NUL (charClass). */
+const WHITESPACE = /[\s\u0000]+/gu;
 const LINE_BREAK = /[\r\n]/;
 /** One line break and the indentation after it: how ordinary text starts a line, which textTokens prices near its count. */
-const LINE_START = /^(?:\r\n|\r|\n)[^\S\r\n]*$/;
+const LINE_START = /^(?:\r\n|\r|\n)(?:[^\S\r\n]|\u0000)*$/;
+/** A run textTokens prices as one already (classTokens: DENSITY.wsRun). */
+const SPACES_AND_TABS = /^[ \t]+$/;
 const BREAK_RUN_BASE = 1.25;
 const BREAK_RUN_PER_UNIT = 1 / 16;
 /**
@@ -284,11 +315,13 @@ function breakRunCost(run: string): number {
 }
 
 /**
- * As periodFloor, and with each run of whitespace that holds a line break, other than one break and its indentation,
- * at breakRunCost. Tokenizers take what ends a line with the breaks after it (o200k keeps punctuation and the line
- * breaks after it together), so before that, a run of one character that ends a line costs 1 + length / 64, as in
- * RUN, and a marker at the start of a line with whitespace after it that holds a line break (`//` comment lines,
- * `>` quote lines, `|` table edges) costs breakRunCost of the marker and the whitespace together.
+ * As periodFloor, and with each run of whitespace that holds a line break, other than one break and its indentation, at
+ * breakRunCost, and so each run that holds no break and is not only spaces and tabs (U+2028 and U+2029, Unicode spaces,
+ * NUL) where that is less than its class costs: Claude merges such runs as it does breaks (20 of U+2028 count 2), and
+ * textTokens prices each character. Tokenizers take what ends a line with the breaks after it (o200k keeps punctuation
+ * and the line breaks after it together), so before that, a run of one character that ends a line costs
+ * 1 + length / 64, as in RUN, and a marker at the start of a line with whitespace after it that holds a line break
+ * (`//` comment lines, `>` quote lines, `|` table edges) costs breakRunCost of the marker and the whitespace together.
  */
 function breakFloor(text: string, runs: PeriodRun[]): number {
 	return withoutRuns(text, runs, (piece) => {
@@ -306,7 +339,12 @@ function breakFloor(text: string, runs: PeriodRun[]): number {
 				return "";
 			})
 			.replace(WHITESPACE, (w) => {
-				if (!LINE_BREAK.test(w) || LINE_START.test(w)) return w;
+				if (
+					LINE_BREAK.test(w)
+						? LINE_START.test(w)
+						: SPACES_AND_TABS.test(w) || classTokens(w, true) <= breakRunCost(w)
+				)
+					return w;
 				cost += breakRunCost(w);
 				return "";
 			});

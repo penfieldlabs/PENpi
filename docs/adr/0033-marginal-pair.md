@@ -264,20 +264,20 @@ The full E2 and the replay of bench sessions are in the 0.8.0 gate. Both known-f
   sample, 294 stay below. It takes repetition across lines, which tokenizers do not merge. With the marker lines and
   non-ASCII runs added, 38 of the 4,917 new cases were below 0.5 on that floor, none below 0.25, the lowest 0.364 (`─`
   runs of 16 between CRLF breaks). Pricing the run or marker of a line with its breaks closes all of them and changes
-  the floor of 71 of 385 E2 samples, by 1.1% at most (top-level closing brackets in code and JSON). Measured against
-  it: pricing every run inside the arm, not only one before a break, changes 49 samples by up to 17.6% (`├──` tree
-  lines); taking indented markers too, 76 by up to 11.6%; markers of up to 64, 79 by up to 2.7%; the run or the marker
-  alone leaves 23 or 15 cases below 0.5. Of the sweep's cases then, none was below; the lowest was 0.501. With the
-  marker places and the reviews' later measured cases added (3,672 and 396), 73 cases are between 0.25 and 0.5 and none
-  below 0.25, the lowest 0.343, with `FLOOR_SWEEP_FULL=1` too: the three shapes above. The sweep fails on any case
-  below 0.25, on a new case below 0.5 (more than 73) or on a lowest below 0.343. A known shape can still go lower
-  inside the band without failing: the rule pins the count and the lowest, not each case. The engine suite runs the
-  sweep with the periodic cases at 1,000 and 10,000 characters; `FLOOR_SWEEP_FULL=1` adds 100,000. This is what was
-  measured, not a bound for every text. The floor costs, once per message, on a 1 MB append about 260 ms of source
-  code, 160 ms of pretty-printed JSON, 250 ms of one character, 220 ms of blank lines with random trailing spaces, 340
-  ms of `//` comment lines, 290 ms of box-drawing runs between breaks and 405 ms of `});` lines before indentation;
-  `//` lines and `});` lines are the costliest measured, about 340 to 410 ms; a slower machine took about 1.4 times as
-  long, about 570 ms.
+  the floor of 71 of 385 E2 samples, by 1.1% at most (top-level closing brackets in code and JSON). Measured against it:
+  pricing every run inside the arm, not only one before a break, changes 49 samples by up to 17.6% (`├──` tree lines);
+  taking indented markers too, 76 by up to 11.6%; markers of up to 64, 79 by up to 2.7%; the run or the marker alone
+  leaves 23 or 15 cases below 0.5. Of the sweep's cases then, none was below; the lowest was 0.501. With the marker
+  places and the reviews' later measured cases added (3,672 and 396), 73 cases are between 0.25 and 0.5 and none below
+  0.25, the lowest 0.343, with `FLOOR_SWEEP_FULL=1` too: the three shapes above. The sweep fails on any case below 0.25,
+  on a new case below 0.5 (more than 73, and 54 since the characters Claude drops cost nothing; see below) or on a
+  lowest below 0.343. A known shape can still go lower inside the band without failing: the rule pins the count and the
+  lowest, not each case. The engine suite runs the sweep with the periodic cases at 1,000 and 10,000 characters;
+  `FLOOR_SWEEP_FULL=1` adds 100,000. This is what was measured, not a bound for every text. The floor costs, once per
+  message, on a 1 MB append about 260 ms of source code, 160 ms of pretty-printed JSON, 250 ms of one character, 220 ms
+  of blank lines with random trailing spaces, 340 ms of `//` comment lines, 290 ms of box-drawing runs between breaks
+  and 405 ms of `});` lines before indentation; `//` lines and `});` lines are the costliest measured, about 340 to 410
+  ms; a slower machine took about 1.4 times as long, about 570 ms.
 
   Where the floor is lower, the check is weaker there, never falser: a lower floor only raises the growth the check
   accepts; it never makes a detection. Runs of one character before a break are judged at about half their real tokens
@@ -292,6 +292,35 @@ The full E2 and the replay of bench sessions are in the 0.8.0 gate. Both known-f
   of a line priced with its breaks, in every result field and every engine log line (timestamps aside), so the 48
   silent runs keep their truncated calls, detection, lag, names and cuts; the two known failures are unchanged. E2's
   honest runs have no marginal or evidence sample at all, which is why it could not see this.
+- **The tokenizers the floor is measured against.** The sweep's rule, no honest case below 0.25 of the floor, was first
+  checked with o200k and GLM-5.3-Flash alone. It has since been checked with nine public tokenizers from Hugging Face,
+  through `@huggingface/tokenizers`: cl100k (`Xenova/gpt-4`), Llama 3.3 (`unsloth/Llama-3.3-70B-Instruct`), MiniMax M2
+  (`MiniMaxAI/MiniMax-M2`), DeepSeek V3 (`deepseek-ai/DeepSeek-V3`), Qwen 2.5 (`Qwen/Qwen2.5-7B-Instruct`), Mistral Nemo
+  (`unsloth/Mistral-Nemo-Instruct-2407`), Grok-1 (`Xenova/grok-1-tokenizer`), Gemma 3 (`unsloth/gemma-3-4b-it`) and the
+  retired Claude 2 (`Xenova/claude-tokenizer`); and with Claude itself, through Anthropic's token counter
+  (`POST /v1/messages/count_tokens`) on every Claude model Pi lists. Those fall into four groups that count the sweep
+  alike: the 4.5 and 4.6 models; Opus 4.7; Fable 5, Opus 4.8 and Sonnet 5; and Fable 5.1 and 5.2, Haiku 5.5, Opus 5 and
+  5.5 and Sonnet 5.5. Real requests bill what the counter counts. The retired Claude 2 is still the one exception, with
+  its six cases below 0.25: runs of one U+0000, U+00A0 or U+3000 alone, and lines indented with runs of Unicode spaces,
+  which Claude 2 merges far more tightly than the current Claude models: 10,000 of one count 12 on Claude 2, against 625
+  for U+0000 and U+00A0 and 10,000 for U+3000 on the current ones. The fix for the current models does not reach them
+  and was not meant to.
+- **Characters Claude drops cost nothing in the floor.** Claude's tokenizers drop the C0 controls but NUL, TAB and LF
+  (CR, VT, FF, ESC and the rest), DEL and all 32 C1 controls, measured one by one since the sweep holds no C1 character
+  but NEL: 1,000 of one count 0 in every group, and between other text they cost nothing and split nothing. Priced as
+  punctuation, they put about 1,360 of the sweep's 24,341 cases below 0.25 with each Claude group, mostly units of
+  control characters and runs of CR. The floor is now the lesser of its value for the text and for the text without them
+  (`FLOOR_FREE`), so it is never higher than before. Claude also merges runs of NUL with spaces (1,000 NUL count 63),
+  and runs of U+2028, U+2029 and Unicode spaces (20 of U+2028 count 2), so NUL is whitespace in a period's classes where
+  that gives fewer changes, and a run of whitespace or NUL with no line break, not only spaces and tabs, costs 1.25 +
+  length / 16 where that is less than its class costs. That last rule is what lifts the two cases that hold no character
+  Claude drops, runs of U+2028 and spaces (0.126 and 0.235 before, 0.984 and 0.524 now). With Claude's counts none of
+  the sweep's cases is below 0.25 in any group; 14 (4.5, 4.6 and 4.7) to 51 (the later groups) are below 0.5, the lowest
+  0.280 (a line, a break and 30 indents of NBSP and space). With o200k and GLM none is below 0.25 and 54 are below 0.5,
+  from 73: the CRLF forms of 19 marginal shapes left the band. The lowest is unchanged at 0.343. The trade: text with
+  only LF line ends keeps its floor; a CRLF file's floor is its LF floor, about 5% lower; output with color codes about
+  4 to 17% lower and progress lines redrawn with CR 2 to 17% in the samples measured, more where codes or CRs are a
+  larger share of the text.
 - **Left for 0.9.0:**
   - `textTokens` itself. It still budgets runs and other repetition at the overcount (1,285 tokens for 32), which is
     safe for fit and wastes window. It also prices letters outside ASCII and CJK at the price of an unknown
