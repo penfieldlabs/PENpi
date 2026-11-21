@@ -44,3 +44,5 @@ the same PR (see [CONTRIBUTING.md](../../CONTRIBUTING.md)).
 | [0030](0030-strict-config-values.md) | Validate configuration values instead of coercing them | Accepted |
 | [0031](0031-upstream-ancestry-and-patch-manifest.md) | Record upstream ancestry and list every patch against it | Accepted |
 | [0032](0032-context-engine.md) | Replace FIFO with the context engine | Accepted |
+| [0033](0033-marginal-pair.md) | A marginal sample and an evidence sample detect silent truncation together | Accepted |
+| [0034](0034-names-at-the-ratio-before-doubt.md) | Truncated answers are named at the ratio from before the first doubtful sample | Accepted |

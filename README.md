@@ -280,6 +280,19 @@ work. The per-LLM-call context hooks the context engine depends on are unique to
 
 If PENpi is useful to you, please support and credit the upstream Pi project.
 
+## Upstream's apps (not in PENpi)
+
+Upstream Pi v1.5.1 added `apps/`: `apps/p2`, a self-hosted web, server and terminal app for
+Pi built from Chord plugins, and `apps/p3`, design notes for its successor. Upstream's README
+for p2 calls it an unsupported prototype that "will be gone soon". PENpi leaves `apps/` out.
+p2 would not use PENpi's features: it runs its own agents on Pi's durable runtime, not
+through Pi's coding agent, and it does not load PENpi's extension, so it has neither Penfield
+memory nor the context engine.
+
+To try p2, use upstream's repository: its
+[README at v1.5.1](https://github.com/earendil-works/pi/blob/v1.5.1/apps/p2/README.md) says
+how to run it.
+
 ## License
 
 MIT. Pi is © Mario Zechner — see [LICENSE](LICENSE), preserved in full with its

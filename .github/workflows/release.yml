@@ -13,7 +13,40 @@ on:
 permissions: {}
 
 jobs:
+  # The E2 corpus pin (the e2-corpus: line in docs/UPSTREAM_PATCHES.txt): the corpus read from the pinned commit
+  # must have the pinned fingerprint, or the release stops. A job of its own, so the build job's write permission
+  # is not held while dependencies install.
+  corpus-pin:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    env:
+      RELEASE_TAG: ${{ github.event.inputs.tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: E2 corpus pin
+        working-directory: packages/coding-agent
+        env:
+          E2_PIN_REQUIRED: "1"
+        run: npx vitest --run test/suite/context-engine-e2/corpus-pin.test.ts
+
   build:
+    needs: corpus-pin
     runs-on: ubuntu-latest
     # Backstop for the whole job, matching ci.yml. The v0.3.0 run took 19s, so
     # anything approaching this cap is a stall, not slow work. It matters more

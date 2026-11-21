@@ -12,7 +12,7 @@
  * 3. Update CHANGELOG.md: [Unreleased] -> [version] — date
  * 4. Regenerate release artifacts
  * 5. Run checks and tests
- * 6. Commit the release (the tag is made later, on the merged squash commit)
+ * 6. Commit the release (the tag is made later, on the merge commit on main)
  * 7. Add new [Unreleased] section to changelogs
  * 8. Commit next-cycle changelog updates
  * 9. Print the manual steps that follow. This script never pushes: the release goes
@@ -169,7 +169,7 @@ console.log("Running tests...");
 run("./test.sh");
 console.log();
 
-// 6. Commit. No tag here: the release tag goes on the merged squash commit on main (step 9).
+// 6. Commit. No tag here: the release tag goes on the PR's merge commit on main (step 9).
 console.log("Committing...");
 stageChangedFiles();
 run(`git commit -m "Release v${version}"`);
@@ -190,8 +190,8 @@ console.log();
 console.log(`=== Prepared release v${version} locally. Nothing was pushed. ===`);
 console.log("Next, by hand (docs/TEST_PROTOCOL.md, AGENTS.pi.md):");
 console.log("  1. Run the full gate from a clean checkout of this branch.");
-console.log("  2. Open a PR to main; squash-merge it once CI passes.");
-console.log("  3. Verify the merged tree equals the gated tree, then tag the merged commit:");
+console.log("  2. Open a PR to main; once CI passes, merge it with a merge commit, never a squash.");
+console.log("  3. Verify the merged tree equals the gated tree, then tag the merge commit:");
 console.log(`       git tag -a v${version} <merged-commit> -m "PENpi ${version}"`);
 console.log("  4. Only after the release is approved, push that one tag by name:");
 console.log(`       git push <remote> v${version}`);

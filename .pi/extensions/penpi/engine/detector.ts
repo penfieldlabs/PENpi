@@ -4,6 +4,65 @@ import type { EngineCore } from "./core.ts";
 import { STATE_TYPE, type TruncatedTurn } from "./options.ts";
 import type { ModelState } from "./state.ts";
 
+/**
+ * ADR 0033: whether a judged sample completes a marginal pair. An evidence sample does with a marginal sample in the
+ * evidence span, and a marginal sample does with an evidence sample in it. Two marginal samples never do: honest
+ * content can read marginal (the `+` bars of `git diff --stat` read about 0.5 of the estimate), and twice in a row.
+ */
+export function completesMarginalPair(kind: "evidence" | "marginal", evidence: number, marginals: number): boolean {
+	return kind === "evidence" ? marginals > 0 : evidence > 0;
+}
+
+/**
+ * The size guard of evidence and of the pair's marginal side: the request is expected at 0.8 or more of the largest
+ * usage reported so far.
+ */
+export function meetsSizeGuard(expected: number, max: number): boolean {
+	return expected >= 0.8 * max;
+}
+
+/**
+ * ADR 0033: whether a clean sample forgets the marginal samples. As for evidence: a clean sample above everything
+ * reported so far, marginal samples included, by more than `flatness` (the provider processed more than they did).
+ */
+export function clearsMarginals(
+	reported: number,
+	maxReported: number,
+	marginals: Array<{ reported: number }>,
+	flatness: number,
+): boolean {
+	return (
+		marginals.length > 0 && reported > Math.max(maxReported, ...marginals.map((e) => e.reported)) * (1 + flatness)
+	);
+}
+
+/**
+ * ADR 0034: the samples named at a detection. `affected` (D14 as before) are always named. A doubtful sample
+ * (quarantined, or marginal by its growth) that fed the ratio lowered the expected size of the samples after it, and a
+ * truncated one can then fall under D14's line. So each sample from its append chain's first doubtful sample on (that
+ * one included) is judged again at the ratio from before that sample, raising only: max(expected, expected / ratio x
+ * r0) above the window by more than `flatness`. Within a chain the content only grows; after a cut it changes, and a
+ * real fall of the ratio there must not name honest answers. Names only: nothing here feeds the ratio or a request.
+ */
+export function namedSamples<S extends ModelState["recent"][number]>(
+	served: S[],
+	affected: S[],
+	window: number,
+	flatness: number,
+	clamp: (ratio: number) => number,
+	rescale: boolean,
+): S[] {
+	if (!rescale) return affected;
+	const chainStart = new Map<number, number>();
+	return served.filter((s) => {
+		if (s.chain !== undefined && (s.suspect !== undefined || s.marginal) && !chainStart.has(s.chain))
+			chainStart.set(s.chain, clamp(s.ratio));
+		if (affected.includes(s)) return true;
+		const r0 = s.chain === undefined ? undefined : chainStart.get(s.chain);
+		return r0 !== undefined && Math.max(s.expected, (s.expected / clamp(s.ratio)) * r0) > window * (1 + flatness);
+	});
+}
+
 /** The replay check decides from this many request pairs on (spec: 20 or more). */
 export const REPLAY_CHECK_PAIRS = 20;
 /** A pair counts only when its replayed reasoning is at least this many tokens and this share of the text. */
@@ -152,7 +211,7 @@ export function installDetector(core: EngineCore): void {
 		// D24: at a switch, the previous provider's running maximum and evidence are set aside and the new one's
 		// restored (N1, N2: evidence and a learned window come from one provider). The new provider's last sample
 		// in the same append chain, if any, is the reference this sample is judged against (S1).
-		let reference: { seq: number; reported: number; chain: number; cum: number } | undefined;
+		let reference: { seq: number; reported: number; chain: number; cum: number; slack: number } | undefined;
 		if (switched && servedBefore !== undefined && servedBy !== undefined) {
 			if (!state.providerParked) state.providerParked = new Map();
 			const parked = state.providerParked;
@@ -160,12 +219,14 @@ export function installDetector(core: EngineCore): void {
 				maxReported: state.maxReported,
 				maxExpected: state.maxExpected,
 				suspects: state.suspects,
+				marginals: state.marginals,
 			});
 			const back = parked.get(servedBy);
 			parked.delete(servedBy);
 			state.maxReported = back?.maxReported ?? 0;
 			state.maxExpected = back?.maxExpected;
 			state.suspects = back?.suspects ?? [];
+			state.marginals = back?.marginals ?? [];
 			const last = state.providerLast?.get(servedBy);
 			reference = last && last.chain === sent.chain ? last : undefined;
 			log(
@@ -197,6 +258,8 @@ export function installDetector(core: EngineCore): void {
 			Math.abs(expected - (state.maxExpected ?? 0)) >= 0.005 * expected;
 		// A sample whose growth falls short but not far enough to be evidence never clears evidence.
 		let marginal = false;
+		// ADR 0033: marginal by its growth (not a length stop or an unjudged switch), with its log text.
+		let short: string | undefined;
 		// Only judged samples (the growth rule or the exact-repeat rule compared them) can be suspects;
 		// unjudged ones (small appends, the sample after a length stop, warm-up after a model switch, no
 		// append-only predecessor) are skipped and do not reset the count.
@@ -217,6 +280,15 @@ export function installDetector(core: EngineCore): void {
 			const grow =
 				(reference ? sent.cum - reference.cum : sent.appendedText - sent.noticeDrop + sent.noticeAdd) * ratioBefore;
 			const delta = reported - base.reported;
+			// The shortfall is judged against the append's floor (textTokensFloor), which prices runs of one character
+			// and other repetition near what tokenizers count: honest test reporters, rules, bars, base64 of sparse
+			// data, blank lines and comment-marker lines otherwise read as most of the append missing.
+			// D24: at a provider switch the span is a chain sum, and so is what its floor takes off it.
+			// The floor prices text near what tokenizers count, so a session ratio above 1 (repository listings and search
+			// output reach 1.2 to 1.35, source maps about 3) would inflate it: the floor's judged growth takes the ratio at
+			// most 1. A ratio below 1 still applies.
+			const slack = reference ? sent.slack - reference.slack : sent.appendedSlack;
+			const judged = Math.max(0, (grow / ratioBefore - slack) * Math.min(ratioBefore, 1));
 			stats.growthChecks.push({ seq: sent.seq, grow, delta, reference: reference !== undefined });
 			const shown = `${Math.round(grow)} tokens appended, reported usage ${delta >= 0 ? "+" : ""}${delta}`;
 			// An honest provider cannot report the same or less after text was appended, however little.
@@ -226,14 +298,22 @@ export function installDetector(core: EngineCore): void {
 			}
 			// Otherwise an absolute floor: an honest provider counts the appended part exactly; only its
 			// estimate varies, so small appends say little.
-			else if (grow >= opts.silentMinGrowth) {
-				if (delta < opts.silentShortfall * grow && expected >= 0.8 * max) {
+			else if (judged >= opts.silentMinGrowth) {
+				if (delta < opts.silentShortfall * judged && meetsSizeGuard(expected, max)) {
 					suspect = shown;
-					// Most of a large append unaccounted for: no tokenizer overcounts text by that much
-					// (the estimator's classes stay within 0.85-1.12 of o200k and GLM; a chars/4 count
-					// within 3x).
-					strong = grow >= opts.silentStrongGrowth && delta < opts.silentStrongShortfall * grow;
-				} else if (delta < opts.silentMarginal * grow) marginal = true;
+					// Most of a large append unaccounted for. On ordinary text the estimator's classes stay within
+					// 0.85-1.12 of o200k and GLM (a chars/4 count within 3x), but textTokens overcounts repetition
+					// many times over, so the check is made against the floor. Measured, not proved: in the floor
+					// sweep (floor-sweep.test.ts, seeded honest text counted with o200k and GLM) no case is below
+					// 0.25 of it in real tokens, and the known honest shapes between 0.25 and 0.5 are marginal
+					// (ADR 0033); other text can fall lower.
+					strong = judged >= opts.silentStrongGrowth && delta < opts.silentStrongShortfall * judged;
+				} else if (delta < opts.silentMarginal * judged) {
+					marginal = true;
+					// ADR 0033: the pair's marginal side has the evidence side's size guard. A request far below the
+					// largest usage the provider already reported cannot have been truncated by it.
+					if (meetsSizeGuard(expected, max)) short = `${shown} (marginal)`;
+				}
 			}
 		}
 		if (
@@ -247,6 +327,17 @@ export function installDetector(core: EngineCore): void {
 		) {
 			suspect = `reported exactly the previous maximum ${reported} again, expected about ${Math.round(expected)}`;
 		}
+		// ADR 0033: marginal samples older than the evidence span are forgotten, as weak evidence is.
+		const inSpan = (e: { sample: number }) => state.samples - e.sample < opts.silentEvidenceSpan;
+		const marginals = opts.silentMarginalPair ? (state.marginals ?? []).filter(inSpan) : [];
+		state.marginals = marginals;
+		// A marginal sample with an evidence sample in the span is the pair's second suspect: quarantined like evidence.
+		const pairs =
+			!suspect &&
+			short !== undefined &&
+			opts.silentMarginalPair &&
+			completesMarginalPair("marginal", state.suspects.filter(inSpan).length, marginals.length);
+		if (pairs) suspect = short;
 		if (!suspect && !sent.afterLengthStop && !switched && prev && prev.seq === sent.seq - 1 && sent.appendOnly)
 			checkReplay(key, sent, reported - prev.reported, ctx);
 		state.lastSample = { seq: sent.seq, reported };
@@ -257,15 +348,40 @@ export function installDetector(core: EngineCore): void {
 				reported,
 				chain: sent.chain,
 				cum: sent.cum,
+				slack: sent.slack,
 			});
 		}
 		// D14: as long as the evidence span, so an answer truncated long before detection can still be named.
 		state.recent = [
 			...state.recent.slice(-(opts.silentEvidenceSpan - 1)),
-			{ at: assistant.timestamp, expected, reported, ratio: state.ratio, suspect, provider: state.servedBy },
+			{
+				at: assistant.timestamp,
+				expected,
+				reported,
+				ratio: state.ratio,
+				suspect,
+				...(short !== undefined ? { marginal: true } : {}),
+				chain: sent.chain,
+				provider: state.servedBy,
+			},
 		];
 		if (suspect) {
+			// ADR 0033: a lone evidence sample (not strong: that one acts alone; not a second: that one detects anyway) with
+			// marginal samples earlier in the span. They were not quarantined when judged, since nothing marked them then;
+			// they join the evidence now, and detection restores the ratio from before the first of them.
+			const alone = state.suspects.filter(inSpan).length === 0;
+			const joining =
+				!pairs && !strong && alone && completesMarginalPair("evidence", 0, marginals.length) ? marginals : [];
+			for (const m of joining) {
+				const r = state.recent.find((s) => s.at === m.at && s.reported === m.reported);
+				if (r) r.suspect = m.why;
+			}
+			if (pairs) log("silent truncation: a marginal sample with evidence earlier in the span");
+			if (joining.length > 0)
+				log(`silent truncation: ${joining.length} marginal sample(s) earlier in the span join this evidence`);
+			state.marginals = [];
 			state.suspects = [
+				...joining,
 				...state.suspects.filter((e) => state.samples - e.sample < opts.silentEvidenceSpan),
 				{ reported, at: assistant.timestamp, sample: state.samples, why: suspect },
 			];
@@ -289,6 +405,23 @@ export function installDetector(core: EngineCore): void {
 		) {
 			log(`silent truncation evidence cleared: ${reported} reported`);
 			state.suspects = [];
+		}
+		// ADR 0033: the same rule forgets marginal samples; a marginal sample is kept for a pair.
+		if (!marginal && clearsMarginals(reported, state.maxReported, marginals, opts.plateauFlatness)) {
+			log(`silent truncation marginal samples cleared: ${reported} reported`);
+			// ADR 0034: a cleared marginal sample was judged honest, so it no longer starts a rescale of its chain.
+			for (const m of marginals) {
+				const r = state.recent.find((s) => s.at === m.at && s.reported === m.reported);
+				if (r) delete r.marginal;
+			}
+			state.marginals = [];
+		}
+		if (short !== undefined && opts.silentMarginalPair) {
+			state.marginals = [
+				...state.marginals,
+				{ reported, at: assistant.timestamp, sample: state.samples, why: short },
+			];
+			log(`silent truncation marginal sample: ${short}; kept for a pair with evidence`);
 		}
 		if (reported > state.maxReported) {
 			state.maxReported = reported;
@@ -373,7 +506,19 @@ export function installDetector(core: EngineCore): void {
 					s.expected > window * (1 + opts.plateauFlatness)),
 		);
 		if (affected.length > 0) state.ratio = affected[0].ratio;
-		// Was a re-probe of a silent-learned window running? Then the truncated answers include the probe's.
+		// ADR 0034: names only (namedSamples); the restored ratio above comes from today's affected set.
+		const named = namedSamples(
+			state.recent.filter((s) => s.provider === state.servedBy),
+			affected,
+			window,
+			opts.plateauFlatness,
+			core.clampRatio,
+			opts.silentNameRescale,
+		);
+		if (named.length > affected.length)
+			log(
+				`silent truncation: ${named.length - affected.length} more answer(s) named at the ratio from before their chain's first doubtful sample`,
+			);
 		const probing = state.learned?.source === "plateau" && state.learned.window > state.learned.base;
 		// Re-probe only an implausibly small window (below silentReprobeBelow of the planning window), and
 		// at most silentReprobes times per session: against a real silent truncator a probe costs a truncated
@@ -397,9 +542,10 @@ export function installDetector(core: EngineCore): void {
 		log(
 			`silent truncation: ${state.suspects.map((e) => e.why).join("; ")}; largest usage ever reported ${max}; window -> ${window} (this session only)${probing ? "; the re-probe was truncated" : ""}; ${reprobe ? `re-probe after ${opts.probeAfterUnparsed} clean requests (${state.silentProbes}/${opts.silentReprobes} used)` : "not re-probed"}`,
 		);
-		st.pendingPlateau = { key, window, max, samples: affected, probing };
+		st.pendingPlateau = { key, window, max, samples: named, probing };
 		state.recent = [];
 		state.suspects = [];
+		state.marginals = [];
 		state.history = [];
 	}
 

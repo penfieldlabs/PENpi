@@ -93,14 +93,16 @@ describe("E3.9: quarantined samples and the ratio", () => {
 	});
 
 	it("b13 two weak samples: neither moves the ratio, and after detection it is the ratio before the first", async () => {
-		// Calls 16 and 17 each report a fifth of their honest growth: weak evidence, and the second stays below
+		// Calls 16 and 17 each report 0.15 of their honest growth: weak evidence, and the second stays below
 		// 2% above the maximum, so it confirms the first instead of clearing it.
+		// The growth check takes this provider's ratio of 1.3 at most 1: a fifth reads 0.26 (marginal), a tenth 0.13 (strong).
 		const honestAt: number[] = [];
 		const reportedAt: number[] = [];
 		const stats = await run((call, honest) => {
 			honestAt[call] = honest;
 			let value: number | undefined;
-			if (call === 16 || call === 17) value = reportedAt[call - 1] + Math.round(0.2 * (honest - honestAt[call - 1]));
+			if (call === 16 || call === 17)
+				value = reportedAt[call - 1] + Math.round(0.15 * (honest - honestAt[call - 1]));
 			reportedAt[call] = value ?? honest;
 			return value;
 		});

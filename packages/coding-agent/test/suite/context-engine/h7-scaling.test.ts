@@ -4,7 +4,7 @@
  * Reports the engine's own handler time and the wall time per request (which includes Pi's own
  * O(history) work: projection rebuild and the structuredClone in emitContext).
  * Port (behaviours without a test, item 11): the bar is below 1 ms of engine time per request, with the
- * user-message pin on (the shipping default). Runs on request only (nightly on the VPS), as does bench.
+ * user-message pin on (the shipping default). Runs on request only, as does bench.
  */
 import { fauxAssistantMessage, fauxText, fauxToolCall } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";

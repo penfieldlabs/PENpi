@@ -6,6 +6,217 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
 
 ## [Unreleased]
 
+## [0.8.0] — Unreleased
+
+### Changed
+- **PENpi is on upstream Pi v1.5.1** (from v1.5.0). See Pi's own changelog
+  (`packages/coding-agent/CHANGELOG.md`). What PENpi users notice:
+  - OAuth logins keep working when Pi is stopped during a token refresh, and two refreshes
+    through a symlinked `auth.json` share one lock.
+  - The read tool streams large files, and grep no longer reads every matched file into memory,
+    so neither runs out of memory on large files.
+  - Internal cursor markers no longer leak into terminal output.
+  - The default model of each provider changed. For `anthropic` it is now Claude Opus 5.5
+    (`claude-opus-5-5`, $4 and $20 per million input and output tokens) instead of Claude Opus
+    4.8 ($5 and $25); upstream's changelog lists the others. Pi uses a provider's default when
+    settings name no model or the saved model is not available. A model saved in settings stays.
+  - The default output limit now leaves 15% of the estimated input unused, and near a full window
+    asks for at most 32,768 output tokens. PENpi's context engine also lowers `max_tokens` to what
+    its learned window leaves, and never raises it, so a request asks for the lower of the two.
+  - Anthropic message threads are on, as upstream has them, for the `anthropic` provider on
+    `api.anthropic.com`: a request sends only the new messages, and the server continues from its
+    previous reply. The server still reports usage for the whole conversation, so the context
+    engine's silent-truncation check works as before. A thread expires 5 minutes after its last
+    request, and Anthropic deletes it no more than 1 hour after its last use. Threads are not
+    eligible for zero data retention or HIPAA. For an organization with HIPAA readiness, Anthropic
+    rejects the thread; Pi then sends the request in full and leaves threads off for the rest of
+    the session. To turn them off, set `"compat": { "supportsMessageThreads": false }` for the
+    `anthropic` provider in `models.json`, or for one model under its `modelOverrides`.
+  - Prompt cache warming follows upstream v1.5.1's default, `"idle"`. For models with a
+    prompt-cache lifetime, Pi also keeps the cache warm between runs, for up to 30 minutes. It
+    sends a refresh only when it expects to save at least $0.05, counting a 15% chance that the
+    user comes back before the cache expires. PENpi 0.7.0's default was `"streaming"`, which
+    warms only while a run streams. Set `"cacheWarming": "off"` or `"streaming"` in settings to
+    change it.
+  - Upstream v1.5.1 added `apps/`, with p2, an experimental web and server app that upstream
+    calls an unsupported prototype. PENpi leaves `apps/` out, and `npm ci` installs nothing for
+    it. See "Upstream's apps" in the README.
+- **A tool result found by `context_search` names the call that made it.** A hit on a tool result
+  showed only `tool result bash` and a snippet of its output, so the results of two similar
+  commands could look the same. It now also shows the command or path, after `from: `, clipped at
+  100 characters. The change came from a PENpi-bench case: a query for one script's output also
+  found a sibling script's, and neither hit said which was which. That case is in-sample, so it
+  shows the problem, not what the change gains.
+- **`context_search` can show the matches past its first 10.** It shows at most 10 hits a reply,
+  and `limit` could only lower that. A new `offset` skips that many matches, and the reply's
+  "more not shown" line now names the offset of the next page. The change came from a PENpi-bench
+  case: the first search for the first of six similar runs hit the 10-hit cap on 7 of 8 facts. That
+  case is in-sample, so it shows the problem, not what the change gains.
+
+### Added
+- **A script that counts the floor sweep with Claude's own tokenizer.**
+  `packages/coding-agent/test/suite/context-engine/floor-sweep-claude.mjs` sends each case of the
+  floor sweep to Anthropic's token counter, on the Claude models Pi lists, and reports real tokens
+  over the growth check's floor per model, as ADR 0033 cites. Counting is free and needs only an
+  Anthropic API key in `ANTHROPIC_API_KEY`. Its guide, `floor-sweep-claude.md`, is beside it. It
+  is not part of any test run.
+
+### Security
+- **`hono` 4.13.18 replaces 4.13.13 and `@hono/node-server` 2.1.8 replaces 2.1.4** (four moderate
+  advisories against `hono`: GHSA-4m76-xfj5-7975, GHSA-h7mg-cq63-vhpq, GHSA-46wx-v44x-9hh2 and
+  GHSA-4h7h-rv7c-7m2v; two against `@hono/node-server`: GHSA-qv5m-9pm6-hqp3 and
+  GHSA-jpvv-r467-5p4w). Both come in through the MCP SDK that PENpi's extension uses. PENpi's
+  override of `hono` moves to 4.13.18, which also has security fixes not yet in an advisory, and a
+  new override holds `@hono/node-server` at 2.1.8, which `npm update` alone would move to the
+  newest. `npm audit` reports no vulnerabilities.
+
+### Fixed
+- **Silent truncation that first reads only a little short is detected sooner.** The context engine
+  compares the usage growth a provider reports with what each request appended. Growth below a
+  quarter of the append is evidence; growth below half was only a warning sign and counted for
+  nothing. Now such a sample and one evidence sample within 30 requests detect together, in
+  either order (ADR 0033). Two such samples alone never do, since honest output such as
+  `git diff --stat` bars can read that low. On the upstream v1.5.0 corpus (`f9a263655`), E2's two
+  known failures pass: research.glm.32k.silent-messages at lag 2 and
+  data.o200k.1m.silent-messages at lag 3 (both lag 4 before, against the limit 3). The
+  known-failure entry for research.glm.32k.silent-messages is gone. data.o200k.1m.silent-messages
+  fails again on the upstream v1.5.1 corpus (see Known issues). This path could not have fired in
+  any stored release-gate session, so the evidence for the fix is its unit test and E2, not the
+  gate.
+- **Honest tool output that repeats is no longer reported as silent truncation.** Test dot
+  reporters, rules, progress bars, the bars of `git diff --stat`, base64 of mostly empty files,
+  `-=-=` rules, blank CRLF lines, blank lines between short lines and `//` comment lines cost many
+  times their real tokens in the engine's estimate: 2,000 dots are 1,285 tokens by the estimate and
+  32 by the o200k and GLM tokenizers, and base64 of a zero-filled 3,000-byte file is 2,677 and 500.
+  The engine compares the usage growth a provider reports with what each request appended, so on an
+  honest provider such output could read as most of the append missing. The engine then reported
+  silent truncation, shrank the window for the session, cut the context and named answers as
+  unreliable. The growth check now judges against a floor that prices runs, short repeated patterns
+  (whitespace and control characters included), whitespace that holds a line break (with a run of
+  one character that ends the line before it, or a short marker that starts it, such as `//` or
+  `>`), and other repetition close to what tokenizers count, and a sample that reads only a little
+  short joins a detection only when its request is as large as evidence must be (ADR 0033). A seeded
+  sweep of honest text, counted with both tokenizers, checks it: 24,321 cases (periods of 1 to 32
+  characters in five layouts, at 1,000 to 100,000 characters; whitespace stretches of 1 to 64
+  characters in 12 mixes between varying lines; random trailing whitespace, indentation and blank
+  lines; lines of only a comment, quote or table marker between random blank lines; runs of 1 to 64
+  of one non-ASCII character between breaks; markers after text, of up to 8 characters, with text
+  after them and before indentation; every case the reviews found). None is below 0.25 of the floor
+  in real tokens, where an honest sample would read as evidence. 54 are between 0.25 and 0.5 (73
+  before the fix below for control characters), the lowest 0.343: a marker after text on the same
+  line (a counter and `-->` or `*/`), lines of a marker of two or more words between blank lines
+  (`// //`, `// *`), and closing brackets or markers before indentation (`});` or `-->` and the next
+  line's indentation). Such a sample reads marginal: it never detects alone or with another marginal
+  sample, and counts only with an evidence sample. The floor leaves these shapes there rather than
+  pricing them lower, so it keeps its strength on ordinary output, and the sweep fails if more of
+  them fall below 0.5, or if any falls below the lowest, 0.343. That is what was measured, not a
+  bound for every text. The trade: runs of one character before a break are priced at about half
+  their real tokens, so detection is weaker there, never falser; on 47 files of ordinary output
+  (source, JSON, Markdown, diffs, logs) the floor is 0.1% lower than with whitespace and line breaks
+  alone. The floor costs about 110 to 410 ms on a 1 MB append (about 260 ms of source code; `//`
+  lines and `});` lines before indentation are the costliest measured, about 340 to 410 ms); a
+  slower machine takes up to about 1.4 times that, about 570 ms. Of the cases the reviews of 0.8.0
+  found, at least four date from before 0.8.0: 0.7.0 detects them too. A new engine test on an
+  honest provider counted with the o200k tokenizer passes its twenty-seven sessions, and all 96 E2
+  runs are unchanged.
+- **Prose in Cyrillic and other scripts is no longer reported as silent truncation.** The engine's
+  estimate prices each letter outside ASCII and CJK (Cyrillic, Greek, Arabic, Hebrew, Indic
+  scripts, Georgian, Thai, accented Latin) as an unknown character, so ordinary Russian prose costs
+  three to four times its real tokens there, and the growth check's floor had no arm for prose: a
+  Russian document read about 0.3 of the floor in real tokens. Repository exploration output (search
+  hits and file listings) calibrates the session ratio to about 1.2 to 1.35, and at that ratio a
+  Russian document read as evidence: on an honest provider, two Russian documents after such output
+  detected silent truncation (0.7.0 too), and so did a Russian document then a Bulgarian one, as an
+  evidence sample and a marginal one (ADR 0033). The floor now prices letters and marks outside
+  ASCII and CJK as ASCII letters, in every arm, and is never above the estimate; the estimate itself
+  is unchanged, so budgets and calibration are too. Measured, not proved: the floor is never higher
+  than before on the 24,321 cases of the sweep, 20 documents in 13 languages and E2's 385 samples, and equal
+  on all ASCII-only text; it is lower on 219 of the default sweep's 20,751 cases, by up to 86%
+  there (zalgo combining stacks), and on 19 of E2's samples, by 0.6% at most there. Prose in each
+  script now reads 0.85 or more of the floor with o200k and GLM. The cost: for text in these scripts
+  the growth check is less sensitive, since a truncation must now cut a larger share of it to show;
+  one that leaves growth near zero still does. On a provider that silently keeps 30,000 tokens of a
+  declared 200,000, with documents of about 1,500 real tokens, detection comes after 2 truncated
+  requests in Russian and after 1 or 2 in English, with o200k and GLM. Sessions in Cyrillic keep a
+  fraction of the window English keeps and are cut more often, and so do Greek, Arabic, Hebrew or
+  Hindi with a tokenizer that counts them below the estimate (such as o200k), until 0.9.0: in a
+  64,000-token window, a session reading Russian documents averages about 0.23 of the window after
+  its first cut where English averages 0.51, and is cut 10 or 11 times where English is cut 4.
+  Detection is unaffected.
+- **Output the estimate undercounts no longer makes honest text read as silent truncation.**
+  The growth check judged an append's floor times the session ratio. The floor prices text near
+  what tokenizers count, so a session ratio above 1 inflated it: repository listings and search
+  output lift the ratio to 1.2 to 1.35, where the sweep's lowest honest case was 0.008 above the
+  evidence line, and source maps lift it to about 3, where 1,580 of the sweep's 20,751 cases read
+  as evidence. On an honest provider, source maps then marker and bracket lines detected silent
+  truncation and lowered the window to about 110,000 tokens. The floor's judged growth now takes
+  the ratio at most 1, and the sweep reads the same at every ratio. The trade: where the estimate
+  undercounts ordinary text, the check is that much less sensitive. On a provider that counts 1.3
+  times the estimate, a truncation must leave growth below about 0.19 of the honest growth to be
+  evidence, not 0.25. At a ratio of 2.9 that is about 0.086, appends must be larger to be judged,
+  and a sample that now reads marginal enters the ratio; growth near zero still detects as before.
+  On E2, 94 of the 96 runs are identical; in two, one sample reads differently,
+  and every silent run keeps its truncated calls, detection, lag, names and cuts.
+- **A provider switch behind a router judges the span against the floor.** When a router
+  (OpenRouter) moves a request to another upstream provider, the sample is judged against that
+  provider's own last sample, and the span between them was judged against the estimate, without
+  the floor. On two honest providers, output the estimate prices far above its real tokens then
+  read as silent truncation: the dot report of 16,000 passing tests on the second provider lowered
+  the window from 200,000 to about 69,000, as it did with the providers alternating, and so did an
+  8,000-test dot report then base64 of a zero-filled file. The span is now judged against its floor,
+  as any append is. The trade: at a switch the check is as sensitive as everywhere else, which for
+  repetitive text and at ratios above 1 is less sensitive than before; growth near zero still
+  detects.
+- **A long run of one letter no longer stalls the engine.** The floor's pattern for a run that ends
+  a line tested for the line break with a lookahead, which was retried from every position of a
+  long run with nothing after it but text: 100,000 characters of one non-ASCII letter (such as `é`)
+  took about 30 seconds, once per appended message, and blocked the agent. The run is now matched
+  alone and the line break tested once after it; that text takes well under a second, and the floor
+  is the same on every case of the sweep.
+- **Output made mostly of control characters no longer reads as silent truncation on Anthropic.**
+  Claude's tokenizers drop the C0 control characters other than NUL, TAB and LF (CR, VT, FF, ESC,
+  backspace and the rest), DEL and the C1 controls, and bill them at nothing: 1,000 of them count 0
+  with Anthropic's token counter, and real requests bill what the counter counts. The growth check's
+  floor priced each of them like punctuation, so on Claude honest text made mostly of them read as
+  most of the append missing: runs of CR, VT or FF, form-feed padding, a run of one control
+  character. None of the common tool output measured looks like that: through Pi's tools, binary
+  files read 0.70 or more of the floor with Claude's counts, and progress bars redrawn with CR 1.03
+  or more. Counted with Anthropic's counter on every Claude model (four tokenizer groups), about
+  1,360 of the floor sweep's 24,341 cases were below 0.25 of the floor. The floor now prices these
+  characters at zero, takes NUL as whitespace in runs, and prices runs of U+2028, U+2029, Unicode
+  spaces and NUL with no line break as it prices runs of line breaks, where that is less. None of
+  the sweep's cases is below 0.25 now with Claude's counts, o200k, or GLM. The trade: the floor only
+  goes down, so the check is less sensitive on such text. Text with only LF line ends is unchanged;
+  a CRLF file's floor is now its LF floor, about 5% lower; output with color codes about 4 to 17%
+  lower and progress lines redrawn with CR 2 to 17% in the samples measured, more where codes or CRs
+  are a larger share of the text. Growth near zero still detects.
+- **An answer produced from silently truncated input is named, even when the warning sign before
+  it lowered the engine's estimate.** When the engine finds silent truncation, it names every
+  answer that came from cut input. A sample that read only a little short still counted toward
+  the engine's token ratio. So the next request in the same run of growing requests could look a
+  little smaller than it was, and fall just under the line for naming. Such requests are now
+  judged at the ratio from before that sample (ADR 0034). This changes only the names in the
+  warning, never a request. In E2 on the upstream v1.5.1 corpus, data.o200k.1m.silent-messages
+  left call 31 unnamed, about 70 tokens under the line; 0.7.0 does the same.
+- **E2's test material is pinned on its own.** E2 builds its sessions from upstream Pi's files at
+  the upstream base recorded for the patch manifest, so the v1.5.1 merge also changed the
+  material, and every E2 run changed with it. Code and material could not be told apart. The
+  material now has its own `e2-corpus:` line in `docs/UPSTREAM_PATCHES.txt`, with the revision and
+  its fingerprint, pinned at v1.5.1. A run at that revision fails when the fingerprint differs,
+  and each run's results and the summary name the revision. CI's engine-on-upstream job and the
+  release workflow check the fingerprint too; the release stops on a mismatch.
+
+### Known issues
+- **E2: two runs detect silent truncation one call late** (C6, lag 4 against the limit 3). Both are
+  accepted until 0.9.0, measured on the upstream v1.5.1 corpus; on the v1.5.0 corpus 0.8.0 passes
+  both at lag 3, and 0.7.0 fails both the same way on v1.5.1:
+  - data.o200k.1m.silent-messages, accepted since 0.6.0: one more call is truncated, by 398
+    tokens, too little to tell from honest growth;
+  - data.o200k.32k.silent-front, new: the truncation starts earlier on this corpus, and two of
+    the truncated calls read as honest growth.
+- **After a cut, an agent can pick up an earlier task that is already finished, or report it as
+  done**, as in 0.7.0.
+
 ## [0.7.0] — 2026-11-08
 
 ### Changed

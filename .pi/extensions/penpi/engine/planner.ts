@@ -6,6 +6,7 @@ import {
 	type AgentMessage,
 	imageSize,
 	imageTokens,
+	messageFloorSlack,
 	messageImageTokens,
 	messageTokens,
 	requestShape,
@@ -840,6 +841,8 @@ export function installPlanner(core: EngineCore): void {
 			shape.keys.length >= st.sentShape.keys.length &&
 			st.sentShape.keys.every((k, i) => shape.keys[i] === k);
 		let appendedText = 0;
+		// What its floor takes off it (textTokensFloor: runs and other repetition), which the growth check judges at.
+		let appendedSlack = 0;
 		// The replay check (detector): reasoning Pi replays, which providers count or ignore, and thinking
 		// sent as text, which every provider counts.
 		let appendedReplay = 0;
@@ -852,6 +855,7 @@ export function installPlanner(core: EngineCore): void {
 				const sent = core.parts(m);
 				const images = sent.tokens === 0 ? 0 : messageImageTokens(m);
 				appendedText += sent.tokens === 0 ? 0 : sent.tokens - sent.reasoning - images;
+				if (sent.tokens > 0) appendedSlack += messageFloorSlack(m);
 				appendedImages += images;
 				if (sent.tokens > 0) {
 					appendedReplay += sent.reasoning - (sent.asText ?? 0);
@@ -866,10 +870,13 @@ export function installPlanner(core: EngineCore): void {
 		// D24 notice gap (0.6.0): the chain sum counts this request's own notice, which the provider counts, so a span
 		// between two requests of the chain is what was appended plus the later notice minus the earlier one.
 		const noticeAdd = shape.noticeTokens;
-		if (appendOnly && !afterLengthStop) st.appendCum += appendedText - noticeDrop + noticeAdd;
-		else {
+		if (appendOnly && !afterLengthStop) {
+			st.appendCum += appendedText - noticeDrop + noticeAdd;
+			st.appendSlack += appendedSlack;
+		} else {
 			st.appendChain++;
 			st.appendCum = noticeAdd;
+			st.appendSlack = 0;
 		}
 		st.lastSent = {
 			estimate,
@@ -877,6 +884,7 @@ export function installPlanner(core: EngineCore): void {
 			seq: ++st.sendSeq,
 			appendOnly,
 			appendedText,
+			appendedSlack,
 			appendedReplay,
 			appendedAsText,
 			appendedImages,
@@ -885,6 +893,7 @@ export function installPlanner(core: EngineCore): void {
 			afterLengthStop,
 			chain: st.appendChain,
 			cum: st.appendCum,
+			slack: st.appendSlack,
 		};
 		st.sentShape = shape;
 		stats.sent.push({ estimate, ratio: core.ratioFor(limits.key), budget: limits.budget, appended: appendedText });

@@ -111,7 +111,11 @@ percent of a request is dropped, the reported usage hardly changes, and an hones
 the same. Such a truncation goes unseen until a larger one follows. In E2 one was 374 of 16,441
 tokens (2.3%); on the 0.5.x corpus it made research.glm.32k.silent-messages fail C6 (lag 4). E2
 accepts such misses inside C8's band (0.02 plus the estimate error, at most 5%); outside the band,
-a truncated answer must be named.
+a truncated answer must be named. Since 0.8.0 a truncation that reads marginal (growth below half the
+append) counts when an evidence sample comes within 30 samples (ADR 0033): on the upstream v1.5.0
+corpus (`f9a263655`) that detects research.glm.32k.silent-messages at lag 2 and
+data.o200k.1m.silent-messages at lag 3. Two marginal readings alone never count, since honest
+output such as `git diff --stat` bars can read that low.
 
 ## Extensions that change messages in Pi's `context` event
 

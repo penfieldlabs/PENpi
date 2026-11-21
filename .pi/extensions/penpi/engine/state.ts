@@ -63,6 +63,14 @@ export interface ModelState {
 		reported: number;
 		ratio: number;
 		suspect?: string;
+		/**
+		 * ADR 0034: judged marginal by its growth (ADR 0033) when it was sampled. Kept on the sample, since the marginal
+		 * list is emptied before detection, so that D14 can find the ratio from before the first doubtful sample.
+		 * Removed when a clean sample clears the marginal samples: the engine has then judged it honest.
+		 */
+		marginal?: boolean;
+		/** ADR 0034: the append chain of its request (D24); a cut starts a new one. */
+		chain?: number;
 		/** D24: the upstream provider that served it, when the response named one. */
 		provider?: string;
 	}>;
@@ -78,14 +86,27 @@ export interface ModelState {
 	 * sample against it), and the detector state of providers not serving now (their running maximum and
 	 * evidence, set aside at a switch and restored when they serve again). Not persisted.
 	 */
-	providerLast?: Map<string, { seq: number; reported: number; chain: number; cum: number }>;
-	providerParked?: Map<string, { maxReported: number; maxExpected?: number; suspects: ModelState["suspects"] }>;
+	providerLast?: Map<string, { seq: number; reported: number; chain: number; cum: number; slack: number }>;
+	providerParked?: Map<
+		string,
+		{
+			maxReported: number;
+			maxExpected?: number;
+			suspects: ModelState["suspects"];
+			marginals?: ModelState["marginals"];
+		}
+	>;
 	/** The largest usage reported by a sample that was not quarantined. */
 	maxReported: number;
 	/** The expectation of the sample that set maxReported (a repeat of the same request is no evidence). */
 	maxExpected?: number;
 	/** Quarantined samples (evidence of silent truncation), with the sample count when seen. */
 	suspects: Array<{ reported: number; at: number; sample: number; why: string }>;
+	/**
+	 * ADR 0033: marginal samples by growth (not quarantined), kept for a pair with an evidence sample within the
+	 * evidence span. Not persisted, like the evidence.
+	 */
+	marginals?: Array<{ reported: number; at: number; sample: number; why: string }>;
 	learned?: LearnedWindow;
 	output: {
 		ceiling?: number;
@@ -188,7 +209,8 @@ export function newEngineState(faults: FaultConfig | undefined) {
 		/**
 		 * The request just sent. `seq` numbers every request; `appendOnly` says its message list extends
 		 * the previous request's (request-only notice tails excluded), `appendedText` is the estimate of the
-		 * appended messages without images (`appendedImages` the estimate of their images), `noticeDrop` the
+		 * appended messages without images (`appendedSlack` what their floor takes off it, see textTokensFloor;
+		 * `appendedImages` the estimate of their images), `noticeDrop` the
 		 * estimate of the previous request's notice, `noticeAdd` that of this request's own notice,
 		 * `afterLengthStop` that the appended messages include an answer cut at the output limit.
 		 */
@@ -199,26 +221,32 @@ export function newEngineState(faults: FaultConfig | undefined) {
 					seq: number;
 					appendOnly: boolean;
 					appendedText: number;
+					appendedSlack: number;
 					appendedReplay: number;
 					appendedAsText: number;
 					appendedImages: number;
 					noticeDrop: number;
 					noticeAdd: number;
 					afterLengthStop: boolean;
-					/** D24: the append chain this request belongs to, and the text appended along it so far. */
+					/**
+					 * D24: the append chain this request belongs to, the text appended along it so far, and what the
+					 * floor takes off that.
+					 */
 					chain: number;
 					cum: number;
+					slack: number;
 			  }
 			| undefined,
 		sendSeq: 0,
 		/**
 		 * D24: the append chain. Consecutive append-only requests form one chain (a cut, a rebuild, any other
 		 * request that is not append-only, or one right after a length stop starts the next); `appendCum` is the
-		 * text appended along the chain.
+		 * text appended along the chain, `appendSlack` what the floor takes off it.
 		 * The usage difference between two samples of one chain should be about the difference of their sums.
 		 */
 		appendChain: 0,
 		appendCum: 0,
+		appendSlack: 0,
 		/** D25: per capped section, the cap (and window) the last request saw; reset at each session start. */
 		sectionCapSeen: {} as Record<string, { cap: number; window: number }>,
 		/** Whether this session's first aligned request has checked the latest cut's header format. */

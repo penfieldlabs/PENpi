@@ -134,8 +134,8 @@ describe("context_search", () => {
 		expect(t.results.search2).toMatch(/entries match; 10 shown, newest first; \d+ more not shown/);
 		expect(search2Lines.length).toBe(10);
 		expect(t.results.search2.length - t.results.search2.split("\n")[0].length).toBeLessThanOrEqual(4_001);
-		// scope "all" also searches what is in view.
-		expect(t.results.search3).toMatch(new RegExp(`· in view · Report ${tag(39)}:`));
+		// scope "all" also searches what is in view. A result hit names its call (0.8.0): emit's arguments.
+		expect(t.results.search3).toMatch(new RegExp(`· in view · from: ${tag(39)} \\d+ 39 · Report ${tag(39)}:`));
 		// Searching and recalling only append: the prefix changes only at cuts; requests stay valid.
 		expect(prefix.breaks).toBe(t.stats.cuts.length);
 		expect(t.model.requests.flatMap((r) => validateRequest(r))).toEqual([]);
