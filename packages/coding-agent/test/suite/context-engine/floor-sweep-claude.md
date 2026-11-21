@@ -28,7 +28,9 @@ the floor for each model.
 - **The repository's dependencies:** run `npm ci` at the repository root.
 - **An Anthropic API key**, in the environment variable `ANTHROPIC_API_KEY`. The script reads it from there only,
   and never prints, logs or writes it. It prints only whether the key is set, and any error message that holds the key
-  shows `<key>` in its place.
+  shows `<key>` in its place. The key goes to `https://api.anthropic.com` only: the script refuses plain http and any
+  other host unless you set `ANTHROPIC_COUNT_ALLOW_HOST=1` (see the variables), and it prints the address before it
+  sends anything. `report` and `export` send nothing and need no key.
 
 ## What it costs
 
@@ -67,8 +69,8 @@ typing it.
 | `overhead` | each model's request overhead (see below) | 6 requests a model |
 | `probe` | overhead, then every 64th case of the sweep (381 of the full sweep) on each model, then the groups | about 7 minutes for all models |
 | `sweep` | the whole sweep on `MODELS` | about 25 minutes a model |
-| `report` | the reports again from what is counted, with the floor in your checkout | none |
-| `export` | the full sweep's counts to `claude-counts.txt`, for `claude-counts.test.ts` (see below) | none |
+| `report` | the reports again from what is counted, with the floor in your checkout | none, and no key |
+| `export` | the full sweep's counts to `claude-counts.txt`, for `claude-counts.test.ts` (see below) | none, and no key |
 | `billing` | the optional paid check (see the last section) | free unless `PAID_CHECK=1` |
 
 A typical run (in PowerShell, use `$F = "..."` and `$env:MODELS = "all"` in place of the sh forms):
@@ -94,7 +96,8 @@ MODELS=claude-haiku-4-5,claude-fable-5 LIMIT=50 node $F sweep
 | `ANTHROPIC_API_KEY` | none (required) | the API key |
 | `MODELS` | every Claude model in `packages/ai/src/providers/data/anthropic.json`; for `sweep`, the first model of each probe group | comma-separated model ids, or `all` |
 | `OUT` | `floor-sweep-claude` in the system's temp directory | where the results go |
-| `BASE_URL` | `https://api.anthropic.com` | the API's address |
+| `ANTHROPIC_COUNT_BASE_URL` | `https://api.anthropic.com` | where the requests, and the key, go; an address that does not parse, or is not http or https, stops the script at once |
+| `ANTHROPIC_COUNT_ALLOW_HOST` | off | 1 to let `ANTHROPIC_COUNT_BASE_URL` use plain http or name a host other than `api.anthropic.com`, such as a local stand-in or a proxy you run |
 | `RATE` | 1000 | requests a minute at most |
 | `CONC` | 16 | requests in flight at most |
 | `FLOOR_SWEEP_FULL` | 1 | 0 for the default sweep (20,766 cases) instead of the full one (24,336), as in `floor-sweep.test.ts` |
@@ -112,6 +115,12 @@ MODELS=claude-haiku-4-5,claude-fable-5 LIMIT=50 node $F sweep
   count the same), and refuses a text that is only whitespace. So a text whose trailing whitespace holds a line feed,
   or that is refused as whitespace only, is sent with an `a` after it, and counted 1 less. Its row is marked
   `suffixed`.
+- **A limit of the measurement.** In a real request the appended tool result is the last text, so its trailing line
+  feeds are not counted there, while the script counts them. Pi's tools cap a result at 2,000 lines. 2,000 empty
+  lines cost about 32 tokens in the floor, and whitespace-only lines of uneven width about 1 token for each 16
+  characters, so only an append that ends in about 4,000 characters or more of such lines reaches the 256 tokens the
+  check needs to judge a sample, and could read short for that reason. That is rare output, and the sweep does not
+  measure it.
 - **Lone surrogates.** Some cases cut an emoji in half. A lone surrogate is not valid in the request's JSON, so it is
   sent as U+FFFD, as a UTF-8 client sends it. Its row is marked `fffd`. The floor is that of the case as it is.
 - **Real tokens** are the count less the overhead (and less 1 for a suffixed row).
@@ -130,6 +139,8 @@ Everything goes under `OUT`:
 | `summary.json` | written by `report`: each model's cases counted, refused, overhead, cases below 0.25 and 0.5, and the lowest |
 | `billing.json` | written by `billing`: each text's count, billed tokens if sent, and the estimated cost |
 
+On an `OUT` with nothing counted yet, `report` says so ("report: nothing is counted yet in ...") and writes nothing.
+
 **Reading a report.** After each model, the script prints one line such as:
 
     claude-haiku-4-5: 24336 of 24336 cases counted (0 refused); overhead 7; below 0.25: 0; below 0.5: 12; lowest 0.499 "..."
@@ -143,7 +154,10 @@ A case with a floor of 0 that Claude counts at 0 reads 1.
 
 **The groups.** Many Claude models share a tokenizer. The probe counts the same 381 cases on every model, and models
 whose counts are identical on all of them form a group. Counting one model per group then covers them all, which is
-why `sweep` defaults to the first model of each group. To be sure, `MODELS=all` counts every model.
+why `sweep` defaults to the first model of each group. To be sure, `MODELS=all` counts every model. For ADR 0033's
+figures and `claude-counts.txt`, all 18 models counted the full sweep, and the groups over its 24,336 cases were
+the probe's four, unchanged: the 4.5 and 4.6 models (eight ids), Opus 4.7, Fable 5 with Opus 4.8 and Sonnet 5, and
+Fable 5.1 and 5.2 with Haiku 5.5, Opus 5, Opus 5.5 and Sonnet 5.5.
 
 **Comparing with ADR 0033.** The ADR's figures are for the full sweep, with the floor at the version it describes:
 - the four groups;
@@ -191,6 +205,8 @@ over, delete `OUT` or pick another one.
 | Error | What it means | What to do |
 |---|---|---|
 | "ANTHROPIC_API_KEY holds a character an HTTP header can't carry" | the variable holds a line break, a space or another character a key does not have, often from reading a file with two lines | The script stops before any request. Set the variable to the key alone. |
+| "ANTHROPIC_COUNT_BASE_URL would send the key over plain http" | the address is `http://`, which would send the key unencrypted | The script stops before any request. Use `https://`, or set `ANTHROPIC_COUNT_ALLOW_HOST=1` for a local stand-in. |
+| "ANTHROPIC_COUNT_BASE_URL sends the key to ..." | the address names a host other than `api.anthropic.com` | The script stops before any request. Fix the address, or set `ANTHROPIC_COUNT_ALLOW_HOST=1` if you mean that host. |
 | 401 or 403 | the key is missing, wrong or not allowed | The script stops at once. Check `ANTHROPIC_API_KEY`, and that the key belongs to an organization that can use the API. |
 | 429 | over the rate limit | The script waits as long as the response's `retry-after` asks (10 seconds if it gives none), then goes on. Many 429s mean `RATE` is above your tier's limit, so lower it. |
 | 5xx, or a network error | the server or the network failed | The script retries up to 8 times, waiting longer each time (about 4 minutes in all), then records the case as an error. A rerun counts it again. |

@@ -14,7 +14,7 @@
 //   probe      overhead, then every 64th case of the sweep on each model; models whose counts are identical on all of
 //              them form a group (OUT/probe/groups.json)
 //   sweep      the sweep on MODELS (default: the first model of each probe group; "all" for every model)
-//   report     the reports again from what is counted, with the checkout's floor (no network)
+//   report     the reports again from what is counted, with the checkout's floor (no network, no key)
 //   export     the full sweep's counts, one column per group of models that count it alike, to claude-counts.txt
 //              beside this file (COUNTS_FILE), which claude-counts.test.ts re-prices offline (no network)
 //   billing    an optional paid check that real requests bill what the counter counts: a few short texts per model,
@@ -26,9 +26,10 @@
 //   ANTHROPIC_API_KEY  the key; never printed, logged or written
 //   MODELS     comma-separated model ids (default: every Claude id in packages/ai/src/providers/data/anthropic.json)
 //   OUT        output directory (default: floor-sweep-claude in the system's temp directory)
-//   BASE_URL   default https://api.anthropic.com
+//   ANTHROPIC_COUNT_BASE_URL  where the requests (and the key) go; default https://api.anthropic.com. Plain http or
+//              any other host is refused unless ANTHROPIC_COUNT_ALLOW_HOST=1 (a local stand-in or a proxy you run)
 //   RATE       requests a minute at most (default 1000)          CONC   requests in flight at most (default 16)
-//   FLOOR_SWEEP_FULL  "0" for the default sweep (20,751 cases) instead of the full one (24,321); default "1"
+//   FLOOR_SWEEP_FULL  "0" for the default sweep (20,766 cases) instead of the full one (24,336); default "1"
 //   LIMIT      only the first LIMIT cases of the sweep (a quick try)
 //   PAID_CHECK "1" to let the billing phase send its paid requests; off otherwise
 //   COUNTS_FILE  where export writes (default: claude-counts.txt beside this file)
@@ -56,7 +57,37 @@ const root = resolve(here, "../../../../..");
 const phase = process.argv[2];
 const env = process.env;
 const OUT = resolve(env.OUT ?? join(tmpdir(), "floor-sweep-claude"));
-const BASE_URL = (env.BASE_URL ?? "https://api.anthropic.com").replace(/\/$/, "");
+const BASE_URL = (env.ANTHROPIC_COUNT_BASE_URL ?? "https://api.anthropic.com").replace(/\/$/, "");
+const ANTHROPIC_HOST = "api.anthropic.com";
+
+/** Stops at once on an address that does not parse, or one other than https to api.anthropic.com without the switch. */
+function checkBaseUrl() {
+	let url;
+	try {
+		url = new URL(BASE_URL);
+	} catch {
+		console.error(`ANTHROPIC_COUNT_BASE_URL does not parse as an address: ${JSON.stringify(BASE_URL)}`);
+		process.exit(1);
+	}
+	if (url.protocol !== "https:" && url.protocol !== "http:") {
+		console.error(`ANTHROPIC_COUNT_BASE_URL must be http or https: ${JSON.stringify(BASE_URL)}`);
+		process.exit(1);
+	}
+	const allowed = env.ANTHROPIC_COUNT_ALLOW_HOST === "1";
+	// Over plain http the key would cross the network in the clear: only a stand-in or proxy one runs, with the switch.
+	if (url.protocol === "http:" && !allowed) {
+		console.error(
+			"ANTHROPIC_COUNT_BASE_URL would send the key over plain http: use https, or set ANTHROPIC_COUNT_ALLOW_HOST=1 for a local stand-in",
+		);
+		process.exit(1);
+	}
+	if (url.hostname !== ANTHROPIC_HOST && !allowed) {
+		console.error(
+			`ANTHROPIC_COUNT_BASE_URL sends the key to ${url.host}, not ${ANTHROPIC_HOST}: set ANTHROPIC_COUNT_ALLOW_HOST=1 if you mean it`,
+		);
+		process.exit(1);
+	}
+}
 const RATE = Number(env.RATE ?? 1000);
 const CONC = Number(env.CONC ?? 16);
 const FULL = (env.FLOOR_SWEEP_FULL ?? "1") === "1";
@@ -505,8 +536,12 @@ async function main() {
 		process.exit(2);
 	}
 	const key = (env.ANTHROPIC_API_KEY ?? "").trim();
+	// report and export read only what is on disk: they need no key, and no valid one.
+	const sends = ["key", "overhead", "probe", "sweep", "billing"].includes(phase);
+	// Before anything else, so an address that does not parse, or one off api.anthropic.com, stops at once.
+	if (sends) checkBaseUrl();
 	// Printable ASCII with no spaces, as an HTTP header carries it. The message never shows the key.
-	if (key && !/^[\x21-\x7e]+$/.test(key)) {
+	if (sends && key && !/^[\x21-\x7e]+$/.test(key)) {
 		console.error("ANTHROPIC_API_KEY holds a character an HTTP header can't carry, such as a line break");
 		process.exit(1);
 	}
@@ -519,6 +554,7 @@ async function main() {
 			log("ANTHROPIC_API_KEY is not set: nothing counted");
 			process.exit(1);
 		}
+		log(`billing: ANTHROPIC_API_KEY is set; ${BASE_URL}; output in ${OUT}`);
 		await billing(key);
 		return;
 	}
@@ -542,6 +578,10 @@ async function main() {
 		return;
 	}
 	if (phase === "report") {
+		if (!["probe", "sweep"].some((d) => existsSync(join(OUT, d)))) {
+			console.log(`report: nothing is counted yet in ${OUT} (run probe or sweep first)`);
+			return;
+		}
 		const summary = {};
 		for (const [name, cases] of [
 			["probe", probe],
@@ -553,6 +593,10 @@ async function main() {
 				for (const line of r.lines) log(`[${name}] ${line}`);
 				summary[`${name}/${model}`] = r.summary;
 			}
+		if (Object.keys(summary).length === 0) {
+			console.log(`report: nothing is counted yet in ${OUT} (run probe or sweep first)`);
+			return;
+		}
 		if (existsSync(join(OUT, "probe")))
 			log(`probe groups: ${JSON.stringify(groups(allModels(), probe, floorOf).groups)}`);
 		writeFileSync(join(OUT, "summary.json"), JSON.stringify(summary, null, 1));
