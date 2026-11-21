@@ -275,6 +275,8 @@ packages/coding-agent/test/suite/context-engine/deterministic-ids.ts	PENpi: cont
 packages/coding-agent/test/suite/context-engine/engine-log.test.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/context-engine/engine.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/context-engine/floor-sweep-cases.ts	PENpi: context engine behaviour suite (ADR 0032)
+packages/coding-agent/test/suite/context-engine/floor-sweep-claude.md	PENpi: the floor sweep counted with Claude's token counter (ADR 0033)
+packages/coding-agent/test/suite/context-engine/floor-sweep-claude.mjs	PENpi: the floor sweep counted with Claude's token counter (ADR 0033)
 packages/coding-agent/test/suite/context-engine/floor-sweep.test.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/context-engine/g1-error-fixtures.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/context-engine/g1-output-errors.test.ts	PENpi: context engine behaviour suite (ADR 0032)

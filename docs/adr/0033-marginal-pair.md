@@ -300,11 +300,12 @@ The full E2 and the replay of bench sessions are in the 0.8.0 gate. Both known-f
   retired Claude 2 (`Xenova/claude-tokenizer`); and with Claude itself, through Anthropic's token counter
   (`POST /v1/messages/count_tokens`) on every Claude model Pi lists. Those fall into four groups that count the sweep
   alike: the 4.5 and 4.6 models; Opus 4.7; Fable 5, Opus 4.8 and Sonnet 5; and Fable 5.1 and 5.2, Haiku 5.5, Opus 5 and
-  5.5 and Sonnet 5.5. Real requests bill what the counter counts. The retired Claude 2 is still the one exception, with
-  its six cases below 0.25: runs of one U+0000, U+00A0 or U+3000 alone, and lines indented with runs of Unicode spaces,
-  which Claude 2 merges far more tightly than the current Claude models: 10,000 of one count 12 on Claude 2, against 625
-  for U+0000 and U+00A0 and 10,000 for U+3000 on the current ones. The fix for the current models does not reach them
-  and was not meant to.
+  5.5 and Sonnet 5.5. Real requests bill what the counter counts. Anyone with an Anthropic API key can repeat the count
+  with `packages/coding-agent/test/suite/context-engine/floor-sweep-claude.mjs` (its guide, `floor-sweep-claude.md`, is
+  beside it). The retired Claude 2 is still the one exception, with its six cases below 0.25: runs of one U+0000, U+00A0
+  or U+3000 alone, and lines indented with runs of Unicode spaces, which Claude 2 merges far more tightly than the
+  current Claude models: 10,000 of one count 12 on Claude 2, against 625 for U+0000 and U+00A0 and 10,000 for U+3000 on
+  the current ones. The fix for the current models does not reach them and was not meant to.
 - **Characters Claude drops cost nothing in the floor.** Claude's tokenizers drop the C0 controls but NUL, TAB and LF
   (CR, VT, FF, ESC and the rest), DEL and all 32 C1 controls, measured one by one since the sweep holds no C1 character
   but NEL: 1,000 of one count 0 in every group, and between other text they cost nothing and split nothing. Priced as

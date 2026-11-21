@@ -53,6 +53,14 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
   case: the first search for the first of six similar runs hit the 10-hit cap on 7 of 8 facts. That
   case is in-sample, so it shows the problem, not what the change gains.
 
+### Added
+- **A script that counts the floor sweep with Claude's own tokenizer.**
+  `packages/coding-agent/test/suite/context-engine/floor-sweep-claude.mjs` sends each case of the
+  floor sweep to Anthropic's token counter, on the Claude models Pi lists, and reports real tokens
+  over the growth check's floor per model, as ADR 0033 cites. Counting is free and needs only an
+  Anthropic API key in `ANTHROPIC_API_KEY`. Its guide, `floor-sweep-claude.md`, is beside it. It
+  is not part of any test run.
+
 ### Security
 - **`hono` 4.13.18 replaces 4.13.13 and `@hono/node-server` 2.1.8 replaces 2.1.4** (four moderate
   advisories against `hono`: GHSA-4m76-xfj5-7975, GHSA-h7mg-cq63-vhpq, GHSA-46wx-v44x-9hh2 and
