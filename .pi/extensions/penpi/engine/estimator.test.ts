@@ -158,6 +158,27 @@ describe("E3.5: the floor prices whitespace that holds a line break, with no per
 			expect(textTokensFloor(text)).toBe(textTokens(text));
 	});
 
+	it("an indentation of no-break and ordinary spaces in turn, as HTML writes a run of spaces, costs as a run of breaks", () => {
+		const rep = (n: number, f: (i: number) => string) => Array.from({ length: n }, (_, i) => f(i)).join("");
+		const lines = (k: number, first: string, second: string) =>
+			rep(400, (i) => `x${i % 10}\n${rep(k, (j) => (j % 2 ? second : first))}`);
+		// At every depth below the period arm's 32 characters, either order; textTokens prices each character there.
+		for (const [k, floor] of [
+			[4, 688],
+			[16, 988],
+			[30, 1_338],
+			[31, 1_363],
+		] as const) {
+			expect(textTokensFloor(lines(k, "\u00a0", " "))).toBe(floor);
+			expect(textTokensFloor(lines(k, " ", "\u00a0"))).toBe(floor);
+		}
+		expect(textTokens(lines(30, "\u00a0", " "))).toBe(8_819);
+		// From 32 the period arm takes the run, as before.
+		expect(textTokensFloor(lines(60, "\u00a0", " "))).toBe(1_372);
+		// A short one keeps its class costs where they are below the break-run price.
+		expect(textTokensFloor("a\n\u00a0b")).toBe(textTokens("a\n\u00a0b"));
+	});
+
 	it("a marker that starts a line, or a run that ends one, is priced with the breaks after it", () => {
 		const rep = (n: number, f: (i: number) => string) => Array.from({ length: n }, (_, i) => f(i)).join("");
 		// `//` comment lines between blank lines: 1,500 o200k tokens, 3,566 by textTokens and the arms before this.

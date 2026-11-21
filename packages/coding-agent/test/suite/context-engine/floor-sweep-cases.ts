@@ -685,6 +685,21 @@ export function thirdRecheckCases(): SweepCase[] {
 	cases["one break + 60 tabs indentation, short lines"] = () => rep(200, () => `x\n${"\t".repeat(60)}`);
 	cases["one break + 60 spaces indentation, short lines"] = () => rep(200, () => `x\n${" ".repeat(60)}`);
 	cases["CR alone + 20 spaces"] = () => rep(400, (i) => `${i}\r${" ".repeat(20)}`);
+	// Indentation as HTML writes a run of spaces, no-break and ordinary spaces in turn, below the period arm's 32
+	// characters; and the random mix past 30. Its own generator, so the seeded cases after it keep their text.
+	for (const k of [16, 20, 24, 28, 30, 31])
+		for (const [first, second] of [
+			[" ", " "],
+			[" ", " "],
+		])
+			cases[`line + break + ${k} indent of ${JSON.stringify(first + second)} in turn`] = () =>
+				rep(400, (i) => `x${i % 10}\n${rep(k, (j) => (j % 2 ? second : first))}`);
+	{
+		const own = lcg(97531);
+		for (const k of [45, 60, 100])
+			cases[`line + break + ${k} indent of "  "`] = () =>
+				rep(400, (i) => `x${i % 10}\n${rep(k, () => (own() < 0.5 ? " " : " "))}`);
+	}
 	// 4. Unicode line separators and other breaks the arm does not count as breaks.
 	for (const [name, set] of [
 		["U+2028", ["\u2028"]],

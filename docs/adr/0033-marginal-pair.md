@@ -322,6 +322,25 @@ The full E2 and the replay of bench sessions are in the 0.8.0 gate. Both known-f
   only LF line ends keeps its floor; a CRLF file's floor is its LF floor, about 5% lower; output with color codes about
   4 to 17% lower and progress lines redrawn with CR 2 to 17% in the samples measured, more where codes or CRs are a
   larger share of the text.
+- **A line start indented with Unicode spaces costs as a run of breaks.** The arm for line breaks keeps one break and
+  its indentation at its class costs, since `textTokens` prices ordinary indentation near its count. Indentation of
+  no-break and ordinary spaces in turn, as HTML writes a run of spaces, costs about 0.7 of a token a character there,
+  and tokenizers merge it; below 32 characters the period arm does not take it, and the sweep's random mix hid it.
+  Counted with Claude (all 18 models count it alike), lines with 30 such characters read 0.227 of the floor, as the
+  outside review predicted from the random mix, and 28 to 31 read 0.220 to 0.242; the random mix reads 0.231, 0.207 and
+  0.182 at 45, 60 and 100. Code lines with this indentation read 0.303 to 0.708, and a nested code listing 0.465 to
+  0.490. A line start now keeps its class costs only when its indentation is spaces and tabs (`PLAIN_LINE_START`) or
+  when those costs are no more than 1.25 + length / 16; otherwise the run costs 1.25 + length / 16 like any run with a
+  break. That covers the form at every depth: at 4 characters the floor of such lines drops from 1,693 to 688, at 30
+  from 8,819 to 1,338, and from 32 the period arm already took it. All of these now read 1.07 or more with Claude. The
+  sweep gains the 15 cases of the review (the form in turn at 16 to 31 characters, either order first, and the random
+  mix at 45, 60 and 100). With Claude's counts none of the 24,336 cases is below 0.25 in any group; 12 (the 4.5 and 4.6
+  models and Opus 4.7) or 49 (the later ones) are below 0.5, the lowest 0.494 to 0.499. With o200k and GLM nothing
+  moves: none below 0.25, 54 below 0.5, the lowest 0.343. The floor is lower on 169 of the 24,336 cases (indentation and
+  whitespace stretches that hold Unicode spaces), by 0.1% to 86%, and higher on none; text without Unicode spaces keeps
+  its floor. Measured against it: pricing every whitespace run at the lesser of its class costs and the break-run price,
+  except plain line starts and runs of spaces and tabs, would read more simply but lowers 3,333 floors and raises 337,
+  so it was not taken.
 - **Left for 0.9.0:**
   - `textTokens` itself. It still budgets runs and other repetition at the overcount (1,285 tokens for 32), which is
     safe for fit and wastes window. It also prices letters outside ASCII and CJK at the price of an unknown

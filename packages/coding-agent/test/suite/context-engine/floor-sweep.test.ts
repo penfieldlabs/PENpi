@@ -33,7 +33,7 @@ import { fastO200k, reference } from "./o200k-fast.ts";
 const full = process.env.FLOOR_SWEEP_FULL === "1";
 const sizes = full ? SWEEP_SIZES : SWEEP_SIZES.filter((s) => s <= 10_000);
 /**
- * The floor's figures as measured, the same with and without FLOOR_SWEEP_FULL (20,751 and 24,321 cases): 54 cases
+ * The floor's figures as measured, the same with and without FLOOR_SWEEP_FULL (20,766 and 24,336 cases): 54 cases
  * between 0.25 and 0.5, the lowest 0.343 (a counter, a space and `-->`, then 1 to 3 breaks). There were 73 before CR
  * and the other characters Claude's tokenizers drop cost nothing (FLOOR_FREE): the CRLF forms of 19 of them left the band.
  */

@@ -287,6 +287,12 @@ const LINE_BREAK = /[\r\n]/;
 const LINE_START = /^(?:\r\n|\r|\n)(?:[^\S\r\n]|\u0000)*$/;
 /** A run textTokens prices as one already (classTokens: DENSITY.wsRun). */
 const SPACES_AND_TABS = /^[ \t]+$/;
+/**
+ * A line start whose indentation is only spaces and tabs, which textTokens prices near its count. One with Unicode
+ * spaces or NUL in it (no-break and ordinary spaces in turn, as HTML writes a run of spaces) costs about 0.7 of a token
+ * a character there, and tokenizers merge it: it keeps its class costs only where they are no more than breakRunCost.
+ */
+const PLAIN_LINE_START = /^(?:\r\n|\r|\n)[ \t]*$/;
 const BREAK_RUN_BASE = 1.25;
 const BREAK_RUN_PER_UNIT = 1 / 16;
 /**
@@ -315,13 +321,14 @@ function breakRunCost(run: string): number {
 }
 
 /**
- * As periodFloor, and with each run of whitespace that holds a line break, other than one break and its indentation, at
- * breakRunCost, and so each run that holds no break and is not only spaces and tabs (U+2028 and U+2029, Unicode spaces,
- * NUL) where that is less than its class costs: Claude merges such runs as it does breaks (20 of U+2028 count 2), and
- * textTokens prices each character. Tokenizers take what ends a line with the breaks after it (o200k keeps punctuation
- * and the line breaks after it together), so before that, a run of one character that ends a line costs
- * 1 + length / 64, as in RUN, and a marker at the start of a line with whitespace after it that holds a line break
- * (`//` comment lines, `>` quote lines, `|` table edges) costs breakRunCost of the marker and the whitespace together.
+ * As periodFloor, and with each run of whitespace that holds a line break, other than one break and its indentation
+ * when that is only spaces and tabs or costs no more than breakRunCost by class (PLAIN_LINE_START), at breakRunCost,
+ * and so each run that holds no break and is not only spaces and tabs (U+2028 and U+2029, Unicode spaces, NUL) where
+ * that is less than its class costs: Claude merges such runs as it does breaks (20 of U+2028 count 2), and textTokens
+ * prices each character. Tokenizers take what ends a line with the breaks after it (o200k keeps punctuation and the
+ * line breaks after it together), so before that, a run of one character that ends a line costs 1 + length / 64, as in
+ * RUN, and a marker at the start of a line with whitespace after it that holds a line break (`//` comment lines, `>`
+ * quote lines, `|` table edges) costs breakRunCost of the marker and the whitespace together.
  */
 function breakFloor(text: string, runs: PeriodRun[]): number {
 	return withoutRuns(text, runs, (piece) => {
@@ -341,7 +348,7 @@ function breakFloor(text: string, runs: PeriodRun[]): number {
 			.replace(WHITESPACE, (w) => {
 				if (
 					LINE_BREAK.test(w)
-						? LINE_START.test(w)
+						? LINE_START.test(w) && (PLAIN_LINE_START.test(w) || classTokens(w, true) <= breakRunCost(w))
 						: SPACES_AND_TABS.test(w) || classTokens(w, true) <= breakRunCost(w)
 				)
 					return w;

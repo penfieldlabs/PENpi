@@ -190,6 +190,22 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
   a CRLF file's floor is now its LF floor, about 5% lower; output with color codes about 4 to 17%
   lower and progress lines redrawn with CR 2 to 17% in the samples measured, more where codes or CRs
   are a larger share of the text. Growth near zero still detects.
+- **Indentation of no-break and ordinary spaces in turn no longer reads as silent truncation on
+  Anthropic.** HTML writes a run of spaces as no-break and ordinary spaces in turn, and text taken
+  from a web page or an HTML mail carries that into its indentation. The growth check's floor kept
+  one line break and its indentation at their class costs, about 0.7 of a token a character once a
+  no-break space is in it, while tokenizers merge such a run. Counted with Anthropic's token counter
+  on all 18 Claude models, lines indented with 28 to 31 such characters in turn read 0.220 to 0.242
+  of the floor, and lines indented with a random mix of 45 to 100 read 0.182 to 0.231: below 0.25,
+  where an honest append reads as evidence. With o200k and GLM they read marginal from 28
+  characters, and in one of the two orders from 20 (0.35 to 0.46). A line start now keeps its class
+  costs only when its indentation is spaces and tabs, or when those costs are no more than a run of
+  breaks costs; otherwise it is priced as a run of breaks. The sweep gains 15 such cases. With
+  Claude's counts none of its cases is below 0.25 on any model, and the lowest is 0.494; with o200k
+  and GLM none is below 0.25, 54 are below 0.5 and the lowest is 0.343, as before. The trade: the
+  floor is lower on 169 of the sweep's 24,336 cases, by up to 86%, all of them indentation or
+  whitespace stretches that hold Unicode spaces, and never higher. Ordinary text with spaces and
+  tabs, LF or CRLF, keeps its floor. Growth near zero still detects.
 - **An answer produced from silently truncated input is named, even when the warning sign before
   it lowered the engine's estimate.** When the engine finds silent truncation, it names every
   answer that came from cut input. A sample that read only a little short still counted toward
