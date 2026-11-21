@@ -236,7 +236,7 @@ The full E2 and the replay of bench sessions are in the 0.8.0 gate. Both known-f
   neither reaches: whitespace and control characters, which are neither base64 nor punctuation, and periods that
   alternate classes.
 
-  The floor sweep (`floor-sweep.test.ts`, seeded, so it reruns) checks the floor against both tokenizers, 24,321 cases:
+  The floor sweep (`floor-sweep.test.ts`, seeded, so it reruns) checks the floor against both tokenizers, 24,336 cases:
   - every period of 1 to 8 drawn from all ASCII characters and common non-ASCII ones (box drawing, block elements,
     emoji, CJK, combining marks), and periods of 9 to 32 drawn mostly from whitespace and control characters, 714
     units, each at 1,000, 10,000 and 100,000 characters in five layouts (alone, one per line with LF or CRLF, numbered
@@ -309,19 +309,19 @@ The full E2 and the replay of bench sessions are in the 0.8.0 gate. Both known-f
 - **Characters Claude drops cost nothing in the floor.** Claude's tokenizers drop the C0 controls but NUL, TAB and LF
   (CR, VT, FF, ESC and the rest), DEL and all 32 C1 controls, measured one by one since the sweep holds no C1 character
   but NEL: 1,000 of one count 0 in every group, and between other text they cost nothing and split nothing. Priced as
-  punctuation, they put about 1,360 of the sweep's 24,341 cases below 0.25 with each Claude group, mostly units of
-  control characters and runs of CR. The floor is now the lesser of its value for the text and for the text without them
-  (`FLOOR_FREE`), so it is never higher than before. Claude also merges runs of NUL with spaces (1,000 NUL count 63),
-  and runs of U+2028, U+2029 and Unicode spaces (20 of U+2028 count 2), so NUL is whitespace in a period's classes where
-  that gives fewer changes, and a run of whitespace or NUL with no line break, not only spaces and tabs, costs 1.25 +
-  length / 16 where that is less than its class costs. That last rule is what lifts the two cases that hold no character
-  Claude drops, runs of U+2028 and spaces (0.126 and 0.235 before, 0.984 and 0.524 now). With Claude's counts none of
-  the sweep's cases is below 0.25 in any group; 14 (4.5, 4.6 and 4.7) to 51 (the later groups) are below 0.5, the lowest
-  0.280 (a line, a break and 30 indents of NBSP and space). With o200k and GLM none is below 0.25 and 54 are below 0.5,
-  from 73: the CRLF forms of 19 marginal shapes left the band. The lowest is unchanged at 0.343. The trade: text with
-  only LF line ends keeps its floor; a CRLF file's floor is its LF floor, about 5% lower; output with color codes about
-  4 to 17% lower and progress lines redrawn with CR 2 to 17% in the samples measured, more where codes or CRs are a
-  larger share of the text.
+  punctuation, they put about 1,360 of the full sweep's 24,321 cases and the 20 prose fixtures below 0.25 with each
+  Claude group, mostly units of control characters and runs of CR. The floor is now the lesser of its value for the text
+  and for the text without them (`FLOOR_FREE`), so it is never higher than before. Claude also merges runs of NUL with
+  spaces (1,000 NUL count 63), and runs of U+2028, U+2029 and Unicode spaces (20 of U+2028 count 2), so NUL is
+  whitespace in a period's classes where that gives fewer changes, and a run of whitespace or NUL with no line break,
+  not only spaces and tabs, costs 1.25 + length / 16 where that is less than its class costs. That last rule is what
+  lifts the two cases that hold no character Claude drops, runs of U+2028 and spaces (0.126 and 0.235 before, 0.984 and
+  0.524 now). With Claude's counts none of the sweep's cases is below 0.25 in any group; 14 (4.5, 4.6 and 4.7) to 51
+  (the later groups) are below 0.5, the lowest 0.280 (a line, a break and 30 indents of NBSP and space). With o200k and
+  GLM none is below 0.25 and 54 are below 0.5, from 73: the CRLF forms of 19 marginal shapes left the band. The lowest
+  is unchanged at 0.343. The trade: text with only LF line ends keeps its floor; a CRLF file's floor is its LF floor,
+  about 5% lower; output with color codes about 4 to 17% lower and progress lines redrawn with CR 2 to 17% in the
+  samples measured, more where codes or CRs are a larger share of the text.
 - **A line start indented with Unicode spaces costs as a run of breaks.** The arm for line breaks keeps one break and
   its indentation at its class costs, since `textTokens` prices ordinary indentation near its count. Indentation of
   no-break and ordinary spaces in turn, as HTML writes a run of spaces, costs about 0.7 of a token a character there,

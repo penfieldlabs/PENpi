@@ -97,7 +97,7 @@ MODELS=claude-haiku-4-5,claude-fable-5 LIMIT=50 node $F sweep
 | `BASE_URL` | `https://api.anthropic.com` | the API's address |
 | `RATE` | 1000 | requests a minute at most |
 | `CONC` | 16 | requests in flight at most |
-| `FLOOR_SWEEP_FULL` | 1 | 0 for the default sweep (20,751 cases) instead of the full one (24,321), as in `floor-sweep.test.ts` |
+| `FLOOR_SWEEP_FULL` | 1 | 0 for the default sweep (20,766 cases) instead of the full one (24,336), as in `floor-sweep.test.ts` |
 | `LIMIT` | all | only the first `LIMIT` cases of the sweep |
 | `PAID_CHECK` | off | 1 to let `billing` send its paid requests |
 | `COUNTS_FILE` | `claude-counts.txt` beside the script | where `export` writes |
@@ -132,7 +132,7 @@ Everything goes under `OUT`:
 
 **Reading a report.** After each model, the script prints one line such as:
 
-    claude-haiku-4-5: 24321 of 24321 cases counted (0 refused); overhead 7; below 0.25: 0; below 0.5: 14; lowest 0.280 "..."
+    claude-haiku-4-5: 24336 of 24336 cases counted (0 refused); overhead 7; below 0.25: 0; below 0.5: 12; lowest 0.499 "..."
 
 Then it lists every case below 0.25 with its floor and real tokens. `ratio` is real tokens over the floor:
 - **below 0.25:** that honest text would read as evidence of truncation;
@@ -148,8 +148,8 @@ why `sweep` defaults to the first model of each group. To be sure, `MODELS=all` 
 **Comparing with ADR 0033.** The ADR's figures are for the full sweep, with the floor at the version it describes:
 - the four groups;
 - no case below 0.25 in any group;
-- 14 cases below 0.5 (the 4.5 and 4.6 models, and Opus 4.7) or 51 (the later models);
-- the lowest at 0.280.
+- 12 cases below 0.5 (the 4.5 and 4.6 models, and Opus 4.7) or 49 (the later models);
+- the lowest at 0.499 (the 4.5 and 4.6 models, and Opus 4.7) or 0.494 (the later models).
 
 To compare:
 1. Run `probe` and `sweep` with the default `FLOOR_SWEEP_FULL=1`.

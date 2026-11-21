@@ -96,7 +96,7 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
   one character that ends the line before it, or a short marker that starts it, such as `//` or
   `>`), and other repetition close to what tokenizers count, and a sample that reads only a little
   short joins a detection only when its request is as large as evidence must be (ADR 0033). A seeded
-  sweep of honest text, counted with both tokenizers, checks it: 24,321 cases (periods of 1 to 32
+  sweep of honest text, counted with both tokenizers, checks it: 24,336 cases (periods of 1 to 32
   characters in five layouts, at 1,000 to 100,000 characters; whitespace stretches of 1 to 64
   characters in 12 mixes between varying lines; random trailing whitespace, indentation and blank
   lines; lines of only a comment, quote or table marker between random blank lines; runs of 1 to 64
@@ -182,14 +182,14 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
   character. None of the common tool output measured looks like that: through Pi's tools, binary
   files read 0.70 or more of the floor with Claude's counts, and progress bars redrawn with CR 1.03
   or more. Counted with Anthropic's counter on every Claude model (four tokenizer groups), about
-  1,360 of the floor sweep's 24,341 cases were below 0.25 of the floor. The floor now prices these
-  characters at zero, takes NUL as whitespace in runs, and prices runs of U+2028, U+2029, Unicode
-  spaces and NUL with no line break as it prices runs of line breaks, where that is less. None of
-  the sweep's cases is below 0.25 now with Claude's counts, o200k, or GLM. The trade: the floor only
-  goes down, so the check is less sensitive on such text. Text with only LF line ends is unchanged;
-  a CRLF file's floor is now its LF floor, about 5% lower; output with color codes about 4 to 17%
-  lower and progress lines redrawn with CR 2 to 17% in the samples measured, more where codes or CRs
-  are a larger share of the text. Growth near zero still detects.
+  1,360 of the full sweep's 24,321 cases and the 20 prose fixtures were below 0.25 of the floor. The
+  floor now prices these characters at zero, takes NUL as whitespace in runs, and prices runs of
+  U+2028, U+2029, Unicode spaces and NUL with no line break as it prices runs of line breaks, where
+  that is less. None of the sweep's cases is below 0.25 now with Claude's counts, o200k, or GLM. The
+  trade: the floor only goes down, so the check is less sensitive on such text. Text with only LF
+  line ends is unchanged; a CRLF file's floor is now its LF floor, about 5% lower; output with color
+  codes about 4 to 17% lower and progress lines redrawn with CR 2 to 17% in the samples measured,
+  more where codes or CRs are a larger share of the text. Growth near zero still detects.
 - **Indentation of no-break and ordinary spaces in turn no longer reads as silent truncation on
   Anthropic.** HTML writes a run of spaces as no-break and ordinary spaces in turn, and text taken
   from a web page or an HTML mail carries that into its indentation. The growth check's floor kept

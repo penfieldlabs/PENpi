@@ -304,9 +304,13 @@ system prompt, so another path length gives other request sizes. RC5's matrix fr
 from the GitHub runner's 99 characters gave the same verdict, failing criteria and silent-truncation record in all
 96 runs; the largest request per run differed by -287 to +69 tokens. In 0.6.0 a run near a limit did differ:
 `data.o200k.1m.silent-messages` failed at the gate's 86-character scratch path and passed on a reviewer's checkout
-with a longer path. So `run-e2.sh` uses one fixed scratch path, `/tmp/penpi-e2-scratch`, wherever the checkout is;
-CI and the gate use it too. `E2_SCRATCH` overrides it (one run at a time per path). Running the `.e2.ts` files with
-vitest directly still uses `.cache/scratch` under the checkout.
+with a longer path. So `run-e2.sh` uses one fixed scratch path, `/tmp/penpi-e2-scratch`, and CI and the gate use it
+too. That fixes the scratch path's share of each request, not the checkout's: the system prompt also names Pi's
+README, docs and examples paths, which are under the checkout, so a checkout at a path of another length shifts
+every request's size. A reviewer's checkout with a longer path made the first request 93 to 96 tokens larger, and
+the largest request per run differed by -2,094 to +588 tokens, with the same 96 verdicts. Runs from checkouts at
+different paths compare by verdict, not by request size. `E2_SCRATCH` overrides the scratch path (one run at a time
+per path). Running the `.e2.ts` files with vitest directly still uses `.cache/scratch` under the checkout.
 
 The default matrix uses seed 1. Other seeds give other sessions (other tasks, sizes and content), which
 is a cheap robustness check of borderline behaviour, for example the silent modes on the fast mixes
