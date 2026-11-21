@@ -15,6 +15,8 @@
 //              them form a group (OUT/probe/groups.json)
 //   sweep      the sweep on MODELS (default: the first model of each probe group; "all" for every model)
 //   report     the reports again from what is counted, with the checkout's floor (no network)
+//   export     the full sweep's counts, one column per group of models that count it alike, to claude-counts.txt
+//              beside this file (COUNTS_FILE), which claude-counts.test.ts re-prices offline (no network)
 //   billing    an optional paid check that real requests bill what the counter counts: a few short texts per model,
 //              each counted free and then sent to POST /v1/messages with max_tokens 1. Without PAID_CHECK=1 it only
 //              counts them and prints what sending would cost; with it, it sends them (well under a cent a model).
@@ -29,6 +31,7 @@
 //   FLOOR_SWEEP_FULL  "0" for the default sweep (20,751 cases) instead of the full one (24,321); default "1"
 //   LIMIT      only the first LIMIT cases of the sweep (a quick try)
 //   PAID_CHECK "1" to let the billing phase send its paid requests; off otherwise
+//   COUNTS_FILE  where export writes (default: claude-counts.txt beside this file)
 //
 // How a case is counted. Each case is one user message with one text block. The endpoint drops line feeds at the end
 // of a text ("hello" and "hello" plus breaks count the same) and refuses a text that is whitespace only, so a text
@@ -38,10 +41,11 @@
 // JSON, so it is sent as U+FFFD, as a UTF-8 client would send it (marked "fffd"); the floor is that of the case as it
 // is. A case's real tokens are the count less the model's overhead.
 //
-// Every count is appended to OUT/<phase>/<model>.jsonl as it arrives, and a rerun skips what is there, so a stopped
-// run resumes. A 429 waits as long as its retry-after asks; a 5xx or network error is retried up to 8 times. The
+// Every count is appended to OUT/<phase>/<model>.jsonl as it arrives, with a hash of the case's text, and a rerun
+// skips what is there for the same text, so a stopped run resumes and a changed case is counted again. A 429 waits as long as its retry-after asks; a 5xx or network error is retried up to 8 times. The
 // reports are OUT/<phase>/<model>.report.json ({ name, chars, floor, real, ratio, mode }, lowest ratio first) and
 // OUT/summary.json; the lines printed name the cases below 0.25 of the floor.
+import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -201,6 +205,12 @@ async function countCase(key, model, text) {
  * Each case's row in a results file: the last count, or, for a case with no count, its last error. A case that has
  * an error and no count is counted again on a rerun, and once it is counted, its error rows are no longer read.
  */
+/** The first 16 hex digits of a text's SHA-256: a row's count holds for the text it was counted for only. */
+const textHash = (text) => createHash("sha256").update(text).digest("hex").slice(0, 16);
+
+/** Whether a row was counted for this text. A row from before the hash was kept is checked by its length only. */
+const sameText = (r, hash, chars) => (r.h !== undefined ? r.h === hash : r.chars === chars);
+
 function readDone(file) {
 	const done = new Map();
 	if (!existsSync(file)) return done;
@@ -220,9 +230,14 @@ function readDone(file) {
 async function countModel(key, model, cases, file) {
 	const done = readDone(file);
 	for (const [k, r] of done) if (r.n === undefined) done.delete(k);
-	const todo = cases.filter((c) => !done.has(c.key));
+	const todo = cases.filter((c) => {
+		const r = done.get(c.key);
+		if (!r) return true;
+		const text = c.text();
+		return !sameText(r, textHash(text), text.length);
+	});
 	if (todo.length === 0) return;
-	log(`${model}: ${todo.length} to count, ${done.size} already counted`);
+	log(`${model}: ${todo.length} to count, ${cases.length - todo.length} already counted`);
 	let i = 0;
 	let counted = 0;
 	const worker = async () => {
@@ -232,7 +247,7 @@ async function countModel(key, model, cases, file) {
 			const r = await countCase(key, model, text);
 			const row =
 				r.n !== undefined ? { k: c.key, n: r.n, ...(r.mode ? { mode: r.mode } : {}) } : { k: c.key, err: r.err };
-			appendFileSync(file, `${JSON.stringify({ ...row, chars: text.length })}\n`);
+			appendFileSync(file, `${JSON.stringify({ ...row, chars: text.length, h: textHash(text) })}\n`);
 			if (++counted % 1000 === 0) log(`${model}: ${counted} of ${todo.length}`);
 		}
 	};
@@ -281,6 +296,11 @@ function reportModel(phaseName, model, cases, floorOf) {
 	for (const c of cases) {
 		const r = done.get(c.key);
 		if (!r) continue;
+		// A count for the case's text as it was before a change is not counted.
+		if (r.n !== undefined) {
+			const text = c.text();
+			if (!sameText(r, textHash(text), text.length)) continue;
+		}
 		if (r.err) {
 			errors.push({ name: c.key, err: scrub(r.err) });
 			continue;
@@ -330,6 +350,66 @@ function groups(models, cases, floorOf) {
 	const result = { cases: shared.length, groups: out.map((g) => g.models) };
 	writeFileSync(join(OUT, "probe", "groups.json"), JSON.stringify(result, null, 1));
 	return result;
+}
+
+// ---------------------------------------------------------------- export: the counts for claude-counts.test.ts
+/**
+ * Writes COUNTS_FILE (default claude-counts.txt beside this file): the models that count the whole sweep alike form a
+ * group, and each case of the full sweep gets a row of the first 8 hex digits of its text's SHA-256 and the real
+ * tokens of each group ("=" for the same as the group before). A model that has not counted the whole full sweep, each
+ * case as its text is now, is left out and named.
+ */
+async function exportCounts(all) {
+	const file = resolve(env.COUNTS_FILE ?? join(here, "claude-counts.txt"));
+	const ids = all.map((c) => {
+		const text = c.text();
+		return { hash: textHash(text), chars: text.length };
+	});
+	const models = [];
+	const reals = new Map();
+	for (const model of allModels()) {
+		const rows = join(OUT, "sweep", `${model}.jsonl`);
+		const ohFile = join(OUT, "overhead", `${model}.json`);
+		if (!existsSync(rows) || !existsSync(ohFile)) continue;
+		const oh = settle(JSON.parse(readFileSync(ohFile, "utf8")));
+		const done = readDone(rows);
+		const values = all.map((c, i) => {
+			const r = done.get(c.key);
+			if (r?.n === undefined || !sameText(r, ids[i].hash, ids[i].chars)) return undefined;
+			return r.n - oh.overhead - (r.mode?.includes("suffixed") ? 1 : 0);
+		});
+		const left = values.filter((v) => v === undefined).length;
+		if (left > 0) {
+			log(`export: ${model} left out, ${left} of ${all.length} cases not counted`);
+			continue;
+		}
+		models.push(model);
+		reals.set(model, values);
+	}
+	if (models.length === 0) {
+		log("export: no model has counted the whole full sweep (run sweep with FLOOR_SWEEP_FULL=1)");
+		process.exit(1);
+	}
+	const groups = [];
+	for (const model of models) {
+		const g = groups.find((x) => reals.get(x[0]).every((v, i) => v === reals.get(model)[i]));
+		if (g) g.push(model);
+		else groups.push([model]);
+	}
+	const lines = [
+		"# Claude's real tokens for each case of the floor sweep (FLOOR_SWEEP_FULL=1), counted with Anthropic's token",
+		"# counter by floor-sweep-claude.mjs and read by claude-counts.test.ts. A row: the first 8 hex digits of the case",
+		'# text\'s SHA-256, then the real tokens of each group below, in order ("=": as the group before). A group is',
+		"# the models that count every case alike.",
+		...groups.map((g) => `# group ${g.join(" ")}`),
+	];
+	for (let i = 0; i < all.length; i++) {
+		const hash = ids[i].hash.slice(0, 8);
+		const values = groups.map((g) => reals.get(g[0])[i]);
+		lines.push([hash, ...values.map((v, g) => (g > 0 && v === values[g - 1] ? "=" : v))].join(" "));
+	}
+	writeFileSync(file, `${lines.join("\n")}\n`);
+	log(`export: ${all.length} cases, ${groups.length} groups (${models.length} models) to ${file}`);
 }
 
 /** MODELS, "all", or the first model of each probe group. */
@@ -418,9 +498,9 @@ function mkfile(phaseName, model) {
 
 // ---------------------------------------------------------------- phases
 async function main() {
-	if (!["key", "overhead", "probe", "sweep", "report", "billing"].includes(phase)) {
+	if (!["key", "overhead", "probe", "sweep", "report", "export", "billing"].includes(phase)) {
 		console.error(
-			"usage: node floor-sweep-claude.mjs key|overhead|probe|sweep|report|billing (see floor-sweep-claude.md)",
+			"usage: node floor-sweep-claude.mjs key|overhead|probe|sweep|report|export|billing (see floor-sweep-claude.md)",
 		);
 		process.exit(2);
 	}
@@ -453,6 +533,14 @@ async function main() {
 	};
 	const models = env.MODELS && env.MODELS !== "all" && phase !== "sweep" ? env.MODELS.split(",") : allModels();
 
+	if (phase === "export") {
+		if (!FULL || LIMIT !== undefined) {
+			log("export: the counts are of the full sweep: run it with FLOOR_SWEEP_FULL=1 and no LIMIT");
+			process.exit(1);
+		}
+		await exportCounts(all);
+		return;
+	}
 	if (phase === "report") {
 		const summary = {};
 		for (const [name, cases] of [

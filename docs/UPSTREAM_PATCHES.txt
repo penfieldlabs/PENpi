@@ -255,6 +255,8 @@ packages/coding-agent/test/suite/context-engine/b13-quarantine-ratio.test.ts	PEN
 packages/coding-agent/test/suite/context-engine/b14-no-usage-doctor.test.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/context-engine/bench.test.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/context-engine/calibration.test.ts	PENpi: context engine behaviour suite (ADR 0032)
+packages/coding-agent/test/suite/context-engine/claude-counts.test.ts	PENpi: the floor sweep counted with Claude's token counter (ADR 0033)
+packages/coding-agent/test/suite/context-engine/claude-counts.txt	PENpi: the floor sweep counted with Claude's token counter (ADR 0033)
 packages/coding-agent/test/suite/context-engine/d1-fault-injection.test.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/context-engine/d14-truncated-answers-named.test.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/context-engine/d15-reasoning-only-continuation.test.ts	PENpi: context engine behaviour suite (ADR 0032)

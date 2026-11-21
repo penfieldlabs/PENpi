@@ -68,6 +68,7 @@ typing it.
 | `probe` | overhead, then every 64th case of the sweep (381 of the full sweep) on each model, then the groups | about 7 minutes for all models |
 | `sweep` | the whole sweep on `MODELS` | about 25 minutes a model |
 | `report` | the reports again from what is counted, with the floor in your checkout | none |
+| `export` | the full sweep's counts to `claude-counts.txt`, for `claude-counts.test.ts` (see below) | none |
 | `billing` | the optional paid check (see the last section) | free unless `PAID_CHECK=1` |
 
 A typical run (in PowerShell, use `$F = "..."` and `$env:MODELS = "all"` in place of the sh forms):
@@ -99,6 +100,7 @@ MODELS=claude-haiku-4-5,claude-fable-5 LIMIT=50 node $F sweep
 | `FLOOR_SWEEP_FULL` | 1 | 0 for the default sweep (20,751 cases) instead of the full one (24,321), as in `floor-sweep.test.ts` |
 | `LIMIT` | all | only the first `LIMIT` cases of the sweep |
 | `PAID_CHECK` | off | 1 to let `billing` send its paid requests |
+| `COUNTS_FILE` | `claude-counts.txt` beside the script | where `export` writes |
 
 ## How a case is counted
 
@@ -157,13 +159,32 @@ The floor is computed when the report is made, from the checkout you run in. So 
 re-prices what is already counted, with no new requests. A model the API has added or retired since will show up as a
 new group, or as not counted (the API answers 404 for a model it does not know).
 
+**The committed counts.** `claude-counts.txt`, beside the script, holds Claude's counts of the full sweep: one row per
+case, the first 8 hex digits of the SHA-256 of the case's text, then the real tokens of each group. The groups are the
+models that count every case alike. `claude-counts.test.ts`, in the engine suite, re-prices them with the floor in your
+checkout, with no network. It fails if any case is below 0.25 of the floor in any group, and if a case of the sweep has
+no row, as a new case or one whose text changed has none. Seven cases are read from repository files
+(`agent-session.ts`, `README.md`, `package-lock.json`), so their text changes whenever the file does, and it differs on
+stock upstream: the test checks each of them when its text has a row, and otherwise skips it, as a skipped test named
+after the case and its file (shown by the verbose reporter). To count such cases:
+
+```sh
+MODELS=all node $F sweep       # counts only what is new or changed; the rest is already in OUT
+node $F export                 # writes claude-counts.txt from every model that has counted the whole full sweep
+```
+
+`export` needs the full sweep (`FLOOR_SWEEP_FULL=1`, no `LIMIT`), and it leaves out, by name, any model that has not
+counted every case as its text is now. Keep the same `OUT` from one run to the next, or the whole sweep is counted
+again.
+
 ## Resume, and errors
 
-**Resume.** Every count is appended to its `.jsonl` file as it arrives, and a run skips the cases already counted.
-If a run stops (Ctrl+C, a lost connection, a closed laptop), run the same command again and it carries on. A case
-recorded as an error, with no count, is counted again on a rerun. Once it is counted, its old error rows are no
-longer read, so the report shows only errors that are still there. An overhead file with a letter that was not
-counted is counted again the same way. To start over, delete `OUT` or pick another one.
+**Resume.** Every count is appended to its `.jsonl` file as it arrives, with a hash of the case's text, and a run skips
+the cases already counted for the same text, so a case whose text changed is counted again. If a run stops (Ctrl+C, a
+lost connection, a closed laptop), run the same command again and it carries on. A case recorded as an error, with no
+count, is counted again on a rerun. Once it is counted, its old error rows are no longer read, so the report shows only
+errors that are still there. An overhead file with a letter that was not counted is counted again the same way. To start
+over, delete `OUT` or pick another one.
 
 **Errors:**
 
