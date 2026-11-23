@@ -6,7 +6,7 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
 
 ## [Unreleased]
 
-## [0.8.0] — Unreleased
+## [0.8.0] — 2026-11-23
 
 ### Changed
 - **PENpi is on upstream Pi v1.5.1** (from v1.5.0). See Pi's own changelog
@@ -232,6 +232,16 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
     the truncated calls read as honest growth.
 - **After a cut, an agent can pick up an earlier task that is already finished, or report it as
   done**, as in 0.7.0.
+
+### Release gate
+- **PASS.** DeepSeek V4.1 Flash on Morph's fp8 endpoint, 0.8.0 against 0.7.0 on the same night: 38
+  sessions (v2, v3-hard, v3-twostep-r2), 76 units, all valid. No substantive miss in either arm, and
+  no compaction or summaries. Facts 364 of 364 against 360 of 364 (three of 0.7.0's were void, one a
+  wrapped answer); tasks 76 of 76 in both arms, all following the session's rules. The figures
+  are in PR #45.
+- **It did not measure PENpi against upstream Pi v1.5.1:** the gate had no stock arm.
+- **The marginal-pair change was not exercised:** 0 marginal samples in the gate's runs. Its
+  evidence is its unit tests and E2.
 
 ## [0.7.0] — 2026-11-08
 
