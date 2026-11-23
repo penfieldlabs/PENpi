@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
+import { parseCorpusPin } from "./corpus.ts";
 import {
 	type KnownFailureEntry,
 	knownFailure,
@@ -17,6 +18,11 @@ import {
 } from "./known-failures.ts";
 
 const RUN = "research.glm.32k.silent-messages";
+/** The e2-corpus: pin, the revision the repository's entries were measured on. */
+const PIN = parseCorpusPin(
+	readFileSync(fileURLToPath(new URL("../../../../../docs/UPSTREAM_PATCHES.txt", import.meta.url)), "utf8"),
+)!.rev;
+const OTHER = "f9a26365568127461c47a07a37dcb42c140a3ac5";
 const summarize = fileURLToPath(new URL("./summarize.mjs", import.meta.url));
 const version = penpiVersion();
 /** A version after the current one, so the "known" cases do not depend on the repository's version. */
@@ -25,6 +31,7 @@ const entry = (over: Partial<KnownFailureEntry> = {}): KnownFailureEntry => ({
 	run: RUN,
 	criterion: "C6 detection-lag",
 	maxLag: 4,
+	corpus: PIN,
 	until: later,
 	reason: "test entry",
 	...over,
@@ -42,13 +49,17 @@ const CRITERIA = [
 ];
 
 /** A run result with the fields summarize.mjs reads; `failing` lists the criteria (by number) that fail. */
-function run(id: string, { failing = [] as string[], lag = 1 as number | null, detected = [5] } = {}) {
+function run(
+	id: string,
+	{ failing = [] as string[], lag = 1 as number | null, detected = [5], corpus = PIN as string | null } = {},
+) {
 	return {
 		id,
 		config: { id, seed: 1 },
 		engine: { label: "test", sha256: "0".repeat(64), source: "test", via: "test" },
 		tokenizer: "test",
 		corpusFingerprint: "test",
+		...(corpus === null ? {} : { corpusRev: corpus }),
 		calls: 30,
 		limits: { hardLimit: 16384, firstBudget: 26215, minBudget: 26215 },
 		rejections: { count: 0, late: 0, at: [], allowance: 0 },
@@ -101,17 +112,22 @@ describe("E2 known failures", () => {
 		expect(validateKnownFailures(loadKnownFailures())).toEqual([]);
 	});
 
-	it("the repository's two entries are KNOWN at 0.7.0 and EXPIRED at 0.8.0", () => {
-		// 0.7.0, both measured on the upstream v1.5.0 corpus: data.o200k.1m.silent-messages (new with the v1.4.0
-		// corpus, accepted since 0.6.0) and research.glm.32k.silent-messages (new with v1.5.0's shorter system
-		// prompt), both until 0.8.0.
+	it("the repository has exactly 0.8.0's two entries, each valid, KNOWN at 0.8.0 and EXPIRED at 0.9.0", () => {
+		// 0.7.0 accepted two C6 failures on the upstream v1.5.0 corpus (f9a263655) until 0.8.0:
+		// data.o200k.1m.silent-messages and research.glm.32k.silent-messages. 0.8.0's marginal pair (ADR 0033) detects
+		// them at lag 3 and 2, and those entries are gone. On the upstream v1.5.1 corpus (dd30101cf, the e2-corpus: pin)
+		// two runs fail C6 alone at lag 4, accepted for 0.8.0 until 0.9.0 by decision.
 		const entries = loadKnownFailures();
-		expect(entries).toHaveLength(2);
-		for (const name of ["data.o200k.1m.silent-messages", "research.glm.32k.silent-messages"]) {
+		expect(entries.map((e) => [e.run, e.criterion, e.maxLag, e.corpus, e.until])).toEqual([
+			["data.o200k.1m.silent-messages", "C6 detection-lag", 4, PIN, "0.9.0"],
+			["data.o200k.32k.silent-front", "C6 detection-lag", 4, PIN, "0.9.0"],
+		]);
+		for (const e of entries) expect(validateKnownFailures([e])).toEqual([]);
+		for (const { run: name } of entries) {
 			const r = run(name, { failing: ["C6"], lag: 4 });
-			expect(knownFailure(r, entries, "0.7.0")?.status).toBe("known");
-			expect(knownFailure(r, entries, "0.8.0")?.status).toBe("expired");
-			expect(knownFailure(run(name, { failing: ["C6"], lag: 5 }), entries, "0.7.0")?.status).not.toBe("known");
+			expect(knownFailure(r, entries, "0.8.0")?.status).toBe("known");
+			expect(knownFailure(r, entries, "0.9.0")?.status).toBe("expired");
+			expect(knownFailure(run(name, { failing: ["C6"], lag: 5 }), entries, "0.8.0")?.status).not.toBe("known");
 		}
 	});
 
@@ -142,6 +158,30 @@ describe("E2 known failures", () => {
 		expect(summary([other], [entry()]).code).toBe(1);
 	});
 
+	it("does not cover the same failure on another corpus, or on a run that records none", () => {
+		for (const corpus of [OTHER, null]) {
+			const r = run(RUN, { failing: ["C6"], lag: 4, corpus });
+			expect(knownFailure(r, [entry()], version)).toBeNull();
+			const s = summary([r], [entry()]);
+			expect(s.code).toBe(1);
+			expect(s.md).toContain("FAIL 1;");
+			expect(s.md).toContain(`measured on corpus ${PIN.slice(0, 9)}, this run read`);
+			expect(s.md).toContain("the entry does not apply; counted as FAIL");
+		}
+		// A run on another corpus that passes is not told to remove the entry.
+		const passed = summary([run(RUN, { corpus: OTHER })], [entry()]);
+		expect(passed.code).toBe(0);
+		expect(passed.md).toContain("the entry does not apply (the run passed)");
+	});
+
+	it("an entry needs the corpus revision it was measured on", () => {
+		expect(validateKnownFailures([entry()])).toEqual([]);
+		for (const corpus of [undefined, "dd30101cf", PIN.toUpperCase(), 7])
+			expect(validateKnownFailures([{ ...entry(), corpus }])).toEqual([
+				`known failure 1 (${RUN}): corpus must be the corpus revision it was measured on (40 hex digits)`,
+			]);
+	});
+
 	it("an entry at or past its version is expired and fails", () => {
 		const r = run(RUN, { failing: ["C6"], lag: 4 });
 		expect(knownFailure(r, [entry({ until: version })], version)?.status).toBe("expired");
@@ -162,7 +202,7 @@ describe("E2 known failures", () => {
 		const bad = summary([run(RUN, { failing: ["C6"], lag: 4 })], [entry({ criterion: "C5 truncated" })]);
 		expect(bad.code).toBe(1);
 		expect(bad.md).toContain("FAIL 1;");
-		expect(validateKnownFailures([{ run: RUN }])).toHaveLength(4);
+		expect(validateKnownFailures([{ run: RUN }])).toHaveLength(5);
 	});
 
 	it("a complete set that is not the default matrix (the misconfigured runs, a selection) reports the entry as not run", () => {

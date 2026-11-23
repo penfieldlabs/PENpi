@@ -1,8 +1,8 @@
 /**
  * Known E2 failures: a run that fails one named criterion within a recorded bound, accepted by decision until a
  * PENpi version (known-failures.json). Read by suite.ts (the run's test) and summarize.mjs (the counts and the exit
- * code). An entry excuses exactly its run and its criterion, within its bound, below its `until` version; anything
- * else fails as before. The criteria themselves (metrics.ts) do not change: the run's own result still says FAIL.
+ * code). An entry excuses exactly its run and its criterion, within its bound, on the corpus it was measured on,
+ * below its `until` version; anything else fails as before. The criteria themselves (metrics.ts) do not change: the run's own result still says FAIL.
  */
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -11,6 +11,8 @@ export interface KnownFailureEntry {
 	run: string;
 	criterion: string;
 	maxLag: number;
+	/** The corpus revision the failure was measured on (the run's `corpusRev`, 40 hex digits). */
+	corpus: string;
 	until: string;
 	reason: string;
 }
@@ -19,6 +21,7 @@ export type KnownFailureStatus = "known" | "expired";
 
 interface RunLike {
 	id: string;
+	corpusRev?: string;
 	criteria: { id: string; pass: boolean | null }[];
 	silent?: { lagToDetection: number | null; engineDetectedAt: number[] } | null;
 }
@@ -26,6 +29,7 @@ interface RunLike {
 /** The only criterion an entry can name: its bound is the detection lag. */
 const SUPPORTED = "C6 detection-lag";
 const VERSION = /^\d+\.\d+\.\d+$/;
+const REVISION = /^[0-9a-f]{40}$/;
 
 /** E2_KNOWN_FAILURES names another file (the unit test uses it); the default is the one next to this module. */
 export function knownFailuresFile(): string {
@@ -52,6 +56,8 @@ export function validateKnownFailures(entries: unknown): string[] {
 		if (e?.criterion !== SUPPORTED) problems.push(`${where}: criterion must be "${SUPPORTED}"`);
 		if (!Number.isInteger(e?.maxLag) || (e.maxLag as number) < 0)
 			problems.push(`${where}: maxLag must be a whole number`);
+		if (typeof e?.corpus !== "string" || !REVISION.test(e.corpus))
+			problems.push(`${where}: corpus must be the corpus revision it was measured on (40 hex digits)`);
 		if (typeof e?.until !== "string" || !VERSION.test(e.until))
 			problems.push(`${where}: until must be a version x.y.z`);
 		if (typeof e?.reason !== "string" || !e.reason.trim()) problems.push(`${where}: no reason`);
@@ -67,8 +73,9 @@ function compareVersions(a: string, b: string): number {
 }
 
 /**
- * The entry that covers this run's failure, if any. It covers it only when the run id matches, the named criterion
- * is the run's only failing one, the engine detected at all and the lag is at most maxLag. "known": below `until`;
+ * The entry that covers this run's failure, if any. It covers it only when the run id matches, the run read the
+ * entry's corpus revision, the named criterion is the run's only failing one, the engine detected at all and the lag
+ * is at most maxLag. "known": below `until`;
  * "expired": at or past it, which fails like any other failure.
  */
 export function knownFailure(
@@ -78,7 +85,8 @@ export function knownFailure(
 ): { entry: KnownFailureEntry; status: KnownFailureStatus } | null {
 	const failing = run.criteria.filter((c) => c.pass === false).map((c) => c.id);
 	for (const entry of entries) {
-		if (entry.run !== run.id || failing.length !== 1 || failing[0] !== entry.criterion) continue;
+		if (entry.run !== run.id || run.corpusRev !== entry.corpus) continue;
+		if (failing.length !== 1 || failing[0] !== entry.criterion) continue;
 		const lag = run.silent?.lagToDetection;
 		if (!run.silent?.engineDetectedAt?.length || typeof lag !== "number" || lag > entry.maxLag) continue;
 		return { entry, status: compareVersions(version, entry.until) < 0 ? "known" : "expired" };

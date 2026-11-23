@@ -27,13 +27,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # E2 reads its corpus from the upstream base commit (the base: line of docs/UPSTREAM_PATCHES.txt,
-          # reachable through the recorded upstream merge), which a depth-1 clone does not have.
+          # E2 reads its corpus from a pinned upstream commit (the e2-corpus: line of docs/UPSTREAM_PATCHES.txt,
+          # reachable through the recorded upstream merges), which a depth-1 clone does not have.
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Upstream base is present
-        run: git cat-file -e "$(awk '/^base:/ {print $2}' docs/UPSTREAM_PATCHES.txt)^{commit}"
+      - name: E2 corpus revision is present
+        run: git cat-file -e "$(awk '/^e2-corpus:/ {print $2}' docs/UPSTREAM_PATCHES.txt)^{commit}"
 
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0

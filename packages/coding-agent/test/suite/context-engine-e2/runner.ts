@@ -375,6 +375,7 @@ export async function runOne(engine: EngineUnderTest, config: RunConfig): Promis
 			tokenizerSource: tokenizer.source,
 			tokenizerStats: { calls: counter.calls, chars: counter.chars, ms: Math.round(counter.ms) },
 			corpusFingerprint: corpus.fingerprint,
+			corpusRev: corpus.rev,
 			runtimeMs: Math.round(performance.now() - started),
 		});
 		const file = join(dir, `${config.id}.json`);

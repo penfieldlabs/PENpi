@@ -49,6 +49,8 @@ function knownReport(runs, fullMatrix) {
 		if (k?.status === "known") return `${head}occurred, lag ${lag}; counted as KNOWN. ${entry.reason}`;
 		if (k?.status === "expired")
 			return `${head}**EXPIRED** at PENpi ${penpi} (lag ${lag}); counted as FAIL: remove the entry, or renew it by decision. ${entry.reason}`;
+		if (m.corpusRev !== entry.corpus)
+			return `${head}measured on corpus ${entry.corpus.slice(0, 9)}, this run read ${m.corpusRev ? m.corpusRev.slice(0, 9) : "no recorded corpus"}: the entry does not apply${m.verdict === "PASS" ? " (the run passed)" : "; counted as FAIL"}. ${entry.reason}`;
 		if (m.verdict === "PASS") return `${head}did not occur (the run passed): remove the entry. ${entry.reason}`;
 		const failing = m.criteria.filter((c) => c.pass === false).map((c) => c.id);
 		return `${head}does not cover this failure (failing: ${failing.join(", ")}; lag ${lag}); counted as FAIL. ${entry.reason}`;
@@ -235,6 +237,7 @@ for (const { dir, engine, runs } of loaded) {
 		: "";
 	const shas = [...new Set(runs.map((m) => m.engine.sha256))];
 	const corpora = [...new Set(runs.map((m) => m.corpusFingerprint))];
+	const corpusRevs = [...new Set(runs.map((m) => m.corpusRev ?? "not recorded"))];
 	const tokenizers = [...new Set(runs.map((m) => m.tokenizer))];
 	const totalS = runs.reduce((s, m) => s + m.runtimeMs, 0) / 1000;
 	const selftest = existsSync(join(dir, "selftest.json")) ? "yes (selftest.json)" : "not run";
@@ -247,7 +250,7 @@ for (const { dir, engine, runs } of loaded) {
 		`- engine: ${runs[0].engine.label}, SHA-256 ${shas.join(", ")}${shas.length > 1 ? " (**several engine versions in one directory**)" : ""}`,
 		`- engine source: ${runs[0].engine.source} (loaded ${runs[0].engine.via})`,
 		`- tokenizers: ${tokenizers.join("; ")}`,
-		`- corpus fingerprint: ${corpora.join(", ")}`,
+		`- corpus: revision ${corpusRevs.join(", ")}; fingerprint ${corpora.join(", ")}`,
 		`- runs: ${runs.length}, PASS ${runs.length - fails.length - known.length}, FAIL ${fails.length}${knownNote}; failing criteria: ${Object.entries(criteriaFails).map(([k, v]) => `${k} x${v}`).join(", ") || "none"}`,
 		`- session runtime (sum over runs): ${fmt(totalS, 0)} s; self-test: ${selftest}`,
 		"",
@@ -257,7 +260,7 @@ for (const { dir, engine, runs } of loaded) {
 		"",
 		"## Known failures",
 		"",
-		"Entries of known-failures.json: a run failing one named criterion within a recorded bound, accepted by decision until a PENpi version. The run's own result still says FAIL; the summary counts it as KNOWN.",
+		"Entries of known-failures.json: a run failing one named criterion within a recorded bound, on the corpus revision it was measured on, accepted by decision until a PENpi version. The run's own result still says FAIL; the summary counts it as KNOWN.",
 		"",
 		...knownLines.lines,
 		"",

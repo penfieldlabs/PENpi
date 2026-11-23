@@ -150,3 +150,11 @@ jobs:
 
       - name: Engine suite on stock upstream Pi
         run: scripts/engine-suite-upstream.sh
+
+      # The E2 corpus pin (the e2-corpus: line): the corpus read from the pinned commit must have the pinned
+      # fingerprint. CI's main job checks out at depth 1, where the test skips; this job has the full history.
+      - name: E2 corpus pin
+        working-directory: packages/coding-agent
+        env:
+          E2_PIN_REQUIRED: "1"
+        run: npx vitest --run test/suite/context-engine-e2/corpus-pin.test.ts

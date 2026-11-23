@@ -15,9 +15,9 @@ Nothing distinguished a deliberate PENpi change from an accident.
 
 Follow standard fork practice. `main` records upstream Pi v1.1.0 (`abe508e1b`) as merged
 through an `-s ours` merge commit that keeps PENpi's tree unchanged; later upstream releases
-are then merged as ordinary merges (see Consequences). PENpi's own work stays one squashed commit per release, so a
-release commit is always on `main`'s first-parent history, and the release workflow accepts
-only such a tag.
+are then merged as ordinary merges (see Consequences). Each release branch is merged into
+`main` with a merge commit, never squashed, so the release commit (that merge commit) is
+always on `main`'s first-parent history, and the release workflow accepts only such a tag.
 
 Once ancestry is recorded, any file that still differs from upstream counts as PENpi's
 change at the next merge and survives silently. So every difference must be intentional:
@@ -35,3 +35,8 @@ set of differing paths and the list are not identical.
   PENpi release; the release workflow checks the first-parent history instead.
 - `push.followTags` must stay off: upstream's annotated tags become reachable and would be
   published by a tag-following push.
+- A release is not squashed: a squash drops the upstream merge it carries from `main`'s
+  history, and with it the recorded base. 0.6.0 was squashed, and CI's engine-on-upstream job
+  lost its base (fixed in 0.7.0). 0.7.0 was merged with a merge commit (`d735229e9`), the
+  procedure since. This decision first said a release stays one squashed commit; corrected in
+  0.8.0, whose base `dd30101cf` is also the E2 corpus pin.

@@ -458,29 +458,40 @@ describe("the refresh lock (0.6.1)", () => {
 		expect(existsSync(`${store}.lock`)).toBe(false);
 	});
 
-	it("0.6.1 review: a dangling link, a directory or a stale lock in a read-only folder gives up the lock at once", async () => {
+	it("0.6.1 review: a dangling link or a directory gives up the lock at once", async () => {
 		const dangling = join(dir, "a.json");
 		symlinkSync(join(dir, "nowhere"), `${dangling}.lock`);
 		const asDir = join(dir, "b.json");
 		mkdirSync(`${asDir}.lock`);
 		const old = (Date.now() - 120_000) / 1000;
 		utimesSync(`${asDir}.lock`, old, old);
-		const ro = join(dir, "ro");
-		mkdirSync(ro);
-		writeFileSync(join(ro, "c.json.lock"), "12345.dead");
-		utimesSync(join(ro, "c.json.lock"), old, old);
-		chmodSync(ro, 0o500);
-		try {
-			for (const store of [dangling, asDir, join(ro, "c.json")]) {
-				const t0 = Date.now();
-				expect(await acquireRefreshLock(store, 60_000, 5_000), store).toBeUndefined();
-				expect(Date.now() - t0, store).toBeLessThan(1_000);
-			}
-			expect(existsSync(`${asDir}.lock`)).toBe(true); // a directory is not removed
-		} finally {
-			chmodSync(ro, 0o700);
+		for (const store of [dangling, asDir]) {
+			const t0 = Date.now();
+			expect(await acquireRefreshLock(store, 60_000, 5_000), store).toBeUndefined();
+			expect(Date.now() - t0, store).toBeLessThan(1_000);
 		}
+		expect(existsSync(`${asDir}.lock`)).toBe(true); // a directory is not removed
 	});
+
+	// Skipped as root: root ignores the folder's 0500 mode, so the folder is not read-only and the stale lock is taken.
+	it.skipIf(process.getuid?.() === 0)(
+		"0.6.1 review: a stale lock in a read-only folder gives up the lock at once (skipped as root, which ignores the mode)",
+		async () => {
+			const old = (Date.now() - 120_000) / 1000;
+			const ro = join(dir, "ro");
+			mkdirSync(ro);
+			writeFileSync(join(ro, "c.json.lock"), "12345.dead");
+			utimesSync(join(ro, "c.json.lock"), old, old);
+			chmodSync(ro, 0o500);
+			try {
+				const t0 = Date.now();
+				expect(await acquireRefreshLock(join(ro, "c.json"), 60_000, 5_000)).toBeUndefined();
+				expect(Date.now() - t0).toBeLessThan(1_000);
+			} finally {
+				chmodSync(ro, 0o700);
+			}
+		},
+	);
 
 	it("0.6.1 review: while it waits for a held lock, the event loop keeps running, and it gives up at its wait limit", async () => {
 		const store = join(dir, "held.json");

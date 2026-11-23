@@ -12,7 +12,7 @@ test("the release script never pushes", () => {
 });
 
 test("the release script never creates a tag", () => {
-	// The tag is made by hand on the merged squash commit; it may only appear in printed steps.
+	// The tag is made by hand on the PR's merge commit; it may only appear in printed steps.
 	assert.doesNotMatch(source, /\brun\(\s*[`"']git tag/);
 });
 
