@@ -6,10 +6,8 @@
  * A case whose text has no row (a new or changed case) is not counted, and the test says to count it. Below 0.25 of
  * the floor an honest append reads as evidence of truncation: no case may.
  *
- * A few cases are read from repository files (readsFile). Their text changes whenever the file does, and it differs
- * on stock upstream, so a missing count there says only that the file changed: the test checks such a case when its
- * text has a row, and otherwise reports it as a skipped test that names it and its file (the suite prints nothing of
- * a passing test). The o200k and GLM sweep prices them as they are.
+ * The cases that take text from repository files read frozen copies (floor-sweep-texts/), so every case is
+ * checked, on stock upstream too.
  *
  * The default run checks the cases of the default sweep; FLOOR_SWEEP_FULL=1 checks the full one.
  */
@@ -72,11 +70,6 @@ describe("E3.5: the floor holds for honest text counted with Claude, over the se
 		...nonAsciiRunCases(),
 		...generatedCases(sizes),
 	];
-	// A case read from a repository file that changed since it was counted: not checked, and named as skipped.
-	const changed = new Set(cases.filter((c) => c.readsFile && !counts.has(hashOf(c.text()))));
-	for (const c of changed)
-		it.skip(`${c.name}: not counted for this text, since ${c.readsFile} changed after it was counted`, () => {});
-
 	it(
 		"no case is below 0.25 of the floor in any group of Claude models, and every case is counted",
 		() => {
@@ -85,7 +78,6 @@ describe("E3.5: the floor holds for honest text counted with Claude, over the se
 			const below: string[] = [];
 			let lowest = { ratio: Number.POSITIVE_INFINITY, name: "" };
 			for (const c of cases) {
-				if (changed.has(c)) continue;
 				const text = c.text();
 				const reals = counts.get(hashOf(text));
 				if (!reals) {
