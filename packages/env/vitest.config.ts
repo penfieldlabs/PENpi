@@ -16,7 +16,9 @@ if (!hasDaemon) {
 export default defineConfig({
 	test: {
 		environment: "node",
-		...(hasDaemon ? {} : { exclude: ["test/**", "**/node_modules/**"], passWithNoTests: true }),
+		...(hasDaemon
+			? { globalSetup: ["test/build-daemon.ts"] }
+			: { exclude: ["test/**", "**/node_modules/**"], passWithNoTests: true }),
 	},
 	resolve: {
 		conditions: ["source"],
