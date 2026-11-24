@@ -11,7 +11,8 @@
  * The cases that take text from repository files read frozen copies (floor-sweep-texts/), so every case is
  * checked, on stock upstream too.
  *
- * The default run checks the cases of the default sweep; FLOOR_SWEEP_FULL=1 checks the full one.
+ * The default run checks the cases of the default sweep (npm test); FLOOR_SWEEP_FULL=1 checks the full one (CI's
+ * engine-on-upstream job).
  */
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";

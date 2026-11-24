@@ -17,7 +17,7 @@ e2-corpus: dd30101cfc5b0609411dd80b6f93adbc14db14cf e917a3cbd38a1bd6ae8bb72a99be
 .github/ISSUE_TEMPLATE/package-report.yml	deleted: upstream package-report template
 .github/workflows/approve-contributor.yml	deleted: upstream contributor gate
 .github/workflows/build-binaries.yml	deleted: PENpi ships source only
-.github/workflows/ci.yml	PENpi CI: offline build, split checks, archive dry run, script modes, patch manifest, context engine tokenizers, the engine suite on stock upstream Pi; no env daemon or MCP conformance job; upstream's released-changelog check (it would compare PENpi's own tags) and its separate chord job (npm test covers chord) left out
+.github/workflows/ci.yml	PENpi CI: offline build, split checks, archive dry run, script modes, patch manifest, context engine tokenizers, the engine suite on stock upstream Pi, the Claude counts on the full sweep; no env daemon or MCP conformance job; upstream's released-changelog check (it would compare PENpi's own tags) and its separate chord job (npm test covers chord) left out
 .github/workflows/e2-weekly.yml	PENpi: weekly E2 run of the context engine (ADR 0032)
 .github/workflows/env-daemons.yml	deleted: PENpi does not ship the pi-env daemon
 .github/workflows/env.yml	deleted: PENpi does not ship the pi-env daemon

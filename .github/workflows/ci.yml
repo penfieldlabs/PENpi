@@ -142,6 +142,7 @@ jobs:
           cache: npm
 
       - name: Install dependencies
+        id: install
         run: npm ci --ignore-scripts
 
       - name: Context engine tokenizers
@@ -158,3 +159,14 @@ jobs:
         env:
           E2_PIN_REQUIRED: "1"
         run: npx vitest --run test/suite/context-engine-e2/corpus-pin.test.ts
+
+      # The Claude counts test on the full sweep (the main job's npm test runs the default sweep). It re-prices the
+      # committed counts with this tree's floor: no network and no tokenizer. Here, beside the longer main job, it
+      # adds no time to the run. It needs only the install, so it runs when a step after the install fails.
+      - name: Claude counts, full sweep
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        working-directory: packages/coding-agent
+        timeout-minutes: 15
+        env:
+          FLOOR_SWEEP_FULL: "1"
+        run: npx vitest --run --config test/suite/context-engine/vitest.config.ts test/suite/context-engine/claude-counts.test.ts
