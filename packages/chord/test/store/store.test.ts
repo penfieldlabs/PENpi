@@ -77,6 +77,29 @@ describe("opening", () => {
 		await reopened.close(context);
 	});
 
+	it("migrates a store of schema 2 to 3: its records kept, a host column and its index added", async () => {
+		directory = await mkdtemp(join(tmpdir(), "chord-store-"));
+		const path = join(directory, "store.sqlite");
+		const store = (await openStore(sqliteBackend(await openNodeSqliteDatabase(path)), context)) as ChordStore;
+		await created(store);
+		await store.close(context);
+		// The store as schema 2 left it.
+		const db = await openNodeSqliteDatabase(path);
+		await db.exec("DROP INDEX chord_documents_host");
+		await db.exec("ALTER TABLE chord_documents DROP COLUMN host");
+		await db.exec("UPDATE chord_store_schema SET version = 2");
+		await db.close();
+		const migrated = (await openStore(sqliteBackend(await openNodeSqliteDatabase(path)), context)) as ChordStore;
+		const record = await migrated.read((executor) => findDocument(executor, ADDRESS), context);
+		expect(record).toMatchObject({ id: 2, owner: "app.store" });
+		expect(record?.host).toBeUndefined();
+		const { fence } = recording();
+		await migrated.commit([createDocument({ ...ADDRESS, key: "s", host: "session|S1" }, BASE, "{}")], fence, context);
+		const hosted = await migrated.read((executor) => findDocument(executor, { ...ADDRESS, key: "s" }), context);
+		expect(hosted?.host).toBe("session|S1");
+		await migrated.close(context);
+	});
+
 	it("refuses a database that is not UTF-8, closing the backend (rule 12)", async () => {
 		const db = await openNodeSqliteDatabase(":memory:");
 		await db.exec('PRAGMA encoding = "UTF-16le"');
@@ -341,6 +364,121 @@ describe("close", () => {
 		expect(await rejection(queued)).toMatchObject({ code: "released" });
 		await closed;
 		expect(await rejection(store.read(async () => 1, context))).toMatchObject({ code: "released" });
+	});
+});
+
+describe("settled", () => {
+	const create = (key: string) => createDocument({ ...ADDRESS, key }, BASE, "{}");
+
+	it("resolves once the commits queued before it were adopted or rejected", async () => {
+		const store = await memoryStore();
+		const events: string[] = [];
+		const fence = (name: string, admit = true) => ({
+			admit: () => admit,
+			adopt: () => void events.push(`adopt ${name}`),
+		});
+		const held = holdNextCommit(store);
+		const running = store.commit([create("a")], fence("a"), context);
+		await held.entered;
+		const queued = store.commit([create("b")], fence("b"), context);
+		const refused = rejection(store.commit([create("c")], fence("c", false), context));
+		const settled = store.settled().then(() => events.push("settled"));
+		await Promise.resolve();
+		expect(events).toEqual([]);
+		held.release();
+		await settled;
+		expect(events).toEqual(["adopt a", "adopt b", "settled"]);
+		expect(await Promise.all([running, queued])).toEqual([1, 2]);
+		expect(await refused).toMatchObject({ code: "released" });
+	});
+
+	it("does not wait for a commit queued after the call; resolves on a closed store", async () => {
+		const store = await memoryStore();
+		const before = store.settled();
+		const held = holdNextCommit(store);
+		const running = store.commit([create("a")], recording().fence, context);
+		await held.entered;
+		await before;
+		held.release();
+		await running;
+		await (store as Store).close(context);
+		await store.settled();
+	});
+});
+
+describe("onCommitted", () => {
+	it("announces the new lastSeq after commits are durable, once per microtask, never inside a commit", async () => {
+		const store = await memoryStore();
+		const seen: number[] = [];
+		let inside = false;
+		const remove = store.onCommitted(
+			(seq) => {
+				expect(inside).toBe(false);
+				seen.push(seq);
+			},
+			(error) => {
+				throw error;
+			},
+		);
+		const { fence } = recording();
+		inside = true;
+		const first = store.commit([createDocument(ADDRESS, BASE, "{}")], fence, context);
+		inside = false;
+		await first;
+		await Promise.resolve();
+		expect(seen).toEqual([store.lastSeq]);
+		// Several commits before the announcement runs: one call, with the last seq.
+		await store.commit([createDocument({ ...ADDRESS, key: "b" }, BASE, "{}")], fence, context);
+		await store.commit([createDocument({ ...ADDRESS, key: "c" }, BASE, "{}")], fence, context);
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(seen.at(-1)).toBe(store.lastSeq);
+		remove();
+		await store.commit([createDocument({ ...ADDRESS, key: "d" }, BASE, "{}")], fence, context);
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(seen.at(-1)).toBe(store.lastSeq - 1);
+	});
+
+	it("announces a series and a refused commit not at all", async () => {
+		const store = await memoryStore();
+		const seen: number[] = [];
+		store.onCommitted(
+			(seq) => void seen.push(seq),
+			(error) => {
+				throw error;
+			},
+		);
+		await store.commitSeries(
+			[{ check: async () => {}, writes: [createDocument(ADDRESS, BASE, "{}")] }],
+			() => {},
+			context,
+		);
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(seen).toEqual([store.lastSeq]);
+		const before = seen.length;
+		await expect(store.commit([BROKEN], recording().fence, context)).rejects.toThrow();
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(seen.length).toBe(before);
+	});
+
+	it("removes a listener that throws and hands its error to onError; the commit stands", async () => {
+		const store = await memoryStore();
+		const errors: unknown[] = [];
+		let calls = 0;
+		store.onCommitted(
+			() => {
+				calls++;
+				throw new Error("listener");
+			},
+			(error) => void errors.push(error),
+		);
+		const { fence } = recording();
+		await store.commit([createDocument(ADDRESS, BASE, "{}")], fence, context);
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		await store.commit([createDocument({ ...ADDRESS, key: "b" }, BASE, "{}")], fence, context);
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(calls).toBe(1);
+		expect(errors).toHaveLength(1);
+		expect(store.lastSeq).toBe(2);
 	});
 });
 

@@ -109,7 +109,12 @@ import { findMatchingProviders } from "../../core/provider-matching.ts";
 import { RADIUS_PROVIDER_ID } from "../../core/radius.ts";
 import { planRadiusMcpServer } from "../../core/radius-mcp.ts";
 import type { ResourceDiagnostic } from "../../core/resource-loader.ts";
-import { formatMissingSessionCwdPrompt, MissingSessionCwdError } from "../../core/session-cwd.ts";
+import {
+	formatMissingSessionCwdPrompt,
+	getMissingSessionCwdOptions,
+	type MissingSessionCwdChoice,
+	MissingSessionCwdError,
+} from "../../core/session-cwd.ts";
 import {
 	type SessionEntry,
 	SessionManager,
@@ -128,6 +133,7 @@ import { addMcpServerConfig } from "../../extensions/mcp/config.ts";
 import { getChangelogPath, getNewEntries, normalizeChangelogLinks, parseChangelog } from "../../utils/changelog.ts";
 import { copyToClipboard, readClipboardFilePaths, readClipboardText } from "../../utils/clipboard.ts";
 import { extensionForImageMimeType, readClipboardImage } from "../../utils/clipboard-image.ts";
+import { flushStdout } from "../../utils/flush-stdout.ts";
 import { parseGitUrl } from "../../utils/git.ts";
 import { ensurePngTranscoder } from "../../utils/image-convert.ts";
 import { getCwdRelativePath, shortenHomePath } from "../../utils/paths.ts";
@@ -461,6 +467,56 @@ interface ExtensionChangelogUpdate {
 	markdown: string;
 }
 
+interface ReasoningDropDiagnostic {
+	provider: string;
+	/** Transformation `type` of a withheld block. */
+	droppedType: string;
+	/** Singular and plural name of a withheld block. */
+	noun: [string, string];
+}
+
+/** Assistant diagnostics that list reasoning a provider withheld from the model, by diagnostic type. */
+const REASONING_DROP_DIAGNOSTICS = new Map<string, ReasoningDropDiagnostic>([
+	[
+		"anthropic_input_transformations",
+		{ provider: "Anthropic", droppedType: "thinking_dropped", noun: ["thinking block", "thinking blocks"] },
+	],
+	[
+		"openai_input_transformations",
+		{ provider: "OpenAI", droppedType: "reasoning", noun: ["reasoning item", "reasoning items"] },
+	],
+]);
+
+interface DroppedReasoning {
+	diagnostic: ReasoningDropDiagnostic;
+	count: number;
+	reasons: string[];
+}
+
+/** Count the reasoning blocks a provider reported as withheld from the request that produced `message`. */
+function getDroppedReasoning(message: AssistantMessage): DroppedReasoning | undefined {
+	for (const diagnostic of message.diagnostics ?? []) {
+		const kind = REASONING_DROP_DIAGNOSTICS.get(diagnostic.type);
+		if (!kind) continue;
+		// Session data: diagnostics details are untyped JSON.
+		const transformations = diagnostic.details?.transformations;
+		if (!Array.isArray(transformations)) continue;
+		const dropped = transformations.filter(
+			(transformation): transformation is Record<string, unknown> =>
+				typeof transformation === "object" &&
+				transformation !== null &&
+				(transformation as Record<string, unknown>).type === kind.droppedType,
+		);
+		if (dropped.length === 0) continue;
+		const reasons = new Set<string>();
+		for (const transformation of dropped) {
+			if (typeof transformation.reason === "string") reasons.add(transformation.reason);
+		}
+		return { diagnostic: kind, count: dropped.length, reasons: [...reasons] };
+	}
+	return undefined;
+}
+
 export class InteractiveMode {
 	private runtimeHost: AgentSessionRuntime;
 	private renderer: TuiMainScreen | TuiAltScreen;
@@ -640,6 +696,7 @@ export class InteractiveMode {
 		this.runtimeHost.setRebindSession(async () => {
 			await this.rebindCurrentSession({ renderBeforeBind: true });
 			this.themeController.applyFromSettings();
+			this.showRuntimeDiagnostics(this.runtimeHost.takeUnreportedDiagnostics());
 		});
 		this.version = VERSION;
 		this.renderer = createInteractiveTui({
@@ -960,6 +1017,7 @@ export class InteractiveMode {
 		});
 		nextUi.setClearOnShrink(clearOnShrink);
 		nextUi.onDebug = onDebug;
+		nextUi.setSuspendSignalHandler(() => this.handleCtrlZ());
 		if (nextUi instanceof TuiMainScreen && this.mainScreenRenderState) {
 			nextUi.restoreRenderState(this.mainScreenRenderState);
 		}
@@ -1029,6 +1087,8 @@ export class InteractiveMode {
 		this.defaultEditor.onSubmit = (text) => this.handleStartupSubmit(text);
 		this.ui.setFocus(this.editor);
 
+		// An external SIGTSTP (kill -TSTP) restores the terminal like Ctrl+Z (#12272).
+		this.ui.setSuspendSignalHandler(() => this.handleCtrlZ());
 		// Start the UI before initializing extensions so session_start handlers can use interactive dialogs
 		this.ui.start();
 		this.isInitialized = true;
@@ -1223,15 +1283,7 @@ export class InteractiveMode {
 			initialMessages,
 		} = this.options;
 
-		for (const diagnostic of startupDiagnostics ?? []) {
-			if (diagnostic.type === "error") {
-				this.showError(diagnostic.message);
-			} else if (diagnostic.type === "warning") {
-				this.showWarning(diagnostic.message);
-			} else {
-				this.showStatus(diagnostic.message);
-			}
-		}
+		this.showRuntimeDiagnostics(startupDiagnostics ?? []);
 
 		if (migratedProviders && migratedProviders.length > 0) {
 			this.showWarning(`Migrated credentials to auth.json: ${migratedProviders.join(", ")}`);
@@ -2202,6 +2254,18 @@ export class InteractiveMode {
 		}
 	}
 
+	private showRuntimeDiagnostics(diagnostics: readonly AgentSessionRuntimeDiagnostic[]): void {
+		for (const diagnostic of diagnostics) {
+			if (diagnostic.type === "error") {
+				this.showError(diagnostic.message);
+			} else if (diagnostic.type === "warning") {
+				this.showWarning(diagnostic.message);
+			} else {
+				this.showStatus(diagnostic.message);
+			}
+		}
+	}
+
 	private async rebindCurrentSession(options: { renderBeforeBind?: boolean } = {}): Promise<void> {
 		const session = this.session;
 
@@ -2243,6 +2307,7 @@ export class InteractiveMode {
 		}
 		stopThemeWatcher();
 		this.stop("transcript");
+		await flushStdout();
 		process.exit(1);
 	}
 
@@ -2892,12 +2957,15 @@ export class InteractiveMode {
 		return result === "Yes";
 	}
 
-	private async promptForMissingSessionCwd(error: MissingSessionCwdError): Promise<string | undefined> {
-		const confirmed = await this.showExtensionConfirm(
-			"Session cwd not found",
+	private async promptForMissingSessionCwd(
+		error: MissingSessionCwdError,
+	): Promise<MissingSessionCwdChoice | undefined> {
+		const options = getMissingSessionCwdOptions(error.issue);
+		const label = await this.showExtensionSelector(
 			formatMissingSessionCwdPrompt(error.issue),
+			options.map((option) => option.label),
 		);
-		return confirmed ? error.issue.fallbackCwd : undefined;
+		return options.find((option) => option.label === label)?.value;
 	}
 
 	/**
@@ -4300,46 +4368,32 @@ export class InteractiveMode {
 		);
 	}
 
-	private static countDroppedThinkingBlocks(message: AssistantMessage): number {
-		let count = 0;
-		for (const diagnostic of message.diagnostics ?? []) {
-			if (diagnostic.type !== "anthropic_input_transformations") continue;
-			const transformations = diagnostic.details?.transformations;
-			if (!Array.isArray(transformations)) continue;
-			count += transformations.filter(
-				(transformation) =>
-					typeof transformation === "object" &&
-					transformation !== null &&
-					(transformation as Record<string, unknown>).type === "thinking_dropped",
-			).length;
-		}
-		return count;
-	}
-
 	private maybeShowThinkingDropNotice(message: AssistantMessage): void {
 		if (!this.settingsManager.getShowCacheMissNotices()) return;
 
-		const droppedCount = InteractiveMode.countDroppedThinkingBlocks(message);
-		if (droppedCount === 0) return;
+		const dropped = getDroppedReasoning(message);
+		if (!dropped) return;
 
-		let previousDroppedCount = 0;
-		// message_end reaches the UI before the current message is persisted,
-		// so the branch's last assistant message is the previous response.
+		// Providers report a withheld block again on every later request that replays it, so only
+		// a count above the previous response's means new losses. message_end reaches the UI before
+		// the current message is persisted, so the branch's last assistant message is the previous response.
 		const branch = this.sessionManager.getBranch();
 		for (let i = branch.length - 1; i >= 0; i--) {
 			const entry = branch[i];
 			if (entry.type === "message" && entry.message.role === "assistant") {
-				previousDroppedCount = InteractiveMode.countDroppedThinkingBlocks(entry.message);
+				const previous = getDroppedReasoning(entry.message);
+				if (previous?.diagnostic === dropped.diagnostic && dropped.count <= previous.count) return;
 				break;
 			}
 		}
-		if (droppedCount <= previousDroppedCount) return;
 
-		const noun = droppedCount === 1 ? "thinking block" : "thinking blocks";
+		const { provider, noun: nouns } = dropped.diagnostic;
+		const noun = nouns[dropped.count === 1 ? 0 : 1];
+		const reasons = dropped.reasons.length > 0 ? `: ${dropped.reasons.join(", ")}` : "";
 		this.chatContainer.addChild(new Spacer(1));
 		this.chatContainer.addChild(
 			new ThemedText(
-				() => theme.fg("warning", `Anthropic dropped ${droppedCount} ${noun} (details in session)`),
+				() => theme.fg("warning", `${provider} dropped ${dropped.count} ${noun}${reasons} (details in session)`),
 				1,
 				0,
 			),
@@ -4476,6 +4530,7 @@ export class InteractiveMode {
 			this.themeController.disableAutoSync();
 			await this.ui.terminal.drainInput(1000);
 			this.stop();
+			await flushStdout();
 			process.exit(0);
 		}
 
@@ -4492,9 +4547,11 @@ export class InteractiveMode {
 
 		const resumeCommand = formatResumeCommand(this.sessionManager);
 		if (resumeCommand) {
-			process.stdout.write(`${chalk.dim("To resume this session:")} ${resumeCommand}\n`);
+			// Own line so the command can be selected with a triple-click (#12237).
+			process.stdout.write(`${chalk.dim("To resume this session:")}\n${resumeCommand}\n`);
 		}
 
+		await flushStdout();
 		process.exit(0);
 	}
 
@@ -5942,24 +5999,46 @@ export class InteractiveMode {
 			return result;
 		} catch (error: unknown) {
 			if (error instanceof MissingSessionCwdError) {
-				const selectedCwd = await this.promptForMissingSessionCwd(error);
-				if (!selectedCwd) {
-					this.showStatus("Resume cancelled");
-					return { cancelled: true };
+				switch (await this.promptForMissingSessionCwd(error)) {
+					case "continue": {
+						const result = await this.runtimeHost.switchSession(sessionPath, {
+							cwdOverride: error.issue.fallbackCwd,
+							withSession: options?.withSession,
+							projectTrustContextFactory: (cwd) => this.createProjectTrustContext(cwd),
+						});
+						if (!result.cancelled) this.showStatus(`Resumed session in ${error.issue.fallbackCwd}`);
+						return result;
+					}
+					case "fork":
+						return this.switchToForkedSession(sessionPath, error.issue.fallbackCwd, options);
+					case undefined:
+						this.showStatus("Resume cancelled");
+						return { cancelled: true };
 				}
-				const result = await this.runtimeHost.switchSession(sessionPath, {
-					cwdOverride: selectedCwd,
-					withSession: options?.withSession,
-					projectTrustContextFactory: (cwd) => this.createProjectTrustContext(cwd),
-				});
-				if (result.cancelled) {
-					return result;
-				}
-				this.showStatus("Resumed session in current cwd");
-				return result;
 			}
 			return this.handleFatalRuntimeError("Failed to resume session", error);
 		}
+	}
+
+	/** Fork a session whose stored cwd is gone into `cwd` and switch to the fork, like `--session <id>` from another project (#11060). */
+	private async switchToForkedSession(
+		sourcePath: string,
+		cwd: string,
+		options?: Parameters<ExtensionCommandContext["switchSession"]>[1],
+	): Promise<{ cancelled: boolean }> {
+		const fork = SessionManager.forkFrom(sourcePath, cwd, this.sessionManager.getSessionDir());
+		const forkPath = fork.getSessionFile()!;
+		const result = await this.runtimeHost.switchSession(forkPath, {
+			withSession: options?.withSession,
+			projectTrustContextFactory: (cwd) => this.createProjectTrustContext(cwd),
+		});
+		if (result.cancelled) {
+			// An extension vetoed the switch; drop the fork so cancelling leaves no copy behind.
+			fs.rmSync(forkPath, { force: true });
+			return result;
+		}
+		this.showStatus(`Forked into new session ${fork.getSessionId()} in ${cwd}`);
+		return result;
 	}
 
 	private getLoginProviderOptions(authType?: "oauth" | "api_key"): AuthSelectorProvider[] {
@@ -6738,18 +6817,21 @@ export class InteractiveMode {
 			this.showStatus(`Session imported from: ${inputPath}`);
 		} catch (error: unknown) {
 			if (error instanceof MissingSessionCwdError) {
-				const selectedCwd = await this.promptForMissingSessionCwd(error);
-				if (!selectedCwd) {
-					this.showStatus("Import cancelled");
-					return;
+				switch (await this.promptForMissingSessionCwd(error)) {
+					case "continue": {
+						const result = await this.runtimeHost.importFromJsonl(inputPath, error.issue.fallbackCwd);
+						this.showStatus(result.cancelled ? "Import cancelled" : `Session imported from: ${inputPath}`);
+						return;
+					}
+					case "fork": {
+						const result = await this.switchToForkedSession(inputPath, error.issue.fallbackCwd);
+						if (result.cancelled) this.showStatus("Import cancelled");
+						return;
+					}
+					case undefined:
+						this.showStatus("Import cancelled");
+						return;
 				}
-				const result = await this.runtimeHost.importFromJsonl(inputPath, selectedCwd);
-				if (result.cancelled) {
-					this.showStatus("Import cancelled");
-					return;
-				}
-				this.showStatus(`Session imported from: ${inputPath}`);
-				return;
 			}
 			if (error instanceof SessionImportFileNotFoundError) {
 				this.showError(`Failed to import session: ${error.message}`);
