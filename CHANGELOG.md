@@ -6,6 +6,28 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
 
 ## [Unreleased]
 
+### Changed
+- **PENpi is on upstream Pi v1.6.0** (from v1.5.1). See Pi's own changelog
+  (`packages/coding-agent/CHANGELOG.md`).
+- The built-in model data now comes from the model catalog that upstream v1.6.0 pins
+  (`nix/model-catalog.json`), so a build gets the same models as the release it is built on.
+  For OpenRouter's GLM 5.3 Flash (`z-ai/glm-5.3-flash`) and DeepSeek V4.1 Flash 1017
+  (`deepseek/deepseek-v4.1-flash-1017`), the catalog now gives a maximum output the context
+  engine accepts as plausible (131,072 and 393,216 tokens; before, 943,717 and 943,718, which
+  it set aside for its 16,384 default). At the 200k planning ceiling, the engine therefore
+  keeps 40,000 tokens for output instead of 16,384, plans the input against 160,000 tokens
+  instead of 183,616, and cuts earlier. `deepseek/deepseek-v4.1-flash` is unchanged.
+
+### Security
+- **Dependency updates:**
+  - `undici` 8.12.3 → **8.12.4**, as upstream Pi v1.6.0 has it, for six security fixes
+    (among them a cache-poisoning one in redirect handling, GHSA-mqg3-3v4r-cm32). PENpi's
+    extension pins the same version.
+  - `undici` 7.30.1 → **7.30.2**, in the copy that `miniflare` uses, for the same six fixes on
+    the 7.x line.
+  - `@hono/node-server` 2.1.8 → **2.1.11**, which the MCP SDK uses, for two fixes in its
+    WebSocket upgrade handling (GHSA-8wcc-wqxr-28qp, GHSA-qhm2-7mpr-ghjp).
+
 ## [0.8.0] — 2026-11-23
 
 ### Changed
