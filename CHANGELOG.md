@@ -18,6 +18,15 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
   keeps 40,000 tokens for output instead of 16,384, plans the input against 160,000 tokens
   instead of 183,616, and cuts earlier. `deepseek/deepseek-v4.1-flash` is unchanged.
 
+### Fixed
+- **A server that fills its context is detected sooner when the engine's estimate runs low.**
+  Such a server reports exactly its limit for every request at or above it. Reporting exactly the
+  largest usage seen so far again counts as evidence of silent truncation when the engine expected
+  that request at or above it. Now it also counts when the request was expected up to 5% below it,
+  since the estimate of one request can be off by that much (ADR 0035). On the upstream v1.5.1
+  corpus (`dd30101cf`), E2's data.o200k.32k.silent-front passes at lag 3 (lag 4 before, against
+  the limit 3), and its known-failure entry is removed.
+
 ### Security
 - **Dependency updates:**
   - `undici` 8.12.3 → **8.12.4**, as upstream Pi v1.6.0 has it, for six security fixes

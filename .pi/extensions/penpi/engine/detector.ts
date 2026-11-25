@@ -37,6 +37,17 @@ export function clearsMarginals(
 }
 
 /**
+ * The exact-repeat rule's test: a sample reports exactly the largest usage reported so far again, and its request was
+ * expected above that, or below it by no more than `error` of it (silentEstimateError), since a request expected that
+ * close may still have reached the limit, and servers that fill their context report exactly the limit. An honest count
+ * lands on one given number only by chance. Not when expected more than 1.6 times above it: the estimate is off, not
+ * the provider.
+ */
+export function repeatsMaximum(expected: number, reported: number, max: number, error: number): boolean {
+	return reported === max && expected >= (1 - error) * reported && expected <= 1.6 * reported;
+}
+
+/**
  * ADR 0034: the samples named at a detection. `affected` (D14 as before) are always named. A doubtful sample
  * (quarantined, or marginal by its growth) that fed the ratio lowered the expected size of the samples after it, and a
  * truncated one can then fall under D14's line. So each sample from its append chain's first doubtful sample on (that
@@ -242,7 +253,8 @@ export function installDetector(core: EngineCore): void {
 		// grow by about what was appended (text only: image costs differ too much between providers).
 		// A sample that does not is quarantined: it is evidence, and it never moves the ratio or the
 		// running maximum. A sample reporting exactly the running maximum again while it was expected
-		// above it is evidence too (servers that fill their context report exactly the limit).
+		// above it, or below it within the allowance silentEstimateError, is evidence too (servers that
+		// fill their context report exactly the limit).
 		const ratioBefore = core.clampRatio(state.ratio);
 		const expected = sent.estimate * ratioBefore;
 		const prev = state.lastSample;
@@ -321,11 +333,11 @@ export function installDetector(core: EngineCore): void {
 			!sent.afterLengthStop &&
 			(!switched || reference !== undefined) &&
 			levelRepeat &&
-			reported === max &&
-			expected > reported &&
-			expected <= 1.6 * reported
+			repeatsMaximum(expected, reported, max, opts.silentEstimateError)
 		) {
-			suspect = `reported exactly the previous maximum ${reported} again, expected about ${Math.round(expected)}`;
+			// The log shows what the rule compared: the expected size against the range it accepts.
+			const lowest = Math.round((1 - opts.silentEstimateError) * reported);
+			suspect = `reported exactly the previous maximum ${reported} again, expected about ${Math.round(expected)} (accepted from ${lowest} to ${Math.round(1.6 * reported)})`;
 		}
 		// ADR 0033: marginal samples older than the evidence span are forgotten, as weak evidence is.
 		const inSpan = (e: { sample: number }) => state.samples - e.sample < opts.silentEvidenceSpan;

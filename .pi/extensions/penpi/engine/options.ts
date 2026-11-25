@@ -128,6 +128,14 @@ export interface EngineOptions {
 	 * window and every request stay as they were. Internal, for tests; no user setting.
 	 */
 	silentNameRescale: boolean;
+	/**
+	 * The exact-repeat rule's allowance for the estimate's error on one request after calibration: a sample that reports
+	 * exactly the largest usage reported so far again is evidence when its request was expected at or above that, less
+	 * this share of it. A working allowance, not a measured bound: ADR 0032's grader caps the error it excuses at the
+	 * same 5%, and the error can run higher (six truncated o200k requests at 32k reached 5.2% to 8.1%, ADR 0032).
+	 * Internal, for tests; no user setting.
+	 */
+	silentEstimateError: number;
 	/** H3: clean requests near a learned limit before a re-probe, and confirmations that end probing. */
 	probeAfterParsed: number;
 	probeAfterUnparsed: number;
@@ -361,6 +369,7 @@ export const DEFAULTS: EngineOptions = {
 	silentEvidenceSpan: 30,
 	silentMarginalPair: true,
 	silentNameRescale: true,
+	silentEstimateError: 0.05,
 	probeAfterParsed: 16,
 	probeAfterUnparsed: 8,
 	probeConfirmations: 2,
