@@ -1,0 +1,345 @@
+/**
+ * 0.9.0, ADR 0035: the silent-truncation detector on honest content, a guard for any detection rule. An honest
+ * provider counts with o200k and a scale of its own per kind of content (0.7 to 1.8, drawn per seed: tokenizers differ
+ * by kind), on one model with a 32,000- or 48,000-token window, so the engine cuts often. The provider never
+ * truncates: it rejects only above the declared window and reports what it counted, so every detection is false.
+ * Three mixes:
+ * - "shapes": ADR 0033's honest shapes (unittest dots, `git diff --stat` bars, base64 of zeros, `-=` rules, blank CRLF
+ *   lines, comment markers, ellipses, closing brackets, numbers, Chinese, random base64, floor-sweep units, prose);
+ * - "corpus": text cut from the E2 corpus (prose, markup, code, JSON, logs, tables, Chinese, Japanese, base64,
+ *   whitespace);
+ * - "mixed": both.
+ *
+ * Variants are engine options. "shipped" (the shipped defaults) is the baseline and always runs; a candidate rule
+ * runs as further variants, each an object of createContextEngine options. The bars, for any new rule, fixed before
+ * its first run:
+ * - Safety: the baseline detects in no session. Every session that detects with a candidate also detects with the
+ *   baseline, and not at a later call: the rule adds no detection and makes none earlier.
+ * - Power: the test must reach the case the rule's guard is there to stop. The rule without its guard detects on
+ *   some sessions, and the baseline's sessions hold the guarded shape (for ADR 0035's oldest-message rule: a growth
+ *   marginal, then a match within 30 samples) at least 20 times in at least 10 sessions. Otherwise the test never
+ *   meets the guard and proves nothing; widen the mix and say how. The counts come from the logged rows.
+ *
+ * Two runs:
+ * - by default, a slice for CI that needs no corpus: the shapes mix, 32,000 tokens, seeds 0 to 9, the shipped engine
+ *   only, with no detection;
+ * - with HONEST_DETECTION=1, the full run, on demand (before a new detection rule and before each release gate): all
+ *   three mixes at both windows, seeds 0 to 49, on a corpus named with E2_CORPUS_REV (v1.4.0 to v1.5.1; v1.6.0 is
+ *   held out and refused). It writes one JSON per session and variant to HONEST_OUT. HONEST_VARIANTS (JSON:
+ *   {"name": {options}}), HONEST_SEEDS ("0-49"), HONEST_MIXES and HONEST_WINDOWS narrow or extend it.
+ */
+
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { fauxAssistantMessage, fauxText, fauxToolCall } from "@earendil-works/pi-ai";
+import { afterEach, describe, expect, it } from "vitest";
+import { type ContentClass, generate, rng } from "../context-engine-e2/content.ts";
+import { resolveRev } from "../context-engine-e2/corpus.ts";
+import { installProviderSim } from "../context-engine-e2/provider-sim.ts";
+import { CountingTokenizer, type Tokenizer } from "../context-engine-e2/tokenizers.ts";
+import { createHarness, type Harness } from "../harness.ts";
+import { createContextEngine, newStats } from "./engine.ts";
+import { sweepUnits } from "./floor-sweep-cases.ts";
+import { blobExtension, finalTurn, LOG_DIR, scriptedModel, syntheticText } from "./helpers.ts";
+import { fastO200k } from "./o200k-fast.ts";
+
+const FULL = process.env.HONEST_DETECTION === "1";
+const HELD_OUT = "faac585884ae2c013a6b1400f3e9e77f10b34bac";
+const BASELINE = "shipped";
+const VARIANTS: Record<string, Record<string, unknown>> = {
+	[BASELINE]: {},
+	...(FULL && process.env.HONEST_VARIANTS
+		? (JSON.parse(process.env.HONEST_VARIANTS) as Record<string, Record<string, unknown>>)
+		: {}),
+};
+const MIXES = FULL ? (process.env.HONEST_MIXES ?? "shapes,corpus,mixed").split(",") : ["shapes"];
+const WINDOWS = FULL ? (process.env.HONEST_WINDOWS ?? "32000,48000").split(",").map(Number) : [32_000];
+const [from, to] = (FULL ? (process.env.HONEST_SEEDS ?? "0-49") : "0-9").split("-").map(Number);
+const SEEDS = Array.from({ length: (to ?? from) - from + 1 }, (_, i) => from + i);
+const OUT = process.env.HONEST_OUT ?? join(LOG_DIR, "honest-detection");
+const PROMPTS = 4;
+const CALLS = 40;
+
+/** o200k with a heap merge (o200k-fast.ts): the same tokens as js-tiktoken, and fast on long runs of one character. */
+const O200K: Tokenizer = { name: "o200k", source: "o200k-fast.ts", count: fastO200k };
+
+/** Counts with o200k, then scales each tool result's text by the scale of its kind: honest, a fixed count per text. */
+class KindCounter extends CountingTokenizer {
+	private scales: Map<string, number>;
+	constructor(tokenizer: Tokenizer, scales: Map<string, number>) {
+		super(tokenizer);
+		this.scales = scales;
+	}
+	/** Texts counted at a kind's scale (tool results), and long texts counted at 1, for the record. */
+	scaled = 0;
+	unscaled: Array<{ chars: number; head: string }> = [];
+	override count(text: string): number {
+		const n = super.count(text);
+		const scale = this.scales.get(text);
+		if (scale !== undefined) this.scaled++;
+		else if (text.length > 1_000 && this.unscaled.length < 20)
+			this.unscaled.push({ chars: text.length, head: JSON.stringify(text.slice(0, 100)) });
+		return scale === undefined ? n : Math.round(n * scale);
+	}
+}
+
+const zh = readFileSync(new URL("./samples/zh.txt", import.meta.url), "utf8");
+const units = sweepUnits();
+const rep = (n: number, f: (i: number) => string) => Array.from({ length: n }, (_, i) => f(i)).join("");
+type Maker = (r: () => number, size: number, seed: number) => string;
+const int = (r: () => number, a: number, b: number) => a + Math.floor(r() * (b - a + 1));
+const cut = (text: string, size: number) => text.slice(0, size);
+
+/** ADR 0033's honest shapes (honest-provider.test.ts) and the suite's other honest kinds, about `size` characters. */
+const SHAPES: Record<string, Maker> = {
+	unittest: (_r, size) => `${".".repeat(Math.max(10, size - 90))}\n${"-".repeat(70)}\nRan tests in 41.512s\n\nOK\n`,
+	diffstat: (_r, size) =>
+		cut(
+			rep(
+				Math.ceil(size / 60),
+				(i) =>
+					` src/module_${i}/handler_${i}.ts | ${String(10 + ((i * 7) % 90)).padStart(3)} ${"+".repeat(10 + ((i * 7) % 40))}${"-".repeat((i * 3) % 20)}\n`,
+			),
+			size,
+		),
+	zeros64: (_r, size) => Buffer.alloc(Math.floor((size * 3) / 4)).toString("base64"),
+	rules: (_r, size) =>
+		cut(
+			rep(Math.ceil(size / 82), (i) => `section ${i}\n${"-=".repeat(35)}\n`),
+			size,
+		),
+	crlf: (_r, size) => `Output:\r\n${"\r\n".repeat(Math.floor(size / 2))}Done.\r\n`,
+	counter: (_r, size) =>
+		cut(
+			rep(Math.ceil(size / 18), (i) => `${i}${"\r\n".repeat(8)}`),
+			size,
+		),
+	slashes: (r, size) =>
+		cut(
+			rep(Math.ceil(size / 3), () => ["//\n", "// \n", "//\n\n"][int(r, 0, 2)]),
+			size,
+		),
+	ellipses: (_r, size) =>
+		cut(
+			rep(Math.ceil(size / 14), (i) => `${"…".repeat(4 + (i % 12))}${"\r\n".repeat(2 + (i % 6))}`),
+			size,
+		),
+	mid: (r, size) =>
+		cut(
+			rep(Math.ceil(size / 6), (i) => `${i} //${"\n".repeat(int(r, 1, 3))}`),
+			size,
+		),
+	five: (r, size) =>
+		cut(
+			rep(Math.ceil(size / 6), () => ["// //\n", "// // \n", `// //${"\n".repeat(int(r, 1, 3))}`][int(r, 0, 2)]),
+			size,
+		),
+	star: (r, size) =>
+		cut(
+			rep(Math.ceil(size / 5), () => ["// *\n", "// *\n\n", "//*\n"][int(r, 0, 2)]),
+			size,
+		),
+	arrow: (r, size) =>
+		cut(
+			rep(Math.ceil(size / 20), () => `-->\n${" ".repeat(int(r, 8, 60))}`),
+			size,
+		),
+	close: (r, size) =>
+		cut(
+			rep(Math.ceil(size / 20), () => `});\n${" ".repeat(int(r, 8, 60))}`),
+			size,
+		),
+	four: (r, size) =>
+		cut(
+			rep(Math.ceil(size / 13), () => `// // // //${"\n".repeat(int(r, 1, 3))}`),
+			size,
+		),
+	numbers: (_r, size, seed) =>
+		cut(
+			rep(Math.ceil(size / 6), (k) => `${(k + seed) * 7919} `),
+			size,
+		),
+	zh: (r, size) => {
+		const at = int(r, 0, Math.max(0, zh.length - size));
+		return zh.repeat(Math.ceil(size / zh.length) + 1).slice(at, at + size);
+	},
+	random64: (r, size) =>
+		Buffer.from(Array.from({ length: Math.floor((size * 3) / 4) }, () => int(r, 0, 255))).toString("base64"),
+	units: (r, size) => {
+		const u = units[int(r, 0, units.length - 1)];
+		return `${u}\n`.repeat(Math.ceil(size / (u.length + 1))).slice(0, size);
+	},
+	prose: (_r, size, seed) => syntheticText(size, seed),
+};
+const CORPUS_KINDS: ContentClass[] = [
+	"prose",
+	"markup",
+	"code",
+	"json",
+	"json-min",
+	"log",
+	"table",
+	"zh",
+	"ja",
+	"base64",
+	"whitespace",
+];
+const CORPUS: Record<string, Maker> = Object.fromEntries(
+	CORPUS_KINDS.map((k) => [`e2-${k}`, (_r: () => number, size: number, seed: number) => generate(k, size, seed).text]),
+);
+const MIX_KINDS: Record<string, Record<string, Maker>> = {
+	shapes: SHAPES,
+	corpus: CORPUS,
+	mixed: { ...SHAPES, ...CORPUS },
+};
+
+interface Row {
+	/** The sample being judged (1-based, stats.calibrationSamples). */
+	s: number;
+	/** Provider calls made so far. */
+	call: number;
+	line: string;
+}
+
+/** A session's tool results, each with its kind and that kind's provider scale. */
+function sessionBlobs(mix: string, window: number, seed: number) {
+	const r = rng(seed * 7_919 + window + mix.length);
+	const makers = MIX_KINDS[mix];
+	const kinds = Object.keys(makers);
+	const kindScale = new Map(kinds.map((k) => [k, Math.round((0.7 + 1.1 * r()) * 100) / 100]));
+	const scales = new Map<string, number>();
+	const blobs: Record<string, { text: string }> = {};
+	const used: string[] = [];
+	for (let i = 0; i < PROMPTS * CALLS; i++) {
+		const kind = kinds[int(r, 0, kinds.length - 1)];
+		const size = int(r, 1_500, 12_000);
+		const text = makers[kind](r, size, seed * 1_000 + i) || ".";
+		blobs[`b${i}`] = { text };
+		scales.set(text, kindScale.get(kind)!);
+		used.push(kind);
+	}
+	return { blobs, scales, used, kindScale };
+}
+
+async function session(
+	mix: string,
+	window: number,
+	seed: number,
+	options: Record<string, unknown>,
+	harnesses: Harness[],
+) {
+	const { blobs, scales, used, kindScale } = sessionBlobs(mix, window, seed);
+	const started = performance.now();
+	const stats = newStats();
+	const rows: Row[] = [];
+	let calls = 0;
+	const harness = await createHarness({
+		models: [{ id: "honest", contextWindow: window, maxTokens: 4_000 }],
+		settings: { compaction: { enabled: false } },
+		extensionFactories: [
+			blobExtension(blobs),
+			createContextEngine({
+				stats,
+				...options,
+				log: (line: string) => {
+					if (line.includes("silent truncation") || line.includes("cut #"))
+						rows.push({ s: stats.calibrationSamples.length, call: calls, line });
+				},
+			}),
+		],
+	});
+	harnesses.push(harness);
+	await harness.session.bindExtensions({});
+	const counter = new KindCounter(O200K, scales);
+	const sim = installProviderSim(harness, {
+		tokenizer: "o200k",
+		counter,
+		limit: window,
+		mode: "reject",
+		errorStyle: "anthropic",
+		observe: () => {
+			calls++;
+		},
+	});
+	const model = scriptedModel(harness);
+	let n = 0;
+	for (let p = 0; p < PROMPTS; p++) {
+		for (let t = 0; t < CALLS; t++) {
+			const name = `b${n++}`;
+			model.push(() =>
+				fauxAssistantMessage(
+					[fauxText(`Reading ${name}.`), fauxToolCall("blob", { name }, { id: `call-${name}` })],
+					{ stopReason: "toolUse" },
+				),
+			);
+		}
+		model.push(finalTurn(`Part ${p} done.`));
+		await harness.session.prompt(`Go through the material, part ${p}.`);
+	}
+	harness.cleanup();
+	harnesses.pop();
+	return {
+		mix,
+		window,
+		seed,
+		options,
+		corpus: process.env.E2_CORPUS_REV,
+		kindScale: Object.fromEntries(kindScale),
+		kinds: used,
+		calls: sim.calls.length,
+		rejected: sim.calls.filter((c) => c.rejected).length,
+		samples: stats.calibrationSamples.length,
+		growthChecks: stats.growthChecks.length,
+		cuts: stats.cuts.length,
+		detections: stats.plateaus,
+		firstDetection: rows.find((row) => row.line.includes("window ->"))?.call ?? null,
+		ms: Math.round(performance.now() - started),
+		tokenizerMs: Math.round(counter.ms),
+		tokenizerCalls: counter.calls,
+		scaledCounts: counter.scaled,
+		unscaled: counter.unscaled,
+		tokenizerChars: counter.chars,
+		rows,
+	};
+}
+
+describe(`0.9.0, ADR 0035: the detector on honest content${FULL ? ", full run" : ", the CI slice"}`, () => {
+	const harnesses: Harness[] = [];
+	afterEach(() => {
+		while (harnesses.length > 0) harnesses.pop()?.cleanup();
+	});
+	if (FULL) {
+		const asked = process.env.E2_CORPUS_REV;
+		if (!asked || asked === "worktree" || resolveRev(asked) === HELD_OUT)
+			throw new Error(
+				"HONEST_DETECTION: set E2_CORPUS_REV to the v1.4.0, v1.5.0 or v1.5.1 corpus (v1.6.0 is held out)",
+			);
+		mkdirSync(OUT, { recursive: true });
+	}
+	for (const mix of MIXES)
+		for (const window of WINDOWS)
+			for (const seed of SEEDS)
+				it(`${mix}, ${window}, seed ${seed}`, { timeout: 1_800_000 }, async () => {
+					let baseline: number | null = null;
+					for (const [name, options] of Object.entries(VARIANTS)) {
+						const result = await session(mix, window, seed, options, harnesses);
+						if (FULL)
+							writeFileSync(
+								join(OUT, `${mix}.${window}.${String(seed).padStart(2, "0")}.${name}.json`),
+								JSON.stringify({ variant: name, ...result }),
+							);
+						// Safety: the shipped engine detects nothing on an honest provider, and a candidate detects only
+						// where it does, and not earlier. Soft, so a full run records every session.
+						if (name === BASELINE) {
+							baseline = result.firstDetection;
+							expect.soft(result.detections, `${name}: a detection on an honest provider`).toEqual([]);
+						} else if (result.firstDetection !== null)
+							expect
+								.soft(
+									baseline !== null && result.firstDetection >= baseline,
+									`${name}: detects at call ${result.firstDetection}, the baseline ${baseline ?? "never"}`,
+								)
+								.toBe(true);
+					}
+				});
+});
