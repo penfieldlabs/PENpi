@@ -136,6 +136,7 @@ docs/adr/0031-upstream-ancestry-and-patch-manifest.md	PENpi decision record
 docs/adr/0032-context-engine.md	PENpi decision record
 docs/adr/0033-marginal-pair.md	PENpi decision record
 docs/adr/0034-names-at-the-ratio-before-doubt.md	PENpi decision record
+docs/adr/0035-exact-repeat-within-the-allowance.md	PENpi decision record
 docs/adr/README.md	PENpi decision record
 package-lock.json	follows package.json (PENpi workspaces and pins; nothing for upstream's apps/); pi-mcp-adapter installed with --legacy-peer-deps (CONTRIBUTING.md); overrides include recheck 4.6.2 (pi-mcp-adapter pins 4.6.0-beta.3) and miniflare's undici 7.30.2
 package.json	PENpi version, workspaces (no apps/*), checks and pins, context engine suite and tokenizer scripts; no npm publishing or model-catalog scripts
