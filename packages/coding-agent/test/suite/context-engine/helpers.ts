@@ -201,6 +201,28 @@ export function finalTurn(text: string, stopReason: AssistantMessage["stopReason
 	return () => fauxAssistantMessage(text, { stopReason });
 }
 
+/**
+ * Sends the request that an earlier answer answered again, unchanged: the session's leaf moves back to the entry
+ * before that answer and the agent continues from there, so the next scripted item answers the same request. The
+ * move sends no tree event, so the engine keeps its state, as for a resend it is not told about (Pi's own tree
+ * navigation reloads the engine's state and resets its running maximum). Call it with the session idle.
+ */
+export async function resendAnswered(harness: Harness, answerText: string): Promise<void> {
+	const answer = [...harness.sessionManager.getBranch()]
+		.reverse()
+		.find(
+			(e) =>
+				e.type === "message" &&
+				e.message.role === "assistant" &&
+				e.message.content.some((b) => b.type === "text" && b.text === answerText),
+		);
+	if (!answer?.parentId) throw new Error(`no answer "${answerText}" to resend`);
+	harness.sessionManager.branch(answer.parentId);
+	// The agent's messages from the session at the new leaf, as tree navigation installs them.
+	(harness.session as unknown as { _refreshFinalizedContext(): void })._refreshFinalizedContext();
+	await harness.session.agent.continue();
+}
+
 // ---------------------------------------------------------------- prefix analysis
 
 export interface PrefixReport {

@@ -92,14 +92,17 @@ export interface ModelState {
 		{
 			maxReported: number;
 			maxExpected?: number;
+			maxEstimate?: number;
 			suspects: ModelState["suspects"];
 			marginals?: ModelState["marginals"];
 		}
 	>;
 	/** The largest usage reported by a sample that was not quarantined. */
 	maxReported: number;
-	/** The expectation of the sample that set maxReported (a repeat of the same request is no evidence). */
+	/** The expectation of the sample that set maxReported. */
 	maxExpected?: number;
+	/** The request estimate of the sample that set maxReported (a repeat of the same request is no evidence). */
+	maxEstimate?: number;
 	/** Quarantined samples (evidence of silent truncation), with the sample count when seen. */
 	suspects: Array<{ reported: number; at: number; sample: number; why: string }>;
 	/**

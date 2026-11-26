@@ -229,6 +229,7 @@ export function installDetector(core: EngineCore): void {
 			parked.set(servedBefore, {
 				maxReported: state.maxReported,
 				maxExpected: state.maxExpected,
+				maxEstimate: state.maxEstimate,
 				suspects: state.suspects,
 				marginals: state.marginals,
 			});
@@ -236,6 +237,7 @@ export function installDetector(core: EngineCore): void {
 			parked.delete(servedBy);
 			state.maxReported = back?.maxReported ?? 0;
 			state.maxExpected = back?.maxExpected;
+			state.maxEstimate = back?.maxEstimate;
 			state.suspects = back?.suspects ?? [];
 			state.marginals = back?.marginals ?? [];
 			const last = state.providerLast?.get(servedBy);
@@ -263,11 +265,12 @@ export function installDetector(core: EngineCore): void {
 		const max = state.maxReported;
 		// The exact-repeat rule below compares with the largest usage ever reported: only with settled
 		// calibration (not during warm-up or after a model switch) and only for a different request than
-		// the one that set it (identical windows report identical counts).
-		const levelRepeat =
-			max > 0 &&
-			state.samples >= opts.silentSettledSamples &&
-			Math.abs(expected - (state.maxExpected ?? 0)) >= 0.005 * expected;
+		// the one that set it (identical windows report identical counts). The requests are compared by their
+		// own estimates, not by the expected sizes: an identical resend's expected size moves with the ratio
+		// step after the first answer, and with the allowance below the maximum that step alone would pass.
+		const settledAtMax = max > 0 && state.samples >= opts.silentSettledSamples;
+		const sameRequest = Math.abs(sent.estimate - (state.maxEstimate ?? 0)) < 0.005 * sent.estimate;
+		const levelRepeat = settledAtMax && !sameRequest;
 		// A sample whose growth falls short but not far enough to be evidence never clears evidence.
 		let marginal = false;
 		// ADR 0033: marginal by its growth (not a length stop or an unjudged switch), with its log text.
@@ -338,6 +341,18 @@ export function installDetector(core: EngineCore): void {
 			// The log shows what the rule compared: the expected size against the range it accepts.
 			const lowest = Math.round((1 - opts.silentEstimateError) * reported);
 			suspect = `reported exactly the previous maximum ${reported} again, expected about ${Math.round(expected)} (accepted from ${lowest} to ${Math.round(1.6 * reported)})`;
+		} else if (
+			!suspect &&
+			!sent.afterLengthStop &&
+			(!switched || reference !== undefined) &&
+			settledAtMax &&
+			sameRequest &&
+			repeatsMaximum(expected, reported, max, opts.silentEstimateError)
+		) {
+			// The same request again (a resend reports the same count): no evidence. Logged, so tests can count it.
+			log(
+				`exact repeat not judged: reported exactly the previous maximum ${reported} again for the same request (estimate ${sent.estimate}, the maximum's ${state.maxEstimate}); expected about ${Math.round(expected)}, the maximum's ${Math.round(state.maxExpected ?? 0)}`,
+			);
 		}
 		// ADR 0033: marginal samples older than the evidence span are forgotten, as weak evidence is.
 		const inSpan = (e: { sample: number }) => state.samples - e.sample < opts.silentEvidenceSpan;
@@ -438,6 +453,7 @@ export function installDetector(core: EngineCore): void {
 		if (reported > state.maxReported) {
 			state.maxReported = reported;
 			state.maxExpected = expected;
+			state.maxEstimate = sent.estimate;
 		}
 		const alpha = state.samples < 3 ? 0.5 : 0.2;
 		const previous = state.ratio;
