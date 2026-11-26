@@ -10,13 +10,18 @@
  *   whitespace);
  * - "mixed": both.
  *
- * Every session also resends requests: after each of its four prompts, one request of that prompt is sent again
- * unchanged (resendAnswered: the engine keeps its state, as for a resend it is not told about), and the provider
- * counts it as before. The request is the one that set the largest usage reported so far when one in that prompt
- * did, with a chance of 0.8, and otherwise one of the prompt's requests at random; the kind scales stay free, so the
- * first estimate of a resent request can be off by a few percent either way. This is the shape ADR 0035's
- * different-request guard is there to stop: an honest repeat of exactly the maximum, expected within the allowance
- * below it.
+ * Every session also resends requests, twice after each of its four prompts, with the engine keeping its state, as
+ * for a resend it is not told about:
+ * - by the route a real session takes: the prompt's last answer sends nothing (it is empty, which Pi's converter
+ *   skips), and an entry that isn't sent (a custom type the engine hides) triggers a turn, so that request is the
+ *   last one again, append-only with nothing appended;
+ * - from the same point (resendAnswered): one request of that prompt is sent again, the one that set the largest
+ *   usage reported so far when one in that prompt did, with a chance of 0.8, and otherwise one at random. When the
+ *   engine has cut since, what it sends differs.
+ * The kind scales stay free, so the first estimate of a resent request can be off by a few percent either way. The
+ * records keep only the resends that reported the same count as the request they repeat. Those are the shape ADR
+ * 0035's different-request guard is there to stop: an honest repeat of exactly the maximum, expected within the
+ * allowance below it.
  *
  * Variants are engine options. "shipped" (the shipped defaults) is the baseline and always runs; a candidate rule
  * runs as further variants, each an object of createContextEngine options. The bars, for any new rule, fixed before
@@ -29,11 +34,13 @@
  *   meets the guard and proves nothing; widen the mix and say how. The counts come from the logged rows.
  * - Power for ADR 0035's exact repeat, by the logged rows of the baseline: samples that report exactly the largest
  *   usage reported so far again for the same request, expected within the allowance below it ("exact repeat not
- *   judged" rows with the expected size below the maximum), at least 20 times in at least 10 sessions.
+ *   judged" rows with the expected size below the maximum), at least 20 times in at least 10 sessions. The test counts
+ *   it itself ("Power: N in M sessions", in power.<seeds>.txt under HONEST_OUT). The bar is asserted on a whole run;
+ *   a run split by seeds, mixes or windows writes its part.
  *
  * Two runs:
  * - by default, a slice for CI that needs no corpus: the shapes mix, 32,000 tokens, seeds 0 to 9, the shipped engine
- *   only, with no detection;
+ *   only, with no detection, and at least one guarded repeat (seed 1 holds two);
  * - with HONEST_DETECTION=1, the full run, on demand (before a new detection rule and before each release gate): all
  *   three mixes at both windows, seeds 0 to 49, on a corpus named with E2_CORPUS_REV (v1.4.0 to v1.5.1; v1.6.0 is
  *   held out and refused). It writes one JSON per session and variant to HONEST_OUT. HONEST_VARIANTS (JSON:
@@ -47,6 +54,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fauxAssistantMessage, fauxText, fauxToolCall } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
+import type { ExtensionAPI } from "../../../src/core/extensions/types.ts";
 import { type ContentClass, generate, rng } from "../context-engine-e2/content.ts";
 import { resolveRev } from "../context-engine-e2/corpus.ts";
 import { installProviderSim } from "../context-engine-e2/provider-sim.ts";
@@ -74,6 +82,8 @@ const REPORTERS = FULL ? (process.env.HONEST_REPORTERS ?? "exact,round100").spli
 const OUT = process.env.HONEST_OUT ?? join(LOG_DIR, "honest-detection");
 const PROMPTS = 4;
 const CALLS = 40;
+/** The custom type of the entry that triggers a turn and is never sent (the engine's hiddenCustomTypes). */
+const UNSENT = "honest-unsent";
 
 /** o200k with a heap merge (o200k-fast.ts): the same tokens as js-tiktoken, and fast on long runs of one character. */
 const O200K: Tokenizer = { name: "o200k", source: "o200k-fast.ts", count: fastO200k };
@@ -251,13 +261,18 @@ async function session(
 	const stats = newStats();
 	const rows: Row[] = [];
 	let calls = 0;
+	let api: ExtensionAPI | undefined;
 	const harness = await createHarness({
 		models: [{ id: "honest", contextWindow: window, maxTokens: 4_000 }],
 		settings: { compaction: { enabled: false } },
 		extensionFactories: [
 			blobExtension(blobs),
+			(pi: ExtensionAPI) => {
+				api = pi;
+			},
 			createContextEngine({
 				stats,
+				hiddenCustomTypes: [UNSENT],
 				...options,
 				log: (line: string) => {
 					if (line.includes("silent truncation") || line.includes("cut #") || line.includes("exact repeat"))
@@ -287,7 +302,16 @@ async function session(
 		answered.set(sim.calls.length - 1, text);
 		return make();
 	};
-	const resends: Array<{ call: number; of: number; atMaximum: boolean; reported: number; again: number }> = [];
+	const resends: Array<{
+		route: "unsent" | "branch";
+		call: number;
+		of: number;
+		atMaximum: boolean;
+		reported: number;
+		again: number;
+	}> = [];
+	const served = (i: number) => !sim.calls[i].rejected && answered.has(i);
+	const highestServed = () => Math.max(...sim.calls.filter((_c, i) => served(i)).map((c) => c.processed));
 	let n = 0;
 	for (let p = 0; p < PROMPTS; p++) {
 		const start = sim.calls.length;
@@ -302,19 +326,44 @@ async function session(
 				),
 			);
 		}
-		model.push(answer(`Part ${p} done.`, () => fauxAssistantMessage(`Part ${p} done.`)));
+		// The prompt's last answer is empty, which Pi's converter skips: it sends nothing.
+		model.push(answer("", () => fauxAssistantMessage("")));
 		await harness.session.prompt(`Go through the material, part ${p}.`);
-		// The resend: the request in this prompt that set the largest usage reported so far, or one at random.
-		const served = (i: number) => !sim.calls[i].rejected && answered.has(i);
-		const mine = Array.from({ length: sim.calls.length - start }, (_, k) => start + k).filter(served);
+		// The first resend, by the route a real session takes: an entry that isn't sent triggers a turn, so that
+		// request is the last one again, append-only with nothing appended.
+		const last = sim.calls.length - 1;
+		if (served(last)) {
+			const highest = highestServed();
+			model.push(answer(`Part ${p} done.`, () => fauxAssistantMessage(`Part ${p} done.`)));
+			api!.sendMessage(
+				{ customType: UNSENT, content: "A reminder for the host, not sent.", display: false },
+				{ triggerTurn: true },
+			);
+			await harness.session.waitForIdle();
+			const again = sim.calls.length - 1;
+			resends.push({
+				route: "unsent",
+				call: again,
+				of: last,
+				atMaximum: sim.calls[last].processed === highest,
+				reported: sim.calls[last].processed,
+				again: sim.calls[again].processed,
+			});
+		}
+		// The second: one request of this prompt sent again from the same point, the one that set the largest usage
+		// reported so far or one at random. When the engine has cut since, what it sends differs.
+		const mine = Array.from({ length: sim.calls.length - start }, (_, k) => start + k).filter(
+			(i) => served(i) && answered.get(i) !== "",
+		);
 		if (mine.length === 0) continue;
-		const highest = Math.max(...sim.calls.filter((_c, i) => served(i)).map((c) => c.processed));
+		const highest = highestServed();
 		const top = mine.find((i) => sim.calls[i].processed === highest);
 		const of = top !== undefined && pick() < 0.8 ? top : mine[int(pick, 0, mine.length - 1)];
 		model.push(answer(`Part ${p} resent.`, () => fauxAssistantMessage(`Part ${p} resent.`)));
 		await resendAnswered(harness, answered.get(of)!);
 		const again = sim.calls.length - 1;
 		resends.push({
+			route: "branch",
 			call: again,
 			of,
 			atMaximum: sim.calls[of].processed === highest,
@@ -339,7 +388,9 @@ async function session(
 		growthChecks: stats.growthChecks.length,
 		cuts: stats.cuts.length,
 		detections: stats.plateaus,
-		resends,
+		// Only resends that reported the same count as the request they repeat are the shape the guard is for.
+		resends: resends.filter((x) => x.reported === x.again),
+		resendsDiffering: resends.filter((x) => x.reported !== x.again).length,
 		firstDetection: rows.find((row) => row.line.includes("window ->"))?.call ?? null,
 		ms: Math.round(performance.now() - started),
 		tokenizerMs: Math.round(counter.ms),
@@ -351,7 +402,21 @@ async function session(
 	};
 }
 
+/** The guarded shape in a session's rows: "not judged" repeats of exactly the maximum, expected below it. */
+function guarded(rows: Row[]): number {
+	let n = 0;
+	for (const { line } of rows) {
+		const m = line.match(
+			/exact repeat not judged: reported exactly the previous maximum (\d+) again.*expected about (\d+)/,
+		);
+		if (m && Number(m[2]) < Number(m[1])) n++;
+	}
+	return n;
+}
+
 describe(`0.9.0, ADR 0035: the detector on honest content${FULL ? ", full run" : ", the CI slice"}`, () => {
+	// The baseline's guarded repeats per session (exact reporter), for the Power count.
+	const power: number[] = [];
 	const harnesses: Harness[] = [];
 	afterEach(() => {
 		while (harnesses.length > 0) harnesses.pop()?.cleanup();
@@ -389,6 +454,7 @@ describe(`0.9.0, ADR 0035: the detector on honest content${FULL ? ", full run" :
 								// where it does, and not earlier. Soft, so a full run records every session.
 								if (name === BASELINE) {
 									baseline = result.firstDetection;
+									power.push(guarded(result.rows));
 									expect.soft(result.detections, `${name}: a detection on an honest provider`).toEqual([]);
 								} else if (result.firstDetection !== null)
 									expect
@@ -400,4 +466,22 @@ describe(`0.9.0, ADR 0035: the detector on honest content${FULL ? ", full run" :
 							}
 						},
 					);
+	// Power for the exact repeat's guard, counted from the logged rows: the full run must meet the guarded shape at
+	// least 20 times in at least 10 sessions; the CI slice at least once, so a broken guard can't pass it.
+	it("Power: the shipped engine meets the guarded exact repeat", () => {
+		const total = power.reduce((a, b) => a + b, 0);
+		const sessions = power.filter((n) => n > 0).length;
+		const line = `Power: ${total} in ${sessions} sessions (of ${power.length})`;
+		if (FULL) {
+			writeFileSync(join(OUT, `power.${from}-${to ?? from}.txt`), `${line}\n`);
+			process.stderr.write(`${line}\n`);
+			// The bar is for the whole run (300 sessions). A run split by HONEST_SEEDS, HONEST_MIXES or HONEST_WINDOWS
+			// writes its part, and the parts are added up.
+			const whole = SEEDS.length === 50 && MIXES.length === 3 && WINDOWS.length === 2;
+			if (whole) {
+				expect.soft(total, line).toBeGreaterThanOrEqual(20);
+				expect.soft(sessions, line).toBeGreaterThanOrEqual(10);
+			}
+		} else expect(total, line).toBeGreaterThanOrEqual(1);
+	});
 });

@@ -202,8 +202,9 @@ export function finalTurn(text: string, stopReason: AssistantMessage["stopReason
 }
 
 /**
- * Sends the request that an earlier answer answered again, unchanged: the session's leaf moves back to the entry
- * before that answer and the agent continues from there, so the next scripted item answers the same request. The
+ * Sends the request that an earlier answer answered again, from the same point: the session's leaf moves back to the
+ * entry before that answer and the agent continues from there. When the engine has cut since, what it sends differs;
+ * for the last answer, the request is the same one again, append-only with nothing appended. The
  * move sends no tree event, so the engine keeps its state, as for a resend it is not told about (Pi's own tree
  * navigation reloads the engine's state and resets its running maximum). Call it with the session idle.
  */
