@@ -50,7 +50,14 @@ log line shows what the rule compared: the expected size, and the range it accep
   limit, so its repeat is a coincidence.
 
 On E2's 288 runs the rule took a repeat below the maximum twice: call 12, and once on an honest provider (Results).
-Chance does land on the maximum now and then, which is why one repeat is weak evidence and never acts alone.
+Chance does land on the maximum now and then. One repeat is weak evidence: it acts with a second suspect, or with a
+growth marginal within the evidence span (ADR 0033).
+
+**The same request sent again is no evidence.** An identical resend reports the same count, so the rule asks for a
+different request than the one that set the maximum: the requests' own estimates 0.5% or more apart. Their expected
+sizes are not enough. The ratio moves after every clean sample, so a resend's expected size moves too, and with the
+allowance below the maximum, a resend of a request first estimated 2.5% to about 6% low would pass. An overestimated one
+already could. The log line "exact repeat not judged" shows each repeat the guard stops.
 
 ### Not adopted: a shortfall of about the oldest message
 
@@ -89,24 +96,31 @@ drawn per seed. Its bars were fixed before it ran:
 - **The narrowing didn't help:** honest pairs are close in size, so it removed only 6 of the 32.
 
 So on this content, a shortfall of one header sits inside the honest estimate error, and the guard doesn't separate
-the two. The trial commits stay on a local branch (`6d9e18ab7`, `ad0b9b4c6`).
+the two. The trial code is on a local branch, not published.
 
 ### Kept: the honest test as a guard for any detection rule
 
 `v090-honest-detection.test.ts` runs the detector against an honest provider that counts with o200k at a scale per kind
-of content. Its variants are engine options, with the shipped defaults as the baseline.
+of content. Its variants are engine options, with the shipped defaults as the baseline. After each of a session's four
+prompts it resends one request of that prompt unchanged: the one that set the largest usage reported so far, with a
+chance of 0.8, when one in that prompt did. That is the shape the exact repeat's different-request guard stops.
 
 **Its bars, for any future rule:**
 - **Safety:** the baseline detects in no session. Each session that detects with a candidate also detects with the
   baseline, and not at a later call.
 - **Power:** the rule without its guard detects on some sessions, and the baseline's sessions hold the shape the
-  guard has to stop at least 20 times in at least 10 sessions.
+  guard has to stop at least 20 times in at least 10 sessions. For the exact repeat, that shape is a sample that
+  reports exactly the maximum again for the same request, expected within the allowance below it, counted from the
+  logged rows.
 
 **How it runs:**
-- **By default (CI),** a slice that needs no corpus: the shapes mix, a 32k window, 10 seeds, the shipped engine,
-  asserting no detection.
+- **By default (CI),** a slice that needs no corpus: the shapes mix, a 32k window, 10 seeds with their resends, the
+  shipped engine, asserting no detection.
 - **With `HONEST_DETECTION=1`,** the full 300 sessions on a named corpus. It refuses the held-out revision. It is meant
-  for before a new detection rule and before each release gate.
+  for before a new detection rule and before each release gate. It also runs each session with a provider that rounds
+  its usage to 100 tokens. No supported provider does, and the engine has no guard for one, so those sessions are
+  recorded and not failed. Rounding turns an honest growth under 100 tokens into none, which the rule for an append
+  with no growth reads as strong evidence (Results).
 
 ## The exact path, later
 
@@ -130,7 +144,10 @@ None of it is built.
 
 ## Results
 
-On the engine as it ships (E2's engine hash `f16b2fdf82b3`), 96 runs on each corpus, one worker:
+On the engine as it ships, 96 runs on each corpus, one worker. The table was run at E2's engine hash `f16b2fdf82b3`.
+The shipped engine, `04ccbc1c44d5`, differs from it only in the different-request guard, which is read only where a
+sample reports exactly the largest usage. Every run with such a sample was rerun on it, the 24 `silent-front` runs on
+each corpus and `research.glm.32k.reject` on v1.5.0, and each matches call for call:
 
 | corpus | known cases | false detections | wrong names | lags over 48 silent runs (lag: runs) |
 |---|---|---|---|---|
@@ -141,10 +158,16 @@ On the engine as it ships (E2's engine hash `f16b2fdf82b3`), 96 runs on each cor
 - The rule took a repeat below the maximum twice in 288 runs:
   - `data.o200k.32k.silent-front` on v1.5.1, call 12, expected at 0.963 of it: the fix;
   - `research.glm.32k.reject` on v1.5.0, an honest provider: a request expected at 0.998 of the maximum reported exactly it. That stayed one suspect and never acted.
-- The other changes come from the checkout, not the engine. Pi's system prompt names the package's paths, and this run's checkout path counts 3 tokens fewer than the earlier runs'. The engine of 0.8.0, run from this checkout, gives the same shifted counts. The shift moved:
+- The other changes come from the checkout, not the engine. Pi's system prompt names the package's paths, and this run's checkout path counts 3 tokens fewer than the earlier runs'. The engine of 0.8.0, run from this checkout, gives the same shifted counts. In the two runs below the rule logged nothing, and on every diagnostic run the final engine matches the trial engine with its rule off, call for call. The shift moved:
   - `research.o200k.32k.silent-messages` on v1.5.0 to lag 2 (was 3);
   - on v1.4.0, the wrong name in `data.glm.32k.silent-front`, which is gone.
-- The honest test's full run, on the shipped engine: 300 sessions, 0 detections, and no exact-repeat evidence in any session.
+- The honest test's full run, on the shipped engine, with the resends: 300 sessions, 0 detections, and no exact-repeat
+  evidence in any session.
+  - **Power:** the guard stopped a resend that reported the maximum again, expected below it, 26 times in 22 sessions.
+  - **With the guard comparing expected sizes instead,** as it did before, 15 of the same sessions detect, each after
+    a resend taken as evidence.
+  - **With usage rounded to 100:** 39 sessions detect. 35 follow an append the rounding shows as no growth (69 real
+    tokens of 1,410 estimated, in one), and 4 a rounded repeat of the maximum.
 
 ## Consequences
 
