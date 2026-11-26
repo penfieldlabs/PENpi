@@ -273,6 +273,9 @@ export function installDetector(core: EngineCore): void {
 		// and with the allowance below the maximum that step alone would pass. The shape too: a different request,
 		// such as the first after a cut, can land within 0.5% of the maximum's estimate.
 		const settledAtMax = max > 0 && state.samples >= opts.silentSettledSamples;
+		// Both requests, for the log: shape (12 hex) and estimate, this one's and the maximum-setter's.
+		const requests = () =>
+			`shape ${sent.shapeHash.slice(0, 12)}, the maximum's ${(state.maxShape ?? "none").slice(0, 12)}; estimate ${sent.estimate}, the maximum's ${state.maxEstimate}`;
 		const sameRequest =
 			sent.shapeHash === state.maxShape &&
 			Math.abs(sent.estimate - (state.maxEstimate ?? 0)) < 0.005 * sent.estimate;
@@ -346,7 +349,7 @@ export function installDetector(core: EngineCore): void {
 		) {
 			// The log shows what the rule compared: the expected size against the range it accepts.
 			const lowest = Math.round((1 - opts.silentEstimateError) * reported);
-			suspect = `reported exactly the previous maximum ${reported} again, expected about ${Math.round(expected)} (accepted from ${lowest} to ${Math.round(1.6 * reported)})`;
+			suspect = `reported exactly the previous maximum ${reported} again, expected about ${Math.round(expected)} (accepted from ${lowest} to ${Math.round(1.6 * reported)}); ${requests()}`;
 		} else if (
 			!suspect &&
 			!sent.afterLengthStop &&
@@ -357,7 +360,7 @@ export function installDetector(core: EngineCore): void {
 		) {
 			// The same request again (a resend reports the same count): no evidence. Logged, so tests can count it.
 			log(
-				`exact repeat not judged: reported exactly the previous maximum ${reported} again for the same request (the same shape; estimate ${sent.estimate}, the maximum's ${state.maxEstimate}); expected about ${Math.round(expected)}, the maximum's ${Math.round(state.maxExpected ?? 0)}`,
+				`exact repeat not judged: reported exactly the previous maximum ${reported} again for the same request (${requests()}); expected about ${Math.round(expected)}, the maximum's ${Math.round(state.maxExpected ?? 0)}`,
 			);
 		}
 		// ADR 0033: marginal samples older than the evidence span are forgotten, as weak evidence is.

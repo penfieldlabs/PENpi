@@ -183,6 +183,8 @@ describe("0.9.0, ADR 0035: the different-request guard compares the requests' ow
 		expect(expected).toBeLessThan(again.processedTokens);
 		expect(expected).toBeGreaterThanOrEqual(0.95 * again.processedTokens);
 	});
+	// This pins the empty-answer rule of the guard's shape: an answer that sends nothing leaves the shape as it was. The
+	// estimate-only guard took this resend for the same request too; a shape that kept the empty answer would not.
 	it("the same request sent again by a real session's route, an empty answer and then an entry that isn't sent, is no evidence", async () => {
 		const rows: Array<{ call: number; line: string }> = [];
 		let sim: ProviderSim | undefined;
@@ -402,13 +404,42 @@ async function postCut(early: number, GROW_TO = 9_000, lowWater?: number) {
 	};
 }
 
+/**
+ * The post-cut session with the first step sized so the two estimates land within `within` of each other. The size is
+ * searched at run time: the estimates move with the system prompt, which carries the checkout's paths, so no fixed
+ * size holds from every checkout. The first step is dropped by the cut, so it moves only the maximum-setter's
+ * estimate. A scan in steps of 250 characters finds where the gap changes sign with the same request setting the
+ * maximum (a larger step can make an earlier request the maximum-setter); steps of 25 inside that interval find a fit.
+ */
+async function postCutWithin(within: number) {
+	type Run = Awaited<ReturnType<typeof postCut>>;
+	const gap = (r: Run) => (r.estimates[0] - r.estimates[1]) / r.estimates[0];
+	const run = async (early: number) => {
+		const r = await postCut(early, 9_000, 0.55);
+		while (harnesses.length > 1) harnesses.shift()?.cleanup();
+		return r;
+	};
+	let previous: { early: number; r: Run } | undefined;
+	for (let early = 5_000; early <= 12_000; early += 250) {
+		const r = await run(early);
+		if (Math.abs(gap(r)) < within) return r;
+		if (previous && previous.r.maxAt === r.maxAt && gap(previous.r) < 0 && gap(r) > 0)
+			for (let fine = previous.early + 25; fine < early; fine += 25) {
+				const f = await run(fine);
+				if (Math.abs(gap(f)) < within) return f;
+			}
+		previous = { early, r };
+	}
+	throw new Error(`no first-step size puts the two estimates within ${within * 100}%`);
+}
+
 describe("0.9.0, ADR 0035: the guard tells requests apart by their shape", () => {
 	afterEach(() => {
 		while (harnesses.length > 0) harnesses.pop()?.cleanup();
 	});
 
 	it("a truncated request after a cut, its estimate within 0.5% of the maximum's, reporting exactly the maximum, is evidence", async () => {
-		const r = await postCut(7_300, 9_000, 0.55);
+		const r = await postCutWithin(0.005);
 		const [maxEstimate, estimate] = r.estimates;
 		// What the estimate alone took for the same request: within 0.5% of the maximum-setter's.
 		expect(Math.abs(estimate - maxEstimate) / maxEstimate).toBeLessThan(0.005);
@@ -421,5 +452,83 @@ describe("0.9.0, ADR 0035: the guard tells requests apart by their shape", () =>
 		const lines = r.at(r.after);
 		expect(lines.some((l) => l.includes("evidence 1/2: reported exactly the previous maximum"))).toBe(true);
 		expect(lines.some((l) => l.includes("exact repeat not judged"))).toBe(false);
+	});
+});
+
+describe("0.9.0, ADR 0035: the engine's own messages are keyed by their text", () => {
+	const realNow = Date.now;
+	afterEach(() => {
+		Date.now = realNow;
+		while (harnesses.length > 0) harnesses.pop()?.cleanup();
+	});
+	it("an identical request whose window header was rebuilt with another timestamp is the same request", async () => {
+		// Every read of the clock is 5 ms later than the last, so a message built at one moment and one rebuilt from a
+		// session entry never share a timestamp by chance.
+		let clock = realNow();
+		Date.now = () => {
+			clock += 5;
+			return clock;
+		};
+		const rows: Array<{ call: number; line: string }> = [];
+		let sim: ProviderSim | undefined;
+		const harness = await createHarness({
+			models: [{ id: "srv", contextWindow: 32_000, maxTokens: 4_000 }],
+			settings: { compaction: { enabled: false } },
+			extensionFactories: [
+				workExtension,
+				createContextEngine({
+					stats: newStats(),
+					log: (line: string) => rows.push({ call: (sim?.calls.length ?? 0) - 1, line }),
+				}),
+			],
+		});
+		harnesses.push(harness);
+		await harness.session.bindExtensions({});
+		sim = installProviderSim(harness, {});
+		const model = scriptedModel(harness);
+		// Large steps until the engine has cut, then small ones, so the regrowth sets a new maximum after that cut (the
+		// request answered "Step <maxStep>."); then large steps again, so the engine cuts once more after it.
+		let peak = 0;
+		let cuts = 0;
+		let maxStep: number | undefined;
+		let maxCall: number | undefined;
+		for (let t = 0; t < 120; t++)
+			model.push(() => {
+				const calls = sim!.calls;
+				const seen = rows.filter((r) => r.line.includes("cut #")).length;
+				if (cuts === 0 && seen > 0) peak = Math.max(...calls.slice(0, -1).map((c) => c.processedTokens));
+				cuts = seen;
+				const last = calls.at(-1)?.processedTokens ?? 0;
+				let size = 4_000;
+				if (cuts >= 1 && maxStep === undefined) {
+					if (last > peak + 300) {
+						maxStep = t;
+						maxCall = calls.length - 1;
+					} else size = 600;
+				}
+				if (maxStep !== undefined && cuts >= 2 && t > maxStep + 2) return fauxAssistantMessage("done");
+				return fauxAssistantMessage(
+					[fauxText(`Step ${t}.`), fauxToolCall("work", { size, seed: t }, { id: `call-${t}` })],
+					{ stopReason: "toolUse" },
+				);
+			});
+		await harness.session.prompt(`First task: ${syntheticText(1_600, 99).replace(/\s+/g, " ")}`);
+		const before = sim.calls.length;
+		model.push(finalTurn("resent"));
+		await resendAnswered(harness, `Step ${maxStep}.`);
+		Date.now = realNow;
+		// The request that set the maximum came after the first cut, and the engine cut again after it; the resend from
+		// the same point rebuilds the window as of the first cut, with its header made again at another time.
+		expect(rows.filter((r) => r.line.includes("cut #")).length).toBeGreaterThanOrEqual(2);
+		const again = sim.calls.at(-1)!;
+		expect(again.processedTokens).toBe(sim.calls[maxCall!].processedTokens);
+		expect(Math.max(...sim.calls.slice(0, -1).map((c) => c.processedTokens))).toBe(again.processedTokens);
+		expect(rows.some((r) => r.call >= before && r.line.includes("silent truncation evidence"))).toBe(false);
+		const line = rows.find((r) => r.call >= before && r.line.includes("exact repeat not judged"))?.line;
+		const [, shape, maxShape, estimate, maxEstimate] =
+			line?.match(/shape (\w+), the maximum's (\w+); estimate (\d+), the maximum's (\d+)/) ?? [];
+		expect(shape).toBeDefined();
+		expect(shape).toBe(maxShape);
+		expect(estimate).toBe(maxEstimate);
 	});
 });

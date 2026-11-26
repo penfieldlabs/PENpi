@@ -15,6 +15,7 @@ import {
 } from "./estimator.ts";
 import {
 	HEADER_FORMAT,
+	HEADER_TYPE,
 	NOTES_TOOL,
 	NOTICE_MARKER,
 	NOTICE_TYPE,
@@ -881,12 +882,7 @@ export function installPlanner(core: EngineCore): void {
 		}
 		st.lastSent = {
 			estimate,
-			// The request's shape, the identities of the messages that send anything: the exact repeat's guard tells two
-			// requests apart by it. A message that sends nothing (an empty answer, which Pi's converters skip) leaves it as
-			// it was.
-			shapeHash: createHash("sha1")
-				.update(shape.keys.filter((_k, i) => sendsSomething(sentMessages[i])).join("\n"))
-				.digest("hex"),
+			shapeHash: guardShape(sentMessages),
 			key: limits.key,
 			seq: ++st.sendSeq,
 			appendOnly,
@@ -914,7 +910,7 @@ export function installPlanner(core: EngineCore): void {
 
 	/**
 	 * Whether a message sends anything: not priced at nothing, and not an answer with no text, tool call or reasoning
-	 * (Pi's converters skip one; Bedrock sends a placeholder, which a provider counts, so a repeat there is not exact).
+	 * (Pi's converters skip one). Blank thinking counts as none, as the serializer drops it, unless it is signed.
 	 */
 	function sendsSomething(message: AgentMessage): boolean {
 		if (core.parts(message).tokens === 0) return false;
@@ -924,8 +920,40 @@ export function installPlanner(core: EngineCore): void {
 			(b) =>
 				(b.type === "text" && b.text.trim().length > 0) ||
 				b.type === "toolCall" ||
-				(b.type === "thinking" && (b.thinking.length > 0 || !!b.thinkingSignature)),
+				(b.type === "thinking" && (b.thinking.trim().length > 0 || !!b.thinkingSignature)),
 		);
+	}
+
+	/**
+	 * The request's shape for the exact repeat's guard, which tells two requests apart by it: SHA-1 of one key per
+	 * message that sends anything. A session message is keyed by its identity (role, timestamp, custom type). The
+	 * engine's own messages, the window header and the notice, and system messages, the engine's checkpoint among them,
+	 * are keyed by a hash of their text: the engine rebuilds them, with a new timestamp, when it rebuilds its window, and
+	 * the timestamp is never sent. A message that sends nothing (an empty answer) leaves the shape as it was.
+	 */
+	function guardShape(messages: AgentMessage[]): string {
+		const keys: string[] = [];
+		for (const m of messages) {
+			if (!sendsSomething(m)) continue;
+			const r = m as {
+				role: string;
+				timestamp?: number;
+				customType?: string;
+				content?: unknown;
+				sections?: unknown;
+			};
+			const own =
+				r.role === "system" ||
+				(r.role === "custom" && (r.customType === HEADER_TYPE || r.customType === NOTICE_TYPE));
+			keys.push(
+				own
+					? `${r.role}:${r.customType ?? ""}:#${createHash("sha1")
+							.update(JSON.stringify([r.content, r.sections ?? null]))
+							.digest("hex")}`
+					: `${r.role}:${r.timestamp ?? 0}:${r.customType ?? ""}`,
+			);
+		}
+		return createHash("sha1").update(keys.join("\n")).digest("hex");
 	}
 
 	// ---------------------------------------------------------- boundaries (E2 b, E5, E6, H4)
