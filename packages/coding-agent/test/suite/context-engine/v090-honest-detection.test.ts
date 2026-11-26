@@ -10,6 +10,14 @@
  *   whitespace);
  * - "mixed": both.
  *
+ * Every session also resends requests: after each of its four prompts, one request of that prompt is sent again
+ * unchanged (resendAnswered: the engine keeps its state, as for a resend it is not told about), and the provider
+ * counts it as before. The request is the one that set the largest usage reported so far when one in that prompt
+ * did, with a chance of 0.8, and otherwise one of the prompt's requests at random; the kind scales stay free, so the
+ * first estimate of a resent request can be off by a few percent either way. This is the shape ADR 0035's
+ * different-request guard is there to stop: an honest repeat of exactly the maximum, expected within the allowance
+ * below it.
+ *
  * Variants are engine options. "shipped" (the shipped defaults) is the baseline and always runs; a candidate rule
  * runs as further variants, each an object of createContextEngine options. The bars, for any new rule, fixed before
  * its first run:
@@ -19,6 +27,9 @@
  *   some sessions, and the baseline's sessions hold the guarded shape (for ADR 0035's oldest-message rule: a growth
  *   marginal, then a match within 30 samples) at least 20 times in at least 10 sessions. Otherwise the test never
  *   meets the guard and proves nothing; widen the mix and say how. The counts come from the logged rows.
+ * - Power for ADR 0035's exact repeat, by the logged rows of the baseline: samples that report exactly the largest
+ *   usage reported so far again for the same request, expected within the allowance below it ("exact repeat not
+ *   judged" rows with the expected size below the maximum), at least 20 times in at least 10 sessions.
  *
  * Two runs:
  * - by default, a slice for CI that needs no corpus: the shapes mix, 32,000 tokens, seeds 0 to 9, the shipped engine
@@ -27,6 +38,9 @@
  *   three mixes at both windows, seeds 0 to 49, on a corpus named with E2_CORPUS_REV (v1.4.0 to v1.5.1; v1.6.0 is
  *   held out and refused). It writes one JSON per session and variant to HONEST_OUT. HONEST_VARIANTS (JSON:
  *   {"name": {options}}), HONEST_SEEDS ("0-49"), HONEST_MIXES and HONEST_WINDOWS narrow or extend it.
+ *   It also runs every session with a provider that rounds its usage to 100 tokens (HONEST_REPORTERS, "exact,round100"
+ *   by default), a provider kind the engine does not support yet. Those sessions are recorded, not failed: until the
+ *   engine has a guard for rounding, a detection there is expected.
  */
 
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -40,7 +54,7 @@ import { CountingTokenizer, type Tokenizer } from "../context-engine-e2/tokenize
 import { createHarness, type Harness } from "../harness.ts";
 import { createContextEngine, newStats } from "./engine.ts";
 import { sweepUnits } from "./floor-sweep-cases.ts";
-import { blobExtension, finalTurn, LOG_DIR, scriptedModel, syntheticText } from "./helpers.ts";
+import { blobExtension, LOG_DIR, resendAnswered, scriptedModel, syntheticText } from "./helpers.ts";
 import { fastO200k } from "./o200k-fast.ts";
 
 const FULL = process.env.HONEST_DETECTION === "1";
@@ -56,6 +70,7 @@ const MIXES = FULL ? (process.env.HONEST_MIXES ?? "shapes,corpus,mixed").split("
 const WINDOWS = FULL ? (process.env.HONEST_WINDOWS ?? "32000,48000").split(",").map(Number) : [32_000];
 const [from, to] = (FULL ? (process.env.HONEST_SEEDS ?? "0-49") : "0-9").split("-").map(Number);
 const SEEDS = Array.from({ length: (to ?? from) - from + 1 }, (_, i) => from + i);
+const REPORTERS = FULL ? (process.env.HONEST_REPORTERS ?? "exact,round100").split(",") : ["exact"];
 const OUT = process.env.HONEST_OUT ?? join(LOG_DIR, "honest-detection");
 const PROMPTS = 4;
 const CALLS = 40;
@@ -227,8 +242,11 @@ async function session(
 	seed: number,
 	options: Record<string, unknown>,
 	harnesses: Harness[],
+	reporter = "exact",
 ) {
 	const { blobs, scales, used, kindScale } = sessionBlobs(mix, window, seed);
+	// The resend choices, drawn from their own stream so the blobs stay as they were.
+	const pick = rng(seed * 104_729 + window + mix.length);
 	const started = performance.now();
 	const stats = newStats();
 	const rows: Row[] = [];
@@ -242,7 +260,7 @@ async function session(
 				stats,
 				...options,
 				log: (line: string) => {
-					if (line.includes("silent truncation") || line.includes("cut #"))
+					if (line.includes("silent truncation") || line.includes("cut #") || line.includes("exact repeat"))
 						rows.push({ s: stats.calibrationSamples.length, call: calls, line });
 				},
 			}),
@@ -257,24 +275,52 @@ async function session(
 		limit: window,
 		mode: "reject",
 		errorStyle: "anthropic",
-		observe: () => {
+		observe: (call) => {
 			calls++;
+			if (reporter === "round100") call.processed = Math.round(call.processed / 100) * 100;
 		},
 	});
 	const model = scriptedModel(harness);
+	// Each answer's text, by the provider call it answers (rejected calls get none).
+	const answered = new Map<number, string>();
+	const answer = (text: string, make: () => ReturnType<typeof fauxAssistantMessage>) => () => {
+		answered.set(sim.calls.length - 1, text);
+		return make();
+	};
+	const resends: Array<{ call: number; of: number; atMaximum: boolean; reported: number; again: number }> = [];
 	let n = 0;
 	for (let p = 0; p < PROMPTS; p++) {
+		const start = sim.calls.length;
 		for (let t = 0; t < CALLS; t++) {
 			const name = `b${n++}`;
-			model.push(() =>
-				fauxAssistantMessage(
-					[fauxText(`Reading ${name}.`), fauxToolCall("blob", { name }, { id: `call-${name}` })],
-					{ stopReason: "toolUse" },
+			const text = `Reading ${name}.`;
+			model.push(
+				answer(text, () =>
+					fauxAssistantMessage([fauxText(text), fauxToolCall("blob", { name }, { id: `call-${name}` })], {
+						stopReason: "toolUse",
+					}),
 				),
 			);
 		}
-		model.push(finalTurn(`Part ${p} done.`));
+		model.push(answer(`Part ${p} done.`, () => fauxAssistantMessage(`Part ${p} done.`)));
 		await harness.session.prompt(`Go through the material, part ${p}.`);
+		// The resend: the request in this prompt that set the largest usage reported so far, or one at random.
+		const served = (i: number) => !sim.calls[i].rejected && answered.has(i);
+		const mine = Array.from({ length: sim.calls.length - start }, (_, k) => start + k).filter(served);
+		if (mine.length === 0) continue;
+		const highest = Math.max(...sim.calls.filter((_c, i) => served(i)).map((c) => c.processed));
+		const top = mine.find((i) => sim.calls[i].processed === highest);
+		const of = top !== undefined && pick() < 0.8 ? top : mine[int(pick, 0, mine.length - 1)];
+		model.push(answer(`Part ${p} resent.`, () => fauxAssistantMessage(`Part ${p} resent.`)));
+		await resendAnswered(harness, answered.get(of)!);
+		const again = sim.calls.length - 1;
+		resends.push({
+			call: again,
+			of,
+			atMaximum: sim.calls[of].processed === highest,
+			reported: sim.calls[of].processed,
+			again: sim.calls[again].processed,
+		});
 	}
 	harness.cleanup();
 	harnesses.pop();
@@ -282,6 +328,7 @@ async function session(
 		mix,
 		window,
 		seed,
+		reporter,
 		options,
 		corpus: process.env.E2_CORPUS_REV,
 		kindScale: Object.fromEntries(kindScale),
@@ -292,6 +339,7 @@ async function session(
 		growthChecks: stats.growthChecks.length,
 		cuts: stats.cuts.length,
 		detections: stats.plateaus,
+		resends,
 		firstDetection: rows.find((row) => row.line.includes("window ->"))?.call ?? null,
 		ms: Math.round(performance.now() - started),
 		tokenizerMs: Math.round(counter.ms),
@@ -316,30 +364,40 @@ describe(`0.9.0, ADR 0035: the detector on honest content${FULL ? ", full run" :
 			);
 		mkdirSync(OUT, { recursive: true });
 	}
-	for (const mix of MIXES)
-		for (const window of WINDOWS)
-			for (const seed of SEEDS)
-				it(`${mix}, ${window}, seed ${seed}`, { timeout: 1_800_000 }, async () => {
-					let baseline: number | null = null;
-					for (const [name, options] of Object.entries(VARIANTS)) {
-						const result = await session(mix, window, seed, options, harnesses);
-						if (FULL)
-							writeFileSync(
-								join(OUT, `${mix}.${window}.${String(seed).padStart(2, "0")}.${name}.json`),
-								JSON.stringify({ variant: name, ...result }),
-							);
-						// Safety: the shipped engine detects nothing on an honest provider, and a candidate detects only
-						// where it does, and not earlier. Soft, so a full run records every session.
-						if (name === BASELINE) {
-							baseline = result.firstDetection;
-							expect.soft(result.detections, `${name}: a detection on an honest provider`).toEqual([]);
-						} else if (result.firstDetection !== null)
-							expect
-								.soft(
-									baseline !== null && result.firstDetection >= baseline,
-									`${name}: detects at call ${result.firstDetection}, the baseline ${baseline ?? "never"}`,
-								)
-								.toBe(true);
-					}
-				});
+	for (const reporter of REPORTERS)
+		for (const mix of MIXES)
+			for (const window of WINDOWS)
+				for (const seed of SEEDS)
+					it(
+						`${mix}, ${window}, seed ${seed}${reporter === "exact" ? "" : `, ${reporter}`}`,
+						{ timeout: 1_800_000 },
+						async () => {
+							let baseline: number | null = null;
+							for (const [name, options] of Object.entries(VARIANTS)) {
+								const result = await session(mix, window, seed, options, harnesses, reporter);
+								if (FULL)
+									writeFileSync(
+										join(
+											OUT,
+											`${mix}.${window}.${String(seed).padStart(2, "0")}${reporter === "exact" ? "" : `.${reporter}`}.${name}.json`,
+										),
+										JSON.stringify({ variant: name, ...result }),
+									);
+								// A rounding provider is recorded, not failed (the header).
+								if (reporter !== "exact") continue;
+								// Safety: the shipped engine detects nothing on an honest provider, and a candidate detects only
+								// where it does, and not earlier. Soft, so a full run records every session.
+								if (name === BASELINE) {
+									baseline = result.firstDetection;
+									expect.soft(result.detections, `${name}: a detection on an honest provider`).toEqual([]);
+								} else if (result.firstDetection !== null)
+									expect
+										.soft(
+											baseline !== null && result.firstDetection >= baseline,
+											`${name}: detects at call ${result.firstDetection}, the baseline ${baseline ?? "never"}`,
+										)
+										.toBe(true);
+							}
+						},
+					);
 });
