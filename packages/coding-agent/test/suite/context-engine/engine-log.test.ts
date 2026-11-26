@@ -114,7 +114,12 @@ describe("PENPI_ENGINE_LOG: the engine log and telemetry", () => {
 		expect(log).toMatch(/ \[a\] cut #1 /);
 		expect(log).toMatch(/ \[a\] pin #1: /);
 		expect(log).toMatch(/ \[a\] provider error \(context-overflow; /);
-		const reports = lines.filter((l) => / telemetry \{/.test(l)).map((l) => JSON.parse(l.slice(l.indexOf("{"))));
+		const all = lines.filter((l) => / telemetry \{/.test(l)).map((l) => JSON.parse(l.slice(l.indexOf("{"))));
+		// 0.9.0: one counting line per session (the suite counts on the estimate), and one request report per request.
+		expect(all.filter((r) => r.k === "counting")).toEqual([
+			{ k: "counting", path: "fallback", entry: null, reason: "turned off" },
+		]);
+		const reports = all.filter((r) => r.k === "req");
 		expect(reports.length).toBe(sim.calls.length);
 		expect(reports[0]).toMatchObject({ k: "req", n: 1 });
 		expect(Array.isArray(reports[0].tools)).toBe(true);

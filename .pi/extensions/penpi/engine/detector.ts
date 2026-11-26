@@ -470,6 +470,18 @@ export function installDetector(core: EngineCore): void {
 		state.ratio = core.clampRatio(state.samples === 0 ? sample : state.ratio * (1 - alpha) + sample * alpha);
 		state.samples++;
 		let dirty = Math.abs(state.ratio - previous) / previous > 0.03 || state.samples % 50 === 0;
+		// 0.9.0: a request counted whole teaches its exact key's ratio as well, on the same clean samples. Detection
+		// still reads the estimate and the fallback ratio.
+		if (sent.exact !== undefined && sent.exact > 0 && sent.exactKey) {
+			const exact = core.modelState(sent.exactKey);
+			const exactSample = reported / sent.exact;
+			const a = exact.samples < 3 ? 0.5 : 0.2;
+			const before = exact.ratio;
+			exact.ratio = core.clampRatio(exact.samples === 0 ? exactSample : exact.ratio * (1 - a) + exactSample * a);
+			exact.samples++;
+			if (Math.abs(exact.ratio - before) / before > 0.03 || exact.samples % 50 === 0)
+				core.persistModel(sent.exactKey);
+		}
 		// H3: count clean requests near a learned limit, then re-probe toward the declared window.
 		// H8: only evidence retires a learned limit: a successful request above it. Stepping up to the
 		// declared window does not, so a re-probe that fails near the old limit still counts as a

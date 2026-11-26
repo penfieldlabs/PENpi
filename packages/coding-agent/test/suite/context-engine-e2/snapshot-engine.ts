@@ -1,5 +1,6 @@
 /**
- * Snapshot of the engine under test: the entry file and every file it reaches through relative imports,
+ * Snapshot of the engine under test: the entry file and every file it reaches through relative imports (and, from
+ * 0.9.0, the worker files it starts with `new URL("<relative>", import.meta.url)`),
  * copied byte-for-byte into context-engine-e2/.engine/<sha12>/ with their layout kept, so every worker of a matrix
  * run loads the same bytes even if the sources are edited meanwhile. The engine is a module directory
  * (.pi/extensions/penpi/engine), so a snapshot is a set of files.
@@ -26,6 +27,9 @@ function relativeImports(source: string): string[] {
 		out.add(m[1]);
 	for (const m of source.matchAll(/(?:^|[\s;])import\s*["'](\.{1,2}\/[^"']+)["']/g)) out.add(m[1]);
 	for (const m of source.matchAll(/import\(\s*["'](\.{1,2}\/[^"']+)["']\s*\)/g)) out.add(m[1]);
+	// 0.9.0: a file started as a worker, `new URL("<relative>", import.meta.url)` (the tokenizer worker).
+	for (const m of source.matchAll(/new\s+URL\(\s*["'`](\.{1,2}\/[^"'`]+)["'`]\s*,\s*import\.meta\.url/g))
+		out.add(m[1]);
 	return [...out];
 }
 

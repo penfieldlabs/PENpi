@@ -171,7 +171,11 @@ export class TokenizerFiles {
 		this.options = options;
 	}
 
-	/** An entry's verified bytes, or why the estimate is used. Bundled entries need no file. */
+	/**
+	 * An entry's verified bytes, or why the estimate is used. Bundled entries need no file. Concurrent callers share one
+	 * in-flight read, so they get the same buffer, and a transfer to the worker detaches it for all of them: the bytes
+	 * are single-use. The tokenizer counter (counter.ts) is the one caller, and asks again for a restart.
+	 */
 	async file(entry: TokenizerEntry): Promise<TokenizerFile> {
 		if (this.options.mode === "estimate") return { fallback: "turned off" };
 		if (entry.loader === "bundled") return { bundled: true };

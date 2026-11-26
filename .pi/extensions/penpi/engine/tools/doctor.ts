@@ -5,6 +5,18 @@ import { kTokens, STATE_TYPE } from "../options.ts";
 import { describeFaults } from "../recovery.ts";
 import type { Limits, ModelState } from "../state.ts";
 
+/** 0.9.0: the counting path for the budget: exact with its tokenizer and ratio, or the estimate and why. */
+function countingLine(core: EngineCore, key: string): string {
+	const path = core.exact.path();
+	if (path.path === "exact") {
+		const exactKey = core.exact.key(key);
+		const exact = exactKey ? core.modelState(exactKey) : undefined;
+		return `counting: exact, the ${path.entry} tokenizer (ratio ${exactKey ? core.ratioFor(exactKey).toFixed(3) : "1"} over ${exact?.samples ?? 0} samples); detection on the estimate`;
+	}
+	if (path.path === "pending") return `counting: on the estimate while the ${path.entry ?? "model's"} tokenizer loads`;
+	return `counting: the estimate (${path.reason})`;
+}
+
 export function installDoctor(core: EngineCore): void {
 	const { pi, opts, stats, log, pinOpts, st } = core;
 
@@ -122,6 +134,7 @@ export function installDoctor(core: EngineCore): void {
 			`input budget: ${n(limits.budget)} = window - output reserve`,
 			`band: cut above ${n(limits.high)}, cut down to ${n(limits.low)} (${Math.round(opts.highWater * 100)}% / ${Math.round(opts.lowWater * 100)}% of the budget)`,
 			`calibration: ratio ${core.ratioFor(limits.key).toFixed(3)} over ${state.samples} samples for ${limits.key} (floor ${opts.ratioFloor}, ceiling ${opts.ratioCeiling})`,
+			countingLine(core, limits.key),
 			// Truncation by a server that reports no usage, or by less than about a quarter of each
 			// append, cannot be told from an honest request.
 			state.samples === 0 && (state.noUsage ?? 0) > 0

@@ -243,6 +243,12 @@ export function newEngineState(faults: FaultConfig | undefined) {
 					chain: number;
 					cum: number;
 					slack: number;
+					/**
+					 * 0.9.0: the request's exact count and the exact ratio's key, when every part of it was counted
+					 * (exact.ts). A mixed request has none: its sample moves the fallback ratio only.
+					 */
+					exact?: number;
+					exactKey?: string;
 			  }
 			| undefined,
 		sendSeq: 0,
@@ -326,6 +332,14 @@ export function newEngineState(faults: FaultConfig | undefined) {
 
 export type EngineState = ReturnType<typeof newEngineState>;
 
+/** 0.9.0: a Claude model's ratio before its first sample, on the fallback path (state.ts priorRatio). */
+export const CLAUDE_PRIOR = 1.6;
+
+/** A model key ("provider/id") naming a Claude model, by provider or id. */
+export function isClaudeKey(key: string): boolean {
+	return /claude|anthropic/i.test(key.split("#")[0]);
+}
+
 export function installState(core: EngineCore): void {
 	const { pi, opts, stats, log, st } = core;
 
@@ -333,10 +347,8 @@ export function installState(core: EngineCore): void {
 	function modelState(key: string): ModelState {
 		let state = st.models.get(key);
 		if (!state) {
-			// Unknown model: the densest known ratio is the safe prior (it under-sends until learned).
-			const known = [...st.models.values()].filter((m) => m.samples > 0).map((m) => m.ratio);
 			state = {
-				ratio: Math.max(1, ...known),
+				ratio: priorRatio(key),
 				samples: 0,
 				history: [],
 				recent: [],
@@ -350,6 +362,23 @@ export function installState(core: EngineCore): void {
 		return state;
 	}
 	core.modelState = modelState;
+
+	/**
+	 * A key's ratio before its first sample.
+	 * - An exact key (`model#tokenizer`, exact.ts) starts at 1: the exact count is the tokenizer's own.
+	 * - A fallback key starts at the densest ratio known on the fallback path: the safe prior, which under-sends until
+	 *   learned. Exact keys are left out of that pool: their ratios sit near 1, and would leave the estimate's
+	 *   under-count on CJK, base64 or minified JSON unscaled.
+	 * - A Claude model starts at CLAUDE_PRIOR at least: on 73 real tool outputs Claude counts a median 1.60 times the
+	 *   estimate (1.57 summed), so a first request priced at 1 is about 40% low.
+	 */
+	function priorRatio(key: string): number {
+		if (key.includes("#")) return 1;
+		const known = [...st.models.entries()]
+			.filter(([k, m]) => m.samples > 0 && !k.includes("#"))
+			.map(([, m]) => m.ratio);
+		return Math.max(isClaudeKey(key) ? CLAUDE_PRIOR : 1, ...known);
+	}
 
 	function snapshot(key: string): Record<string, unknown> {
 		const s = modelState(key);

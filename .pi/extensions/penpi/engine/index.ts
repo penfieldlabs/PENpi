@@ -7,6 +7,7 @@ import type {
 import type { EngineCore } from "./core.ts";
 import { installDetector } from "./detector.ts";
 import { setDefaultImageTokens, textTokens } from "./estimator.ts";
+import { installExact } from "./exact.ts";
 import { installHeader } from "./header.ts";
 import { installLimits } from "./limits.ts";
 import {
@@ -229,6 +230,7 @@ export function createContextEngine(
 		core.faultBanner = () => bannerFor(core.faults, core.faultsRefused);
 		installSerializer(core);
 		installState(core);
+		installExact(core);
 		installLimits(core);
 		installHeader(core);
 		installPin(core);

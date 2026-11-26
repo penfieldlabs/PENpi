@@ -398,12 +398,21 @@ export function installPlanner(core: EngineCore): void {
 		};
 	}
 
+	/**
+	 * 0.9.0: the leaf a request is planned at, when the session moved on during the handler's await (an extension that
+	 * appends a message from a timer, say). Pi sends the messages as they were before the await, so the plan is made
+	 * against the index at that leaf, and the next request walks on from it.
+	 */
+	let plannedLeaf: string | null | undefined;
+
 	/** Bring the index up to the current leaf by walking only the new entries. */
 	function updateIndex(ctx: ExtensionContext, limits: Limits, ratio: number): WindowIndex {
 		const rebuild = () => {
 			st.index = rebuildIndex(ctx, limits, ratio);
 			return st.index;
 		};
+		if (plannedLeaf !== undefined && st.index?.leafId === plannedLeaf && st.index.targetKey === st.targetKey)
+			return st.index;
 		if (!st.index || st.index.targetKey !== st.targetKey) return rebuild();
 		const leaf = ctx.sessionManager.getLeafId();
 		if (leaf === st.index.leafId) return st.index;
@@ -563,7 +572,17 @@ export function installPlanner(core: EngineCore): void {
 	function requestWindowA(
 		messages: AgentMessage[],
 		ctx: ExtensionContext,
-	): { result?: AgentMessage[]; estimate: number; refuse?: string; recapped?: SectionMap } {
+	): {
+		result?: AgentMessage[];
+		estimate: number;
+		refuse?: string;
+		recapped?: SectionMap;
+		/** 0.9.0: what the request costs in the budget's units (times the ratio: provider tokens), exact parts priced. */
+		priced?: number;
+		/** The request's exact count, when every part was counted, and the parts still to count. */
+		exact?: number;
+		uncounted?: AgentMessage[];
+	} {
 		const limits = core.resolveLimits(ctx);
 		const ratio = core.ratioFor(limits.key);
 		let idx = updateIndex(ctx, limits, ratio);
@@ -605,7 +624,21 @@ export function installPlanner(core: EngineCore): void {
 		const high = opts.highWater * limits.budget;
 		const low = opts.lowWater * limits.budget;
 		const fixed = () => (idx.header ? idx.checkpointTokens + idx.headerTokens : 0);
-		let projected = (fixed() + idx.total) * ratio;
+		// 0.9.0: a part counted exactly costs its count times the exact ratio, the rest its estimate times the fallback
+		// ratio. In the planner's units (times `ratio`), an exact part is exact x exactRatio / ratio.
+		const exactKey = core.exact.key(limits.key);
+		const exactRatio = exactKey ? core.ratioFor(exactKey) : 0;
+		const price = (message: AgentMessage | undefined, estimate: number): number => {
+			if (!exactKey || !message) return estimate;
+			const exact = core.exact.sendTokens(message);
+			return exact === undefined ? estimate : (exact * exactRatio) / ratio;
+		};
+		const priced = (): Item[] =>
+			exactKey ? idx.items.map((item) => ({ ...item, tokens: price(item.out, item.tokens) })) : idx.items;
+		const pricedFixed = () =>
+			idx.header ? price(idx.checkpoint, idx.checkpointTokens) + price(idx.header, idx.headerTokens) : 0;
+		const sum = (items: Item[]) => items.reduce((total, item) => total + item.tokens, 0);
+		let projected = (pricedFixed() + sum(priced())) * ratio;
 		let cutNow = false;
 		const systemNow = () =>
 			getCurrentSystemMessage([
@@ -633,11 +666,12 @@ export function installPlanner(core: EngineCore): void {
 			const preview = core.sectionsAtCut(false);
 			const system = preview ? core.systemWith(current ? [current] : [], { sections: preview }) : current;
 			const seq = (idx.cut?.seq ?? 0) + 1;
+			const pricedNow = priced();
 			const plan = chooseCut(
 				branch,
 				seq,
 				system ? messageTokens(system) : 0,
-				(fixedAfter) => chooseStart(idx.items, 0, fixedAfter, low, ratio, true),
+				(fixedAfter) => chooseStart(pricedNow, 0, fixedAfter, low, ratio, true),
 				(start) => idx.items[start]?.entryId,
 			);
 			const fixedAfter = plan.fixedAfter;
@@ -645,7 +679,7 @@ export function installPlanner(core: EngineCore): void {
 			// D25: a cut made for a re-capped section keeps the system prompt whole: without an earlier checkpoint,
 			// the leading system messages go into the new one (never a section-only checkpoint, N0).
 			if (recap && !idx.checkpoint) next = Math.max(next, idx.items.findIndex((i) => i.system) + 1);
-			const sums = suffixSums(idx.items);
+			const sums = suffixSums(pricedNow);
 			const after = (fixedAfter + sums[next]) * ratio;
 			// A forced cut (D25, D26) may keep the window where it is: only the header and checkpoint change then.
 			if (
@@ -695,7 +729,7 @@ export function installPlanner(core: EngineCore): void {
 				idx.headerTokens = messageTokens(idx.header);
 				idx.noticeGiven = false;
 				evictImages(idx, limits, ratio);
-				const newProjected = (fixed() + idx.total) * ratio;
+				const newProjected = (pricedFixed() + sum(priced())) * ratio;
 				stats.cuts.push({
 					seq,
 					mode: "a",
@@ -735,7 +769,7 @@ export function installPlanner(core: EngineCore): void {
 		) {
 			const system = systemNow();
 			const fixedAfter = (system ? messageTokens(system) : 0) + Math.max(idx.headerTokens, 300);
-			const next = chooseStart(idx.items, 0, fixedAfter, low, ratio, true);
+			const next = chooseStart(priced(), 0, fixedAfter, low, ratio, true);
 			if (next > 0) {
 				notice = noticeFor(idx.items, next, high - projected);
 				idx.noticeGiven = true;
@@ -744,12 +778,36 @@ export function installPlanner(core: EngineCore): void {
 		}
 		flushDecisions();
 		const capped = idx.items.some((item) => item.out !== item.message);
-		if (!idx.header && !capped && !notice) return { estimate: idx.total };
+		const noticeTokens = notice ? messageTokens(notice) : 0;
+		const pricedAll = pricedFixed() + sum(priced()) + price(notice, noticeTokens);
+		if (!idx.header && !capped && !notice)
+			// Pi's own messages go out: the leading ones the index doesn't hold, then copies of its items, in order.
+			return {
+				estimate: idx.total,
+				priced: pricedAll,
+				...exactOf([...messages.slice(0, messages.length - idx.items.length), ...idx.items.map((i) => i.out)]),
+			};
 		const body = idx.items.filter((item) => !item.folded).map((item) => item.out);
 		if (capped) stats.capped++;
 		const result = idx.header ? [...(idx.checkpoint ? [idx.checkpoint] : []), idx.header, ...body] : body;
 		if (notice) result.push(notice);
-		return { result, estimate: fixed() + idx.total + (notice ? messageTokens(notice) : 0) };
+		return { result, estimate: fixed() + idx.total + noticeTokens, priced: pricedAll, ...exactOf(result) };
+	}
+
+	/**
+	 * 0.9.0: the exact count of what a request sends, when every message that sends anything was counted, and the
+	 * messages still to count (in the background, for the next request). None while no tokenizer is ready.
+	 */
+	function exactOf(sent: AgentMessage[]): { exact?: number; uncounted?: AgentMessage[] } {
+		if (!core.exact.ready()) return {};
+		let total = 0;
+		const uncounted: AgentMessage[] = [];
+		for (const message of sent) {
+			const exact = core.exact.sendTokens(message);
+			if (exact !== undefined) total += exact;
+			else if (core.sendTokens(message) > 0) uncounted.push(message);
+		}
+		return uncounted.length === 0 ? { exact: total } : { uncounted };
 	}
 
 	/**
@@ -781,7 +839,7 @@ export function installPlanner(core: EngineCore): void {
 
 	const sendTotal = (messages: AgentMessage[]) => messages.reduce((sum, m) => sum + core.sendTokens(m), 0);
 
-	pi.on("context_with_system", (event, ctx) => {
+	pi.on("context_with_system", async (event, ctx) => {
 		if (st.refused) {
 			ctx.abort();
 			return undefined;
@@ -789,14 +847,37 @@ export function installPlanner(core: EngineCore): void {
 		let result: AgentMessage[] | undefined;
 		let estimate: number | undefined;
 		let recapped: SectionMap | undefined;
+		let priced: number | undefined;
+		let exact: number | undefined;
+		let uncounted: AgentMessage[] | undefined;
 		const started = performance.now();
 		// D24: the provider a response names belongs to that response (a failed one is never calibrated).
 		st.streamProvider = undefined;
 		if (Object.keys(st.appliedSections).length > 0) core.pruneApplied(ctx.sessionManager.getBranch());
 		const visible = opts.hiddenCustomTypes.length > 0 ? event.messages.filter((m) => !hidden(m)) : event.messages;
+		// 0.9.0: count what the request carries before it is planned: the index's own objects (its items, the checkpoint
+		// and the header), up to the deadline (exact.ts). The plan then reads the cache. Never throws.
+		let leafBefore: string | null | undefined;
+		try {
+			const limits = core.resolveLimits(ctx);
+			const idx = updateIndex(ctx, limits, core.ratioFor(limits.key));
+			leafBefore = idx.leafId;
+			await core.exact.prepare(ctx, [
+				...(idx.checkpoint ? [idx.checkpoint] : []),
+				...(idx.header ? [idx.header] : []),
+				...idx.items.filter((item) => !item.folded).map((item) => item.out),
+			]);
+		} catch (error) {
+			log(`exact count error: ${error instanceof Error ? error.message : String(error)}`);
+		}
+		// The session moved on during the await: plan the request Pi is sending, at the leaf it was built from.
+		if (leafBefore !== undefined && ctx.sessionManager.getLeafId() !== leafBefore) {
+			plannedLeaf = leafBefore;
+			log("the session changed during the count: this request is planned as Pi sent it");
+		}
 		try {
 			let refuse: string | undefined;
-			({ result, estimate, refuse, recapped } = requestWindowA(visible, ctx));
+			({ result, estimate, refuse, recapped, priced, exact, uncounted } = requestWindowA(visible, ctx));
 			if (refuse) {
 				log(refuse);
 				ctx.ui.notify(refuse, "error");
@@ -805,6 +886,8 @@ export function installPlanner(core: EngineCore): void {
 			}
 		} catch (error) {
 			log(`context_with_system error: ${error instanceof Error ? error.stack : String(error)}`);
+		} finally {
+			plannedLeaf = undefined;
 		}
 		// Later 5: when the engine sends Pi's own messages (no cut yet, an alignment mismatch, an error above),
 		// a section changed at a cut stays changed: the latest cut's override, over the older system messages.
@@ -812,6 +895,8 @@ export function installPlanner(core: EngineCore): void {
 			const kept = keepOverride(visible, ctx, recapped);
 			if (kept !== visible) {
 				result = kept;
+				// Pi's copies, with a merged system message: not matched to what was counted.
+				exact = undefined;
 				// D17: the estimate is of Pi's messages; what is sent carries the cut's section instead of Pi's.
 				if (estimate !== undefined) estimate += sendTotal(kept) - sendTotal(visible);
 			}
@@ -821,6 +906,7 @@ export function installPlanner(core: EngineCore): void {
 		const repair = repairToolCalls(unrepaired);
 		if (repair.messages !== unrepaired) {
 			result = repair.messages;
+			exact = undefined;
 			// As D17: the estimate is of the messages before the repair; what is sent is the repaired request.
 			if (estimate !== undefined) estimate += sendTotal(result) - sendTotal(unrepaired);
 			stats.toolCallRepairs++;
@@ -897,12 +983,23 @@ export function installPlanner(core: EngineCore): void {
 			chain: st.appendChain,
 			cum: st.appendCum,
 			slack: st.appendSlack,
+			...(exact !== undefined ? { exact, exactKey: core.exact.key(limits.key) } : {}),
 		};
 		st.sentShape = shape;
-		stats.sent.push({ estimate, ratio: core.ratioFor(limits.key), budget: limits.budget, appended: appendedText });
+		if (uncounted && uncounted.length > 0) core.exact.background(uncounted);
+		if (exact !== undefined) stats.exact.samples++;
+		else if (core.exact.ready()) stats.exact.mixed++;
+		stats.sent.push({
+			estimate,
+			ratio: core.ratioFor(limits.key),
+			budget: limits.budget,
+			appended: appendedText,
+			...(priced !== undefined ? { priced: priced * core.ratioFor(limits.key) } : {}),
+			...(exact !== undefined ? { exact } : {}),
+		});
 		stats.pinTokens.push(core.requestPinTokens(sentMessages));
 		stats.handlerMs.push(performance.now() - started);
-		st.lastRequestTokens = estimate * core.ratioFor(limits.key);
+		st.lastRequestTokens = (priced ?? estimate) * core.ratioFor(limits.key);
 		core.updateStatus(ctx, limits);
 		if (result) return { messages: result };
 		return visible !== event.messages ? { messages: visible } : undefined;

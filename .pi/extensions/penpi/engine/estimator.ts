@@ -484,52 +484,61 @@ export type Block = {
 	data?: string;
 };
 
-export function blocksTokens(content: unknown): number {
-	if (typeof content === "string") return textTokens(content);
+/** Tokens of a message's content blocks; `count` prices text (the estimate by default, or exact counts). */
+export function blocksTokens(content: unknown, count: (text: string) => number = textTokens): number {
+	if (typeof content === "string") return count(content);
 	if (!Array.isArray(content)) return 0;
 	let tokens = 0;
 	for (const block of content as Block[]) {
-		if (block.type === "text") tokens += textTokens(block.text ?? "");
+		if (block.type === "text") tokens += count(block.text ?? "");
 		else if (block.type === "image") tokens += imageTokens(block as { data: string });
-		else if (block.type === "thinking") tokens += textTokens(block.thinking ?? "");
-		else if (block.type === "toolCall")
-			tokens += textTokens(`${block.name} ${JSON.stringify(block.arguments ?? {})}`) + 8;
+		else if (block.type === "thinking") tokens += count(block.thinking ?? "");
+		else if (block.type === "toolCall") tokens += count(`${block.name} ${JSON.stringify(block.arguments ?? {})}`) + 8;
 	}
 	return tokens;
 }
 
 export const tokenCache = new WeakMap<object, number>();
 
-/** Estimated tokens of one message (cached per message object; session messages are immutable). */
-export function messageTokens(message: AgentMessage): number {
+/**
+ * Estimated tokens of one message (cached per message object; session messages are immutable). With `count`, the
+ * same rules with text priced by it (exact counts), not cached here.
+ */
+export function messageTokens(message: AgentMessage, count?: (text: string) => number): number {
+	if (count) return messageTokensWith(message, count);
 	const cached = tokenCache.get(message);
 	if (cached !== undefined) return cached;
+	const tokens = messageTokensWith(message, textTokens);
+	tokenCache.set(message, tokens);
+	return tokens;
+}
+
+function messageTokensWith(message: AgentMessage, count: (text: string) => number): number {
 	const m = message as Record<string, unknown> & { role: string };
 	let tokens = 4;
 	switch (m.role) {
 		case "system": {
-			tokens += blocksTokens(m.content);
+			tokens += blocksTokens(m.content, count);
 			for (const section of Object.values((m.sections as Record<string, string | null>) ?? {})) {
-				if (section) tokens += textTokens(section);
+				if (section) tokens += count(section);
 			}
-			if (m.toolsAdded) tokens += textTokens(JSON.stringify(m.toolsAdded));
-			if (m.toolsRemoved) tokens += textTokens(JSON.stringify(m.toolsRemoved));
+			if (m.toolsAdded) tokens += count(JSON.stringify(m.toolsAdded));
+			if (m.toolsRemoved) tokens += count(JSON.stringify(m.toolsRemoved));
 			break;
 		}
 		case "toolResult":
-			tokens += textTokens(String(m.toolName ?? "")) + blocksTokens(m.content);
+			tokens += count(String(m.toolName ?? "")) + blocksTokens(m.content, count);
 			break;
 		case "bashExecution":
-			tokens += textTokens(`${m.command ?? ""}\n${m.output ?? ""}`);
+			tokens += count(`${m.command ?? ""}\n${m.output ?? ""}`);
 			break;
 		case "compactionSummary":
 		case "branchSummary":
-			tokens += textTokens(String(m.summary ?? "")) + 30;
+			tokens += count(String(m.summary ?? "")) + 30;
 			break;
 		default:
-			tokens += blocksTokens(m.content);
+			tokens += blocksTokens(m.content, count);
 	}
-	tokenCache.set(message, tokens);
 	return tokens;
 }
 

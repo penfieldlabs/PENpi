@@ -25,7 +25,8 @@ const config = mergeConfig(
 			reporters: ["default"],
 			silent: false,
 			maxWorkers: Number(process.env.E2_WORKERS ?? 2),
-			env: { TMPDIR: `${scratch}/tmp` },
+			// 0.9.0: E2 measures the estimate path unless a run sets PENPI_TOKENIZER (its exact modes come with commit 8).
+			env: { TMPDIR: `${scratch}/tmp`, PENPI_TOKENIZER: process.env.PENPI_TOKENIZER ?? "estimate" },
 		},
 		resolve: {
 			alias: [{ find: /^@earendil-works\/pi-coding-agent$/, replacement: workspaceSourcePaths.codingAgentIndex }],

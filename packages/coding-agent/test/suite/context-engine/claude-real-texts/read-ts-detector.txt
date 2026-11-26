@@ -1,0 +1,349 @@
+import type { AssistantMessage } from "@earendil-works/pi-ai";
+import type { ExtensionContext, SessionBoundaryDraft } from "@earendil-works/pi-coding-agent";
+import type { EngineCore } from "./core.ts";
+import { STATE_TYPE, type TruncatedTurn } from "./options.ts";
+import type { ModelState } from "./state.ts";
+
+/**
+ * ADR 0033: whether a judged sample completes a marginal pair. An evidence sample does with a marginal sample in the
+ * evidence span, and a marginal sample does with an evidence sample in it. Two marginal samples never do: honest
+ * content can read marginal (the `+` bars of `git diff --stat` read about 0.5 of the estimate), and twice in a row.
+ */
+export function completesMarginalPair(kind: "evidence" | "marginal", evidence: number, marginals: number): boolean {
+	return kind === "evidence" ? marginals > 0 : evidence > 0;
+}
+
+/**
+ * The size guard of evidence and of the pair's marginal side: the request is expected at 0.8 or more of the largest
+ * usage reported so far.
+ */
+export function meetsSizeGuard(expected: number, max: number): boolean {
+	return expected >= 0.8 * max;
+}
+
+/**
+ * ADR 0033: whether a clean sample forgets the marginal samples. As for evidence: a clean sample above everything
+ * reported so far, marginal samples included, by more than `flatness` (the provider processed more than they did).
+ */
+export function clearsMarginals(
+	reported: number,
+	maxReported: number,
+	marginals: Array<{ reported: number }>,
+	flatness: number,
+): boolean {
+	return (
+		marginals.length > 0 && reported > Math.max(maxReported, ...marginals.map((e) => e.reported)) * (1 + flatness)
+	);
+}
+
+/**
+ * The exact-repeat rule's test: a sample reports exactly the largest usage reported so far again, and its request was
+ * expected above that, or below it by no more than `error` of it (silentEstimateError), since a request expected that
+ * close may still have reached the limit, and servers that fill their context report exactly the limit. An honest count
+ * lands on one given number only by chance. Not when expected more than 1.6 times above it: the estimate is off, not
+ * the provider.
+ */
+export function repeatsMaximum(expected: number, reported: number, max: number, error: number): boolean {
+	return reported === max && expected >= (1 - error) * reported && expected <= 1.6 * reported;
+}
+
+/**
+ * ADR 0034: the samples named at a detection. `affected` (D14 as before) are always named. A doubtful sample
+ * (quarantined, or marginal by its growth) that fed the ratio lowered the expected size of the samples after it, and a
+ * truncated one can then fall under D14's line. So each sample from its append chain's first doubtful sample on (that
+ * one included) is judged again at the ratio from before that sample, raising only: max(expected, expected / ratio x
+ * r0) above the window by more than `flatness`. Within a chain the content only grows; after a cut it changes, and a
+ * real fall of the ratio there must not name honest answers. Names only: nothing here feeds the ratio or a request.
+ */
+export function namedSamples<S extends ModelState["recent"][number]>(
+	served: S[],
+	affected: S[],
+	window: number,
+	flatness: number,
+	clamp: (ratio: number) => number,
+	rescale: boolean,
+): S[] {
+	if (!rescale) return affected;
+	const chainStart = new Map<number, number>();
+	return served.filter((s) => {
+		if (s.chain !== undefined && (s.suspect !== undefined || s.marginal) && !chainStart.has(s.chain))
+			chainStart.set(s.chain, clamp(s.ratio));
+		if (affected.includes(s)) return true;
+		const r0 = s.chain === undefined ? undefined : chainStart.get(s.chain);
+		return r0 !== undefined && Math.max(s.expected, (s.expected / clamp(s.ratio)) * r0) > window * (1 + flatness);
+	});
+}
+
+/** The replay check decides from this many request pairs on (spec: 20 or more). */
+export const REPLAY_CHECK_PAIRS = 20;
+/** A pair counts only when its replayed reasoning is at least this many tokens and this share of the text. */
+const REPLAY_MIN_TOKENS = 64;
+const REPLAY_MIN_SHARE = 0.5;
+
+function replayMedian(values: number[]): number {
+	const sorted = [...values].sort((a, b) => a - b);
+	const mid = Math.floor(sorted.length / 2);
+	return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+/**
+ * The replay check's verdict from its shares, or none. "counted" from a median of 0.5; "ignored" only below
+ * 0.3, since the estimator's error is systematic per model and an over-counting estimator pulls a counting
+ * provider toward "ignored", the direction that under-counts. The rule is asymmetric. "ignored" is withheld
+ * while a tenth of the pairs, or 3 of them, are at 0.3 or more: those may count the replay (a provider that
+ * keeps reasoning only inside a tool loop, read as low as 0.4 by an over-counting estimator, D22), and
+ * "ignored" would under-count them. "counted",
+ * the safe direction, is withheld only when a quarter of the pairs are below 0.3. In between, no verdict.
+ */
+export function replayVerdict(shares: number[]): "counted" | "ignored" | undefined {
+	const low = shares.filter((share) => share < REPLAY_IGNORED_BELOW).length;
+	const median = replayMedian(shares);
+	if (median >= REPLAY_COUNTED_FROM) return low >= REPLAY_COUNTED_BLOCK * shares.length ? undefined : "counted";
+	if (median < REPLAY_IGNORED_BELOW) return enough(shares, REPLAY_IGNORED_BELOW) ? undefined : "ignored";
+	return undefined;
+}
+
+/** A tenth of the pairs, or 3 (whichever is fewer), at `from` or more. */
+function enough(shares: number[], from: number): boolean {
+	const high = shares.filter((share) => share >= from).length;
+	return high >= Math.min(REPLAY_IGNORED_BLOCK_PAIRS, REPLAY_IGNORED_BLOCK * shares.length);
+}
+
+/**
+ * The value the replay check recommends for a setting, or none: the verdict when it disagrees with the
+ * setting. Without a verdict, "counted" when the setting is "ignored" and a tenth of the pairs, or 3, clearly
+ * count the replay (0.5 or more; a steady 0.4 stays silent): those requests are under-counted, the risky
+ * direction. A setting of "counted" without a verdict gets no recommendation.
+ */
+export function replayRecommendation(
+	shares: number[],
+	setting: "counted" | "ignored",
+): "counted" | "ignored" | undefined {
+	const verdict = replayVerdict(shares);
+	if (verdict !== undefined) return verdict === setting ? undefined : verdict;
+	return setting === "ignored" && enough(shares, REPLAY_COUNTED_FROM) ? "counted" : undefined;
+}
+const REPLAY_COUNTED_FROM = 0.5;
+const REPLAY_IGNORED_BELOW = 0.3;
+/** "counted" is withheld when this share of the pairs is below 0.3. */
+const REPLAY_COUNTED_BLOCK = 0.25;
+/** "ignored" is withheld when this share of the pairs, or this many, are at 0.3 or more (whichever is fewer). */
+const REPLAY_IGNORED_BLOCK = 0.1;
+const REPLAY_IGNORED_BLOCK_PAIRS = 3;
+
+/** The silent-truncation warning's count of answers, in the singular for one. */
+export function answersProduced(count: number): string {
+	return count === 1 ? "1 answer was produced" : `${count} answers were produced`;
+}
+
+export function installDetector(core: EngineCore): void {
+	const { opts, stats, log, st } = core;
+
+	/**
+	 * The replay check (warn-only). Between two consecutive requests with no cut, reported usage grows by the
+	 * appended text, plus the replayed reasoning if the provider counts it. Each pair whose replayed reasoning
+	 * is large enough to tell gives the share of it that the growth accounted for (about 1: counted, about
+	 * 0: ignored). From REPLAY_CHECK_PAIRS pairs on, a median that disagrees with replayedReasoning is warned
+	 * about once per session per model, naming the setting and the value to try.
+	 */
+	function checkReplay(
+		key: string,
+		sent: NonNullable<typeof st.lastSent>,
+		delta: number,
+		ctx: ExtensionContext,
+	): void {
+		// Uncalibrated estimates: with the setting wrong, the calibration ratio absorbs the very share measured
+		// (it climbs when the provider counts what the budget leaves out). The estimator stays within about
+		// 0.85-1.12 of real tokenizers; a pair counts only when the replay is at least half the text, so that
+		// error moves a share by at most about 0.3 (replayVerdict says how the shares decide).
+		const replay = sent.appendedReplay;
+		// D22: the provider counts this request's notice (the appended messages leave it out) and the images
+		// appended; those image estimates are too rough to subtract, so a pair that appends one is skipped.
+		const text = sent.appendedText + sent.appendedAsText - sent.noticeDrop + sent.noticeAdd;
+		if (sent.appendedImages > 0) return;
+		if (replay < REPLAY_MIN_TOKENS || replay < REPLAY_MIN_SHARE * text || delta <= 0) return;
+		const shares = [...(st.replayShares.get(key) ?? []).slice(-63), (delta - text) / replay];
+		st.replayShares.set(key, shares);
+		stats.replayChecks[key] = { pairs: shares.length, median: replayMedian(shares), shares };
+		if (shares.length < REPLAY_CHECK_PAIRS || st.replayWarned.has(key)) return;
+		const median = replayMedian(shares);
+		const setting = opts.replayedReasoning?.[key] === "ignored" ? "ignored" : "counted";
+		const observed = replayRecommendation(shares, setting);
+		if (observed === undefined) return;
+		st.replayWarned.add(key);
+		stats.replayWarnings.push({ key, setting, observed, median, pairs: shares.length });
+		const counting = shares.filter((share) => share >= REPLAY_COUNTED_FROM).length;
+		const what =
+			replayVerdict(shares) === undefined
+				? `counts the reasoning Pi replays in ${counting} of ${shares.length} request pairs with no cut (a share of 0.5 or more of the replayed reasoning reported; median share ${median.toFixed(2)})`
+				: `${observed === "counted" ? "counts" : "ignores"} the reasoning Pi replays ` +
+					`(reported growth against the appended text plus the replayed reasoning: median share ${median.toFixed(2)} over ${shares.length} request pairs with no cut)`;
+		const warning =
+			`context-engine: ${key} ${what}, ` +
+			`but replayedReasoning is "${setting}", so the budget ${setting === "ignored" ? (replayVerdict(shares) === undefined ? "under-counts those requests" : "under-counts every request") : "over-counts and the window is under-used"}. ` +
+			`Try replayedReasoning { "${key}": "${observed}" }${observed === "counted" ? " (the default: remove the entry)" : ""}.`;
+		log(`replay check: ${warning.replace(/^context-engine: /, "")}`);
+		ctx.ui.notify(warning, "warning");
+	}
+	core.replayCheck = (key) => {
+		const shares = st.replayShares.get(key) ?? [];
+		return {
+			pairs: shares.length,
+			median: shares.length ? replayMedian(shares) : undefined,
+			verdict: shares.length ? replayVerdict(shares) : undefined,
+			recommendation:
+				shares.length >= REPLAY_CHECK_PAIRS
+					? replayRecommendation(shares, opts.replayedReasoning?.[key] === "ignored" ? "ignored" : "counted")
+					: undefined,
+		};
+	};
+
+	function calibrate(assistant: AssistantMessage, ctx: ExtensionContext): void {
+		st.overflowRetries = 0;
+		st.outputRetries = 0;
+		st.lastOutputProgress = true;
+		const usage = assistant.usage;
+		const reported = usage.input + usage.cacheRead + usage.cacheWrite;
+		const sent = st.lastSent;
+		st.lastSent = undefined;
+		if (sent && reported <= 0) {
+			const state = core.modelState(sent.key);
+			state.noUsage = (state.noUsage ?? 0) + 1;
+		}
+		// D24: the upstream provider that served this response, if its stream named one.
+		const servedBy = st.streamProvider;
+		st.streamProvider = undefined;
+		if (!sent || sent.estimate <= 0 || reported <= 0) return;
+		const key = sent.key;
+		const state = core.modelState(key);
+		const switched = servedBy !== undefined && state.servedBy !== undefined && servedBy !== state.servedBy;
+		const servedBefore = state.servedBy;
+		if (servedBy !== undefined) state.servedBy = servedBy;
+		// D24: at a switch, the previous provider's running maximum and evidence are set aside and the new one's
+		// restored (N1, N2: evidence and a learned window come from one provider). The new provider's last sample
+		// in the same append chain, if any, is the reference this sample is judged against (S1).
+		let reference: { seq: number; reported: number; chain: number; cum: number; slack: number } | undefined;
+		if (switched && servedBefore !== undefined && servedBy !== undefined) {
+			if (!state.providerParked) state.providerParked = new Map();
+			const parked = state.providerParked;
+			parked.set(servedBefore, {
+				maxReported: state.maxReported,
+				maxExpected: state.maxExpected,
+				maxEstimate: state.maxEstimate,
+				maxShape: state.maxShape,
+				suspects: state.suspects,
+				marginals: state.marginals,
+			});
+			const back = parked.get(servedBy);
+			parked.delete(servedBy);
+			state.maxReported = back?.maxReported ?? 0;
+			state.maxExpected = back?.maxExpected;
+			state.maxEstimate = back?.maxEstimate;
+			state.maxShape = back?.maxShape;
+			state.suspects = back?.suspects ?? [];
+			state.marginals = back?.marginals ?? [];
+			const last = state.providerLast?.get(servedBy);
+			reference = last && last.chain === sent.chain ? last : undefined;
+			log(
+				reference
+					? `serving provider changed (${servedBefore} -> ${servedBy}): judged against ${servedBy}'s sample ${sent.seq - reference.seq} request(s) back`
+					: `serving provider changed (${servedBefore} -> ${servedBy}): no sample from ${servedBy} since the last cut; the usage sample is not judged for truncation`,
+			);
+		}
+		const sample = reported / sent.estimate;
+		stats.calibrationSamples.push(sample);
+		// Silent truncation. A provider that drops part of an oversized request reports less than it
+		// was sent. Between two consecutive requests whose message list only grew, reported usage must
+		// grow by about what was appended (text only: image costs differ too much between providers).
+		// A sample that does not is quarantined: it is evidence, and it never moves the ratio or the
+		// running maximum. A sample reporting exactly the running maximum again while it was expected
+		// above it, or below it within the allowance silentEstimateError, is evidence too (servers that
+		// fill their context report exactly the limit).
+		const ratioBefore = core.clampRatio(state.ratio);
+		const expected = sent.estimate * ratioBefore;
+		const prev = state.lastSample;
+		let suspect: string | undefined;
+		let strong = false;
+		const max = state.maxReported;
+		// The exact-repeat rule below compares with the largest usage ever reported: only with settled
+		// calibration (not during warm-up or after a model switch) and only for a different request than
+		// the one that set it (identical windows report identical counts). Two requests are the same when their
+		// shapes match (the same messages, by identity) and their own estimates are within 0.5%. The estimates, not
+		// the expected sizes: an identical resend's expected size moves with the ratio step after the first answer,
+		// and with the allowance below the maximum that step alone would pass. The shape too: a different request,
+		// such as the first after a cut, can land within 0.5% of the maximum's estimate.
+		const settledAtMax = max > 0 && state.samples >= opts.silentSettledSamples;
+		const sameRequest =
+			sent.shapeHash === state.maxShape &&
+			Math.abs(sent.estimate - (state.maxEstimate ?? 0)) < 0.005 * sent.estimate;
+		const levelRepeat = settledAtMax && !sameRequest;
+		// A sample whose growth falls short but not far enough to be evidence never clears evidence.
+		let marginal = false;
+		// ADR 0033: marginal by its growth (not a length stop or an unjudged switch), with its log text.
+		let short: string | undefined;
+		// Only judged samples (the growth rule or the exact-repeat rule compared them) can be suspects;
+		// unjudged ones (small appends, the sample after a length stop, warm-up after a model switch, no
+		// append-only predecessor) are skipped and do not reset the count.
+		// A request right after an answer cut at the output limit is never evidence on its own: what the
+		// provider counts of a cut answer is provider-specific. It cannot clear evidence either.
+		if (sent.afterLengthStop) {
+			marginal = true;
+			log("length stop: the next usage sample is not judged for truncation");
+		} else if (switched && !reference) {
+			// D24: a router (OpenRouter) moved the model to another upstream provider, which counts the same request
+			// differently, and that provider served nothing since the last cut: nothing to judge this sample against.
+			marginal = true;
+		} else if (reference || (prev && prev.seq === sent.seq - 1 && sent.appendOnly)) {
+			// The previous sample, or at a switch the new provider's own last sample in this append chain (D24):
+			// usage must have grown by about the text appended since.
+			const base = reference ?? (prev as { seq: number; reported: number });
+			// D24 notice gap (0.6.0): the request's own pre-cut notice is appended too, and the provider counts it.
+			const grow =
+				(reference ? sent.cum - reference.cum : sent.appendedText - sent.noticeDrop + sent.noticeAdd) * ratioBefore;
+			const delta = reported - base.reported;
+			// The shortfall is judged against the append's floor (textTokensFloor), which prices runs of one character
+			// and other repetition near what tokenizers count: honest test reporters, rules, bars, base64 of sparse
+			// data, blank lines and comment-marker lines otherwise read as most of the append missing.
+			// D24: at a provider switch the span is a chain sum, and so is what its floor takes off it.
+			// The floor prices text near what tokenizers count, so a session ratio above 1 (repository listings and search
+			// output reach 1.2 to 1.35, source maps about 3) would inflate it: the floor's judged growth takes the ratio at
+			// most 1. A ratio below 1 still applies.
+			const slack = reference ? sent.slack - reference.slack : sent.appendedSlack;
+			const judged = Math.max(0, (grow / ratioBefore - slack) * Math.min(ratioBefore, 1));
+			stats.growthChecks.push({ seq: sent.seq, grow, delta, reference: reference !== undefined });
+			const shown = `${Math.round(grow)} tokens appended, reported usage ${delta >= 0 ? "+" : ""}${delta}`;
+			// An honest provider cannot report the same or less after text was appended, however little.
+			if (delta <= 0 && grow >= opts.silentZeroGrowthFloor) {
+				suspect = shown;
+				strong = true;
+			}
+			// Otherwise an absolute floor: an honest provider counts the appended part exactly; only its
+			// estimate varies, so small appends say little.
+			else if (judged >= opts.silentMinGrowth) {
+				if (delta < opts.silentShortfall * judged && meetsSizeGuard(expected, max)) {
+					suspect = shown;
+					// Most of a large append unaccounted for. On ordinary text the estimator's classes stay within
+					// 0.85-1.12 of o200k and GLM (a chars/4 count within 3x), but textTokens overcounts repetition
+					// many times over, so the check is made against the floor. Measured, not proved: in the floor
+					// sweep (floor-sweep.test.ts, seeded honest text counted with o200k and GLM) no case is below
+					// 0.25 of it in real tokens, and the known honest shapes between 0.25 and 0.5 are marginal
+					// (ADR 0033); other text can fall lower.
+					strong = judged >= opts.silentStrongGrowth && delta < opts.silentStrongShortfall * judged;
+				} else if (delta < opts.silentMarginal * judged) {
+					marginal = true;
+					// ADR 0033: the pair's marginal side has the evidence side's size guard. A request far below the
+					// largest usage the provider already reported cannot have been truncated by it.
+					if (meetsSizeGuard(expected, max)) short = `${shown} (marginal)`;
+				}
+			}
+		}
+		if (
+			!suspect &&
+			!sent.afterLengthStop &&
+			(!switched || reference !== undefined) &&
+			levelRepeat &&
+			repeatsMaximum(expected, reported, max, opts.silentEstimateError)
+		) {
+			// The log shows what the rule compared: the expected size against the range it accepts.
+			const lowest = Math.round((1 - opts.silentEstimateError) * reported);
+			suspect = `reported exactly the previous maximum ${reported} again, expected about ${Math.round(

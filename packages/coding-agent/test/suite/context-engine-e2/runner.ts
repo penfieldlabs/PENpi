@@ -273,6 +273,9 @@ export async function runOne(engine: EngineUnderTest, config: RunConfig): Promis
 			tokenizer: config.tokenizer,
 			counter,
 			limit: config.limit,
+			// 0.9.0: a template the engine's tokenizer doesn't know, and usage reported split (both off by default).
+			templateTokens: Number(process.env.E2_TEMPLATE_TOKENS ?? 0),
+			cacheSplit: process.env.E2_CACHE_SPLIT === "1",
 			mode: isSilent(config.mode) ? "silent-truncate" : "reject",
 			errorStyle: config.errorStyle,
 			truncation: config.truncation,

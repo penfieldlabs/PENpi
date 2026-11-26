@@ -75,6 +75,9 @@ Narrow the matrix for a quick look (all runs of one mix at 60 turns take about 1
 | `E2_SILENT_LIMIT` | `half` | silent server context: `half` = min(window, 200k)/2, `window` = the declared window, or a fraction |
 | `E2_ENGINE_OPTIONS` | | JSON merged into `createContextEngine` options |
 | `E2_DUMP_DROPPED` | | `1`: each silently truncated request's removed segments (role, tokens, first characters) in `<id>.dropped.jsonl` |
+| `E2_TEMPLATE_TOKENS` | `0` | 0.9.0: tokens a chat template adds to every message on top of the rendered one, which an engine counting exactly has to learn in its ratio |
+| `E2_CACHE_SPLIT` | | `1`: usage reported split, as Anthropic's API does: `cacheRead` holds the tokens of the segments shared with the previous accepted request, `input` the rest |
+| `PENPI_TOKENIZER` | `estimate` | 0.9.0: the engine's tokenizer mode; E2 measures the estimate path unless a run sets it |
 | `E2_REASONING_COUNT` | `sent` | reasoning mode: `ignored`, the provider ignores replayed reasoning and the model is set to match (`replayedReasoning: "ignored"`); `misconfigured`, the provider counts it but the model is set to `"ignored"`. Run ids get `-ignored` / `-misconfigured`. Misconfigured runs are reported in their own summary section (C1, C2, rejections, overflow retries, qualifying pairs, median share, warned) and gated only on the warning; the summary fails when one has no replay warning, or any other run has one. Run them at thinking high (`E2_THINKING=high`): at minimal, a run may not reach the 20 qualifying pairs the check needs and then fails for a missing warning |
 | `E2_SYSTEM_SECTION_TOKENS` | | a system prompt section (`<penpi-memory>`, set in `before_agent_start` as PENpi sets its briefing) of about this many tokens on every run; run ids get `.section<N>` |
 | `E2_PROBE_CONFIRMATIONS` | `2` | C1 allowance per learned limit is 1 + this (the engine's `probeConfirmations` default); `E2_ENGINE_OPTIONS.probeConfirmations` wins |

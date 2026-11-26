@@ -8,6 +8,7 @@ import type {
 	SessionEntry,
 } from "@earendil-works/pi-coding-agent";
 import type { AgentMessage } from "./estimator.ts";
+import type { ExactApi } from "./exact.ts";
 /** What the engine's modules share: the instance's state and the functions one module calls in another. */
 import type { EngineWiring } from "./index.ts";
 import type { EngineOptions, EngineStats, PinUserMessagesOptions } from "./options.ts";
@@ -38,6 +39,8 @@ export interface EngineCore {
 	command: (args: string, ctx: ExtensionCommandContext) => Promise<void>;
 	parts: (message: AgentMessage) => { tokens: number; reasoning: number; asText?: number };
 	sendTokens: (message: AgentMessage) => number;
+	/** 0.9.0: exact counts for the budget (exact.ts). */
+	exact: ExactApi;
 	modelState: (key: string) => ModelState;
 	snapshot: (key: string) => Record<string, unknown>;
 	persistModel: (key: string) => void;

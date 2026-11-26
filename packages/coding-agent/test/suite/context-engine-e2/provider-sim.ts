@@ -3,7 +3,11 @@
  * produces the scripted responses) and behaves like a provider whose tokenizer is real:
  *   - renders each request with the tokenizer's chat template (render.ts) and counts it: tool schemas,
  *     per-message framing, images by the provider's rule;
- *   - usage.input = that count (no cache split), usage.output = the response counted the same way;
+ *   - usage.input = that count, usage.output = the response counted the same way. With `cacheSplit` (0.9.0,
+ *     E2_CACHE_SPLIT=1) the count is reported split, as Anthropic's API does: cacheRead holds the tokens of the
+ *     segments the request shares with the previous accepted one, input the rest; the engine reads their sum;
+ *   - 0.9.0: `templateTokens` (E2_TEMPLATE_TOKENS) adds that many tokens to every message, a chat template the
+ *     engine's tokenizer doesn't know, which its exact ratio has to learn;
  *   - above `limit` input tokens: mode "reject" answers with an overflow error in one of three styles;
  *     mode "silent-truncate" drops part of the request and reports the reduced count instead, in one of
  *     two styles: "front" (token level, Ollama) or "messages" (whole oldest messages).
@@ -85,6 +89,10 @@ export interface SimOptions {
 	observe?: (call: SimCall) => void;
 	/** Called for a silently truncated request with the segments it removed (E2_DUMP_DROPPED). */
 	onTruncate?: (index: number, removed: Segment[]) => void;
+	/** 0.9.0: tokens a chat template adds to every message, on top of the rendered template (E2_TEMPLATE_TOKENS). */
+	templateTokens?: number;
+	/** 0.9.0: report usage split into cached input (cacheRead) and the rest (input), as Anthropic does. */
+	cacheSplit?: boolean;
 }
 
 function truncate(
@@ -124,6 +132,8 @@ export function installProviderSim(harness: Harness, options: SimOptions): Provi
 	const sim: ProviderSim = { calls: [], tokenizer: options.tokenizer };
 	// Answer timestamps strictly increase, so each one identifies its request (C8 matches named answers by it).
 	let lastAnswerAt = 0;
+	// The segments of the previous accepted request and their tokens, for the cache split.
+	let previous: Array<{ key: string; tokens: number }> = [];
 	const agent = harness.session.agent;
 	const original = agent.streamFunction;
 	const errorStream = (model: Model<string>, errorMessage: string) => {
@@ -166,7 +176,17 @@ export function installProviderSim(harness: Harness, options: SimOptions): Provi
 			options.counter,
 			options.noticeMarker,
 		);
+		const extra = options.templateTokens ?? 0;
+		if (extra > 0)
+			for (const segment of rendered.segments) {
+				if (segment.tail) continue;
+				segment.tokens += extra;
+				rendered.tokens += extra;
+			}
 		const body = rendered.segments.filter((s) => !s.tail);
+		let cached = 0;
+		for (let i = 0; i < Math.min(previous.length, body.length) && previous[i].key === body[i].key; i++)
+			cached += body[i].tokens;
 		const call: SimCall = {
 			index,
 			input: rendered.tokens,
@@ -203,6 +223,8 @@ export function installProviderSim(harness: Harness, options: SimOptions): Provi
 		const outer = createAssistantMessageEventStream();
 		const finish = (message: AssistantMessage): AssistantMessage => {
 			const output = message.stopReason === "error" ? 0 : outputTokens(message);
+			const cacheRead = options.cacheSplit && !call.truncated ? Math.min(cached, call.processed) : 0;
+			if (message.stopReason !== "error") previous = body.map((s) => ({ key: s.key, tokens: s.tokens }));
 			call.output = output;
 			const timestamp = Math.max(message.timestamp, lastAnswerAt + 1);
 			lastAnswerAt = timestamp;
@@ -212,9 +234,9 @@ export function installProviderSim(harness: Harness, options: SimOptions): Provi
 				timestamp,
 				usage: {
 					...message.usage,
-					input: call.processed,
+					input: call.processed - cacheRead,
 					output,
-					cacheRead: 0,
+					cacheRead,
 					cacheWrite: 0,
 					totalTokens: call.processed + output,
 				},

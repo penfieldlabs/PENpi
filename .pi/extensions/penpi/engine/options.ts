@@ -1,4 +1,5 @@
 import type { FaultConfig, ProviderErrorClass } from "./recovery.ts";
+import type { TokenizerWorker } from "./tokenizers/counter.ts";
 
 /** Mode "a" (persistent window) is the only mode. */
 export type EngineMode = "a";
@@ -199,11 +200,17 @@ export interface EngineOptions {
 	 * PENPI_TOKENIZER overrides it.
 	 */
 	tokenizer?: "auto" | "local" | "estimate";
+	/** 0.9.0: the tokenizer cache folder (default `<agent dir>/cache/penpi/tokenizers`). Tests use their own. */
+	tokenizerCacheDir?: string;
+	/** 0.9.0, tests only (not a setting): starts the tokenizer worker in place of the real one. */
+	tokenizerWorker?: () => TokenizerWorker;
+	/** A telemetry report line, as the engine log writes it ("telemetry {json}"); the counting path's goes here. */
+	report?: (json: string) => void;
 	/** D1: fault injection (tests only), a FaultConfig or a PENPI_FAULTS spec; also read from PENPI_FAULTS. */
 	faults?: FaultConfig | string | null;
 	/** D1: marks a production deployment (fault injection is refused); also PENPI_PRODUCTION=1. Not a setting. */
 	production?: boolean;
-	/** Environment for PENPI_FAULTS and PENPI_PRODUCTION (default process.env). */
+	/** Environment for PENPI_FAULTS, PENPI_PRODUCTION, PENPI_TOKENIZER and PI_OFFLINE (default process.env). */
 	env?: Record<string, string | undefined>;
 	log?: (line: string) => void;
 	/** Shared across reloads so tests can observe the engine. */
@@ -212,6 +219,11 @@ export interface EngineOptions {
 
 export interface EngineStats {
 	cuts: Array<{ seq: number; mode: string; where: string; omitted: number; before: number; after: number }>;
+	/**
+	 * 0.9.0: exact counts (exact.ts): worker calls and the texts sent in them, requests counted whole (exact samples),
+	 * and requests with a tokenizer ready but a part still uncounted (mixed).
+	 */
+	exact: { calls: number; texts: number; samples: number; mixed: number };
 	/** Pin on: per cut, the header size planned with (fixedAfter - base) and the header actually rendered. */
 	headerPlans: Array<{ upper: number; planned: number; rendered: number; secondPass: boolean }>;
 	/** Times the rendered header exceeded the upper bound (expected 0). */
@@ -230,7 +242,7 @@ export interface EngineStats {
 	cancelledCompactions: Record<string, number>;
 	calibrationSamples: number[];
 	/** Per request: the budget estimate, the ratio and budget it was planned with, and the detector's appended estimate. */
-	sent: Array<{ estimate: number; ratio: number; budget: number; appended?: number }>;
+	sent: Array<{ estimate: number; ratio: number; budget: number; appended?: number; priced?: number; exact?: number }>;
 	clampedOutput: number;
 	handlerMs: number[];
 	plateaus: Array<{ key: string; window: number }>;
@@ -307,6 +319,7 @@ export interface TruncatedTurn {
 export function newStats(): EngineStats {
 	return {
 		cuts: [],
+		exact: { calls: 0, texts: 0, samples: 0, mixed: 0 },
 		headerPlans: [],
 		headerBoundMisses: 0,
 		guardTrims: 0,

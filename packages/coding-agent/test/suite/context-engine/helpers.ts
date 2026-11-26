@@ -18,6 +18,7 @@ import {
 import { clampMaxTokensToContext } from "@earendil-works/pi-ai/api/simple-options";
 import { getApiProvider, registerApiProvider } from "@earendil-works/pi-ai/compat";
 import { Type } from "typebox";
+import { emitSessionShutdownEvent } from "../../../src/core/extensions/runner.ts";
 import type { ExtensionAPI } from "../../../src/core/extensions/types.ts";
 import type { Harness } from "../harness.ts";
 
@@ -56,6 +57,15 @@ export function syntheticText(size: number, seed: number): string {
 		length += text.length + 1;
 	}
 	return lines.join("\n").slice(0, size);
+}
+
+/**
+ * 0.9.0: end a harness's session as Pi's runtime does at quit (session_shutdown), so the engine frees its tokenizer
+ * worker, then clean up. The harness's own cleanup only disposes of the session.
+ */
+export async function endSession(harness: Harness): Promise<void> {
+	await emitSessionShutdownEvent(harness.session.extensionRunner, { type: "session_shutdown", reason: "quit" });
+	harness.cleanup();
 }
 
 /** Registers `work`, a tool whose output size is chosen by the model's arguments. */
@@ -108,6 +118,12 @@ export function serializeForProvider(message: Message): string {
 
 /** Faux provider prompt text length (mirrors packages/ai/src/providers/faux.ts). */
 export function fauxPromptChars(context: TranscriptContext): number {
+	const parts = fauxPromptParts(context);
+	return parts.reduce((sum, p) => sum + p.length, 0) + Math.max(0, parts.length - 1) * 2;
+}
+
+/** 0.9.0: the faux provider's prompt text per message, `<role>:<text>`, for a provider that counts with a tokenizer. */
+export function fauxPromptParts(context: TranscriptContext): string[] {
 	const text = (message: Message): string => {
 		if (message.role === "system") {
 			return [
@@ -151,8 +167,7 @@ export function fauxPromptChars(context: TranscriptContext): number {
 			)
 			.join("\n");
 	};
-	const parts = context.messages.map((m) => `${m.role}:${text(m)}`);
-	return parts.reduce((sum, p) => sum + p.length, 0) + Math.max(0, parts.length - 1) * 2;
+	return context.messages.map((m) => `${m.role}:${text(m)}`);
 }
 
 const digestCache = new WeakMap<object, string>();
@@ -324,6 +339,11 @@ export interface ProviderSim {
 export interface SimOptions {
 	/** Provider tokens per faux token (chars / 4); a number or per model. */
 	scale?: number | ((model: Model<string>) => number);
+	/**
+	 * 0.9.0: a provider that counts with a tokenizer: its prompt tokens from the faux prompt's parts (fauxPromptParts),
+	 * in place of chars / 4 x scale. Images are still added by `imageTokens`.
+	 */
+	countTokens?: (parts: string[], model: Model<string>) => number;
 	/** Reject requests above this many provider tokens (number, or per call). */
 	realLimit?: number | ((callIndex: number, promptTokens: number, model: Model<string>) => number | undefined);
 	/** Overflow error text. Default: Anthropic style. */
@@ -473,6 +493,7 @@ export function installProviderSim(harness: Harness, options: SimOptions = {}): 
 		const context = options.cutAnswerShare !== undefined ? cutAnswers(replayed, options.cutAnswerShare) : replayed;
 		const images = imagesIn(context);
 		const imageCost = options.imageTokens ? images.reduce((sum, image) => sum + options.imageTokens!(image), 0) : 0;
+		if (options.countTokens) return options.countTokens(fauxPromptParts(context), model) + imageCost;
 		return Math.ceil((fauxPromptChars(context) / 4) * scaleFor(model)) + imageCost;
 	};
 	const errorStream = (model: Model<string>, errorMessage: string) => {

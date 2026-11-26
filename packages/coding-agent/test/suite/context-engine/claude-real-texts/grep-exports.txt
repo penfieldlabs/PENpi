@@ -1,0 +1,63 @@
+packages/ai/src/api/openai-completions.ts:1184:export function convertMessages(
+packages/ai/src/api/constrained-sampling.ts:132:export function makeStrictJsonSchema(
+packages/ai/src/api/constrained-sampling.ts:148:export function prefersJsonSchemaStrictSampling(tool: Tool): boolean {
+packages/ai/src/api/constrained-sampling.ts:153:export function getJsonSchemaToolParameters(tool: Tool, strict: boolean | undefined): Tool["parameters"] {
+packages/ai/src/api/constrained-sampling.ts:169:export function getGrammarToolInput(
+packages/ai/src/api/constrained-sampling.ts:185:export function appendGrammarToolInputJsonDelta(
+packages/ai/src/api/constrained-sampling.ts:203:export function closeGrammarToolInputJson(
+packages/ai/src/api/constrained-sampling.ts:251:export function resolveJsonSchemaStrictSampling(
+packages/ai/src/api/constrained-sampling.ts:277:export function resolveGrammarConstrainedSampling(
+packages/ai/src/api/constrained-sampling.ts:312:export function createGrammarToolInputProperties(
+packages/ai/src/api/classifier-shared.ts:31:export function isRecord(value: unknown): value is Record<string, unknown> {
+packages/ai/src/api/classifier-shared.ts:35:export function requiredNumber(label: string, value: unknown, field: string): number {
+packages/ai/src/api/classifier-shared.ts:117:export function parseClassifierUsage(value: unknown, model: ClassifierModel<ClassifierApi>): Usage | undefined {
+packages/ai/src/api/openai-responses-shared.ts:168:export function getResponsesToolSupport(options: {
+packages/ai/src/api/openai-responses-shared.ts:193:export function convertResponsesMessages<TApi extends Api>(
+packages/ai/src/api/openai-responses-shared.ts:437:export function convertResponsesTools(tools: readonly Tool[], options?: ConvertResponsesToolsOptions): OpenAITool[] {
+packages/ai/src/api/bedrock-converse-stream.lazy.ts:24:export function setBedrockProviderModule(module: ProviderStreams): void {
+packages/ai/src/api/bedrock-converse-stream.lazy.ts:34:export function setBedrockProviderLoader(load: () => Promise<ProviderStreams>): void {
+packages/ai/src/api/strict-tool-limits.ts:14:export function isStrictToolLimitErrorMessage(message: string): boolean {
+packages/ai/src/api/strict-tool-limits.ts:34:export function markStrictToolLimitsExceeded(sessionId: string | undefined): void {
+packages/ai/src/api/strict-tool-limits.ts:44:export function hasExceededStrictToolLimits(sessionId: string | undefined): boolean {
+packages/ai/src/api/openai-prompt-cache.ts:3:export function clampOpenAIPromptCacheKey(key: string | undefined): string | undefined {
+packages/ai/src/api/azure-openai-config.ts:27:export function resolveDeploymentName(model: Pick<Model<Api>, "id">, options?: AzureEndpointOptions): string {
+packages/ai/src/api/azure-openai-config.ts:72:export function resolveAzureBaseUrl(model: Pick<Model<Api>, "baseUrl">, options?: AzureEndpointOptions): string {
+packages/ai/src/api/azure-openai-config.ts:96:export function resolveAzureConfig(
+packages/ai/src/api/github-copilot-headers.ts:5:export function inferCopilotInitiator(messages: Message[]): "user" | "agent" {
+packages/ai/src/api/github-copilot-headers.ts:11:export function hasCopilotVisionInput(messages: Message[]): boolean {
+packages/ai/src/api/github-copilot-headers.ts:23:export function buildCopilotDynamicHeaders(params: {
+packages/ai/src/api/lazy.ts:65:export function lazyStream(
+packages/ai/src/api/lazy.ts:105:export function lazyApi(load: () => Promise<ProviderStreams>, capabilities?: LazyApiCapabilities): ProviderStreams {
+packages/ai/src/api/simple-options.ts:26:export function clampMaxTokensToContext(model: Model<Api>, context: TranscriptContext, maxTokens: number): number {
+packages/ai/src/api/simple-options.ts:37:export function resolveSamplingParams(
+packages/ai/src/api/simple-options.ts:49:export function buildBaseOptions(
+packages/ai/src/api/simple-options.ts:92:export function clampReasoning(effort: ThinkingLevel | undefined): Exclude<ThinkingLevel, "xhigh" | "max"> | undefined {
+packages/ai/src/api/simple-options.ts:96:export function thinkingBudgetForLevel(reasoningLevel: ThinkingLevel, customBudgets?: ThinkingBudgets): number {
+packages/ai/src/api/simple-options.ts:103:export function clampThinkingBudgetToAnswerRoom(thinkingBudget: number, ceiling: number): number {
+packages/ai/src/api/simple-options.ts:107:export function adjustMaxTokensForThinking(
+packages/ai/src/api/google-shared.ts:48:export function resolveGoogleThinkingLevel<T extends GoogleApiType>(
+packages/ai/src/api/google-shared.ts:72:export function usesGoogleThinkingLevel<T extends GoogleApiType>(model: Model<T>): boolean {
+packages/ai/src/api/google-shared.ts:87:export function toGoogleThinkingLevel(level: ResolvedGoogleThinkingLevel): GoogleApiThinkingLevel {
+packages/ai/src/api/google-shared.ts:100:export function toGoogleSdkThinkingLevel(level: GoogleApiThinkingLevel): GoogleSdkThinkingLevel {
+packages/ai/src/api/google-shared.ts:104:export function getDisabledGoogleThinkingConfig<T extends GoogleApiType>(model: Model<T>): ThinkingConfig {
+packages/ai/src/api/google-shared.ts:130:export function isThinkingPart(part: Pick<Part, "thought" | "thoughtSignature">): boolean {
+packages/ai/src/api/google-shared.ts:143:export function retainThoughtSignature(existing: string | undefined, incoming: string | undefined): string | undefined {
+packages/ai/src/api/google-shared.ts:167:export function requiresToolCallId(modelId: string): boolean {
+packages/ai/src/api/google-shared.ts:193:export function convertMessages<T extends GoogleApiType>(model: Model<T>, context: TranscriptContext): Content[] {
+packages/ai/src/api/google-shared.ts:439:export function convertTools(
+packages/ai/src/api/google-shared.ts:463:export function supportsGoogleStrictToolSampling(modelId: string): boolean {
+packages/ai/src/api/google-shared.ts:469:export function mapToolChoice(choice: string): FunctionCallingConfigMode {
+packages/ai/src/api/google-shared.ts:482:export function resolveGoogleFunctionCallingMode(
+packages/ai/src/api/google-shared.ts:500:export function mapStopReason(reason: FinishReason): StopReason {
+packages/ai/src/api/google-shared.ts:541:export function retryGoogleRequest<T>(
+packages/ai/src/api/transform-messages.ts:31:export function splitErrorToolResultImages(msg: ToolResultMessage): SplitErrorToolResult | undefined {
+packages/ai/src/api/transform-messages.ts:91:export function transformMessages<TApi extends Api>(
+packages/ai/src/api/openai-codex-responses.ts:984:export function getOpenAICodexWebSocketDebugStats(sessionId: string): OpenAICodexWebSocketDebugStats | undefined {
+packages/ai/src/api/openai-codex-responses.ts:989:export function resetOpenAICodexWebSocketDebugStats(sessionId?: string): void {
+packages/ai/src/api/openai-codex-responses.ts:999:export function closeOpenAICodexWebSocketSessions(sessionId?: string): void {
+packages/ai/src/api/cloudflare-ai-binding.ts:80:export function createAiBindingFetch(binding: AiBinding): FetchFunction {
+packages/ai/src/api/llama-cpp-classify.ts:96:export function llamaServerRoot(baseUrl: string): string {
+packages/ai/src/api/llama-cpp-classify.ts:171:export function renderQuestion(context: ClassifierContext, id: string): LabeledQuestion {
+packages/ai/src/api/llama-cpp-classify.ts:181:export function labelProbabilities(logprobs: readonly number[], temperature: number): number[] {
+packages/ai/src/api/llama-cpp-classify.ts:190:export function peakConfidence(probabilities: readonly number[]): number {
+packages/ai/src/api/llama-cpp-classify.ts:197:export function answerFromProbabilities(

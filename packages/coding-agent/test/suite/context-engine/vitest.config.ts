@@ -12,6 +12,9 @@ const config = mergeConfig(
 			// D13: deterministic session entry ids in every test.
 			setupFiles: ["test/suite/context-engine/deterministic-ids.ts"],
 			testTimeout: 300_000,
+			// 0.9.0: the engine counts on the estimate here unless a test asks for a tokenizer (an engine `env` without
+			// PENPI_TOKENIZER, and its own cache folder), so no test reaches Hugging Face.
+			env: { PENPI_TOKENIZER: process.env.PENPI_TOKENIZER ?? "estimate" },
 		},
 		resolve: {
 			alias: [{ find: /^@earendil-works\/pi-coding-agent$/, replacement: workspaceSourcePaths.codingAgentIndex }],
