@@ -358,6 +358,8 @@ packages/coding-agent/test/suite/regressions/copilot-request-size-overflow.test.
 packages/coding-agent/test/suite/virtual-models.test.ts	upstream test adapted to PENpi's compaction-off default
 packages/coding-agent/vitest.config.ts	the context engine suite runs with its own config (ADR 0032)
 packages/env/vitest.config.ts	skip daemon tests when the pi-env daemon is not built
+scripts/check-extension-graph.mjs	PENpi check: the extension's import graph and its workers (0.9.0, DP1)
+scripts/check-extension-graph.test.mjs	tests a PENpi script
 scripts/check-lockfile-versions.mjs	PENpi version-surface check; fails on a registry pi-ai (pi-mcp-adapter 7.x peer range)
 scripts/check-lockfile-versions.test.mjs	PENpi: test of the registry pi-ai check
 scripts/check-release-assets.mjs	PENpi release asset interlock
