@@ -193,6 +193,12 @@ export interface EngineOptions {
 	 * through openai-completions, anthropic-messages or bedrock-converse-stream). Default: the model's API.
 	 */
 	serializeAs?: Record<string, string>;
+	/**
+	 * 0.9.0: where tokenizer files come from (tokenizers/download.ts). "auto" (default) downloads a missing file on
+	 * first use; "local" uses bundled and already-cached files only and makes no request; "estimate" uses none.
+	 * PENPI_TOKENIZER overrides it.
+	 */
+	tokenizer?: "auto" | "local" | "estimate";
 	/** D1: fault injection (tests only), a FaultConfig or a PENPI_FAULTS spec; also read from PENPI_FAULTS. */
 	faults?: FaultConfig | string | null;
 	/** D1: marks a production deployment (fault injection is refused); also PENPI_PRODUCTION=1. Not a setting. */

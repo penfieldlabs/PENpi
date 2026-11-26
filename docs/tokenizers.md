@@ -75,6 +75,32 @@ match the table. The largest is 32,169,626 bytes.
   claiming the materials infringe a patent or copyright. There is no warranty, and, unlike the Nemotron license, no
   indemnity.
 
+## Downloads and the cache folder
+
+The `tokenizer` setting in the `penpi` block decides where files come from, and `PENPI_TOKENIZER`
+overrides it (an unknown value of either is reported and ignored):
+- **`auto`** (default): a missing file is downloaded the first time a model needs it, with a notice
+  naming the file, its size, the repo and the revision, and linking its license unless it is MIT or
+  Apache-2.0.
+- **`local`**: only bundled and already-cached files are used, and no request is ever made.
+- **`estimate`**: no tokenizer at all; every model is counted with the estimate.
+
+Files live in `<agent dir>/cache/penpi/tokenizers/`, named by their SHA-256.
+- **Checks:** a file is read once, and its bytes are used only when their size and hash match the
+  table; the tokenizer is built from exactly those bytes. It is checked again on each use, since the
+  folder is yours to change. Anything at the path that isn't a regular file, or is the wrong size,
+  is refused before it is read. A file that doesn't match is deleted and downloaded again, at most
+  once a session; after that the model stays on the estimate.
+- **The request:** an HTTPS request to `huggingface.co/<repo>/resolve/<revision>/<file>`, through
+  Pi's HTTP settings, including its proxy. It asks for the file uncompressed, refuses any hop that
+  isn't HTTPS, and follows at most 5 redirects.
+- **Size limits:** a download of any size other than the table's is stopped. Nothing over 32 MB is
+  ever written.
+- **Several Pi processes** can download the same file at once. Each writes its own `.part` file and
+  moves it into place once it checks out. A `.part` file left by a crash is removed after a day.
+- **Disk:** a user who visits every family keeps about 400 MB here. Nothing is evicted; delete the
+  folder to reclaim the space, and files are downloaded again when needed.
+
 ## Which models use them
 
 Of pi-ai's 1,698 chat models, 847 (49.9%) have a file:
