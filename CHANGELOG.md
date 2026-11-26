@@ -25,8 +25,8 @@ PENpi versioning starts at `0.1.0`. (Pi core has its own changelog at
   that request at or above it. Now it also counts when the request was expected up to 5% below it,
   since the engine's estimate of one request can run a few percent low (5% is a working allowance,
   not a bound) (ADR 0035). The same request sent again still never counts: it reports the same
-  count honestly, and requests are now told apart by their own estimates, so the allowance can't
-  make a resend count. On the upstream v1.5.1
+  count honestly, and requests are now told apart by their shape and their own estimates, so the
+  allowance can't make a resend count. On the upstream v1.5.1
   corpus (`dd30101cf`), E2's data.o200k.32k.silent-front passes at lag 3 (lag 4 before, against
   the limit 3), and its known-failure entry is removed.
 

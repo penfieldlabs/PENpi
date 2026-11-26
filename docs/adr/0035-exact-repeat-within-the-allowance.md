@@ -54,8 +54,10 @@ Chance does land on the maximum now and then. One repeat is weak evidence: it ac
 growth marginal within the evidence span (ADR 0033).
 
 **The same request sent again is no evidence.** An identical resend reports the same count, so the rule asks for a
-different request than the one that set the maximum: the requests' own estimates 0.5% or more apart. Their expected
-sizes are not enough. The ratio moves after every clean sample, so a resend's expected size moves too, and with the
+different request than the one that set the maximum: a different shape (the messages that send anything, by
+identity), or the requests' own estimates 0.5% or more apart. The shape is needed too: a different request, such as
+the first after a cut, can land within 0.5% of the maximum's estimate, and if truncated it reports exactly the maximum.
+Their expected sizes are not enough. The ratio moves after every clean sample, so a resend's expected size moves too, and with the
 allowance below the maximum, a resend of a request first estimated 2.5% to about 6% low would pass. An overestimated one
 already could. The log line "exact repeat not judged" shows each repeat the guard stops.
 
@@ -102,8 +104,14 @@ the two. The trial code is on a local branch, not published.
 
 `v090-honest-detection.test.ts` runs the detector against an honest provider that counts with o200k at a scale per kind
 of content. Its variants are engine options, with the shipped defaults as the baseline. After each of a session's four
-prompts it resends one request of that prompt unchanged: the one that set the largest usage reported so far, with a
-chance of 0.8, when one in that prompt did. That is the shape the exact repeat's different-request guard stops.
+prompts it sends requests again, twice:
+- **by the route a real session takes:** an answer that sends nothing, then an entry that isn't sent triggers a turn, so
+  that request is the last one again;
+- **from the same point:** one request of that prompt is sent again, the one that set the largest usage reported so
+  far, with a chance of 0.8, when one in that prompt did. When the engine has cut since, what it sends differs.
+
+The records keep only the resends that reported the same count again. Those are the shape the exact repeat's
+different-request guard stops.
 
 **Its bars, for any future rule:**
 - **Safety:** the baseline detects in no session. Each session that detects with a candidate also detects with the
@@ -111,15 +119,15 @@ chance of 0.8, when one in that prompt did. That is the shape the exact repeat's
 - **Power:** the rule without its guard detects on some sessions, and the baseline's sessions hold the shape the
   guard has to stop at least 20 times in at least 10 sessions. For the exact repeat, that shape is a sample that
   reports exactly the maximum again for the same request, expected within the allowance below it, counted from the
-  logged rows.
+  logged rows. The test counts it itself and prints "Power: N in M sessions".
 
 **How it runs:**
 - **By default (CI),** a slice that needs no corpus: the shapes mix, a 32k window, 10 seeds with their resends, the
-  shipped engine, asserting no detection.
+  shipped engine, asserting no detection and at least one guarded repeat, so a broken guard can't pass it.
 - **With `HONEST_DETECTION=1`,** the full 300 sessions on a named corpus. It refuses the held-out revision. It is meant
   for before a new detection rule and before each release gate. It also runs each session with a provider that rounds
-  its usage to 100 tokens. No supported provider does, and the engine has no guard for one, so those sessions are
-  recorded and not failed. Rounding turns an honest growth under 100 tokens into none, which the rule for an append
+  its usage to 100 tokens. No supported provider is known to round, and the engine has no guard for one, so those
+  sessions are recorded and not failed. Rounding turns an honest growth under 100 tokens into none, which the rule for an append
   with no growth reads as strong evidence (Results).
 
 ## The exact path, later
@@ -145,9 +153,10 @@ None of it is built.
 ## Results
 
 On the engine as it ships, 96 runs on each corpus, one worker. The table was run at E2's engine hash `f16b2fdf82b3`.
-The shipped engine, `04ccbc1c44d5`, differs from it only in the different-request guard, which is read only where a
-sample reports exactly the largest usage. Every run with such a sample was rerun on it, the 24 `silent-front` runs on
-each corpus and `research.glm.32k.reject` on v1.5.0, and each matches call for call:
+The shipped engine, `03365653ef6f`, differs from it only in the different-request guard (the requests' shapes and
+estimates), which is read only where a sample reports exactly the largest usage. Every run with such a sample was rerun
+on it, the 24 `silent-front` runs on each corpus and `research.glm.32k.reject` on v1.5.0, and each matches call for
+call:
 
 | corpus | known cases | false detections | wrong names | lags over 48 silent runs (lag: runs) |
 |---|---|---|---|---|
@@ -158,19 +167,28 @@ each corpus and `research.glm.32k.reject` on v1.5.0, and each matches call for c
 - The rule took a repeat below the maximum twice in 288 runs:
   - `data.o200k.32k.silent-front` on v1.5.1, call 12, expected at 0.963 of it: the fix;
   - `research.glm.32k.reject` on v1.5.0, an honest provider: a request expected at 0.998 of the maximum reported exactly it. That stayed one suspect and never acted.
-- The other changes come from the checkout, not the engine. Pi's system prompt names the package's paths, and this run's checkout path counts 3 tokens fewer than the earlier runs'. The engine of 0.8.0, run from this checkout, gives the same shifted counts. In the two runs below the rule logged nothing, and on every diagnostic run the final engine matches the trial engine with its rule off, call for call. The shift moved:
+- The other changes come from the checkout, not the engine. Pi's system prompt names the package's paths, and this run's checkout path counts 3 tokens fewer than the earlier runs'. The engine of 0.8.0, run from this checkout, gives the same shifted counts. In the two runs below the rule logged nothing, and on the runs that show the shift, the engine with this rule and without it gives the same calls. The shift moved:
   - `research.o200k.32k.silent-messages` on v1.5.0 to lag 2 (was 3);
   - on v1.4.0, the wrong name in `data.glm.32k.silent-front`, which is gone.
-- The honest test's full run, on the shipped engine, with the resends: 300 sessions, 0 detections, and no exact-repeat
-  evidence in any session.
-  - **Power:** the guard stopped a resend that reported the maximum again, expected below it, 26 times in 22 sessions.
-  - **With the guard comparing expected sizes instead,** as it did before, 15 of the same sessions detect, each after
-    a resend taken as evidence.
-  - **With usage rounded to 100:** 39 sessions detect. 35 follow an append the rounding shows as no growth (69 real
-    tokens of 1,410 estimated, in one), and 4 a rounded repeat of the maximum.
+- The honest test's full run, on the shipped engine, with both resend routes: 300 sessions, 0 detections.
+  - **Resends:** 2,213 reported the same count again (1,186 by a real session's route, 1,027 from the same point), 512
+    of them at the maximum. 187 more reported a different count and are left out.
+  - **Power:** the guard stopped a resend that reported the maximum again, expected below it, 22 times in 18 sessions.
+  - **One honest repeat** of the maximum by a different request was taken as evidence. It stayed one suspect and never
+    acted.
+  - **With the guard comparing expected sizes,** as it did before 0.9.0's final change, 14 of the same sessions detect,
+    and 21 take a resend as evidence.
+  - **With usage rounded to 100:** 48 sessions detect (39 before the second resend route was added). 30 follow an
+    append the rounding shows as no growth (69 real tokens of 1,410 estimated, in one), and 18 a rounded repeat of
+    the maximum.
 
 ## Consequences
 
 - E2's known failure `data.o200k.32k.silent-front` (v1.5.1, lag 4, until 0.9.0) is gone, and its entry is removed.
 - `data.o200k.1m.silent-messages` stays at lag 4 on the v1.5.1 and v1.4.0 corpora.
 - Every new detection rule must pass the honest test's full run, under its bars, before it ships.
+- **A known limit: a provider that rounds its usage.** With usage rounded to 100 tokens, 48 of the honest test's 300
+  sessions detect. An honest growth under 100 tokens rounds to none, and the rule for an append with no growth judges
+  the append by its estimate, so a repetitive append priced high reads as strong evidence. No supported provider is
+  known to round. Judging that rule by the floor instead would weaken it where it matters most, on a server that
+  reports exactly its limit. The exact path (0.10.0) judges it on the exact append, which ends the question.
