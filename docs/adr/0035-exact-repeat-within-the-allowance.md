@@ -123,8 +123,9 @@ different-request guard stops.
   guard has to stop at least 20 times in at least 10 sessions. For the exact repeat, that shape is a sample that
   reports exactly the maximum again for the same request, expected within the allowance below it, counted from the
   logged rows. The test counts it itself and prints "Power: N in M sessions".
-  A full run writes its part of the count, and `HONEST_POWER_SUM=1` adds the parts, checks they cover the 300 sessions
-  once, and asserts the bar.
+  A full run writes its part of the count, and `HONEST_POWER_SUM=1` adds the parts, checks they cover seeds 0 to 49
+  once, with three mixes and two windows each, by name, and that all of them ran one engine (its files' hash), and
+  asserts the bar.
 
 **How it runs:**
 - **By default (CI),** a slice that needs no corpus: the shapes mix, a 32k window, 10 seeds with their resends, the
@@ -134,8 +135,9 @@ different-request guard stops.
   its usage to 100 tokens. No supported provider is known to round, and the engine has no guard for one, so those
   sessions are recorded and not failed. Rounding turns an honest growth under 100 tokens into none, which the rule for an append
   with no growth reads as strong evidence (Results).
-- **Each session runs in a fixed folder,** named by its mix, window, seed and reporter, so running a session again
-  gives the same calls.
+- **Each session runs in a fixed folder,** named by its mix, window, seed and reporter, and its system prompt names a
+  fixed package folder instead of the checkout's. Both are in every request, so running a session again gives the
+  same calls, from any checkout path.
 
 ## The exact path, later
 
@@ -178,24 +180,48 @@ call:
   - `research.o200k.32k.silent-messages` on v1.5.0 to lag 2 (was 3);
   - on v1.4.0, the wrong name in `data.glm.32k.silent-front`, which is gone.
 - The honest test's full run, on the shipped engine, with both resend routes: 300 sessions, 0 detections.
-  - **Resends:** 2,212 reported the same count again (1,186 by a real session's route, 1,026 from the same point), 512
-    of them at the maximum. 188 more reported a different count and are left out.
-  - **Power:** the guard stopped a resend that reported the maximum again, expected below it, 24 times in 19 sessions.
+  - **Resends:** 2,221 reported the same count again (1,191 by a real session's route, 1,030 from the same point), 514
+    of them at the maximum. 179 more reported a different count and are left out.
+  - **Power:** the guard stopped a resend that reported the maximum again, expected below it, 25 times in 21 sessions.
     The test's summing step adds the runs' parts and asserts the bar.
   - **No honest repeat** is taken as evidence. Keyed by message identity, one was taken, in `mixed.48000.48`: the engine
     rebuilt its window header with another timestamp, and the same request looked like a different one.
-  - **With the guard on expected sizes alone,** 14 of the same sessions detect,
-    and 21 take a resend as evidence.
-  - **With usage rounded to 100:** 50 sessions detect. 26 act on an append the rounding shows as no growth, and 24 on
+  - **With the guard on expected sizes alone,** in the earlier run of the same seeds, 14 sessions detect, and 21 take a
+    resend as evidence.
+  - **With usage rounded to 100:** 55 sessions detect. 28 act on an append the rounding shows as no growth, and 27 on
     a rounded repeat of the maximum.
 
 ## Consequences
 
 - E2's known failure `data.o200k.32k.silent-front` (v1.5.1, lag 4, until 0.9.0) is gone, and its entry is removed.
-- `data.o200k.1m.silent-messages` stays at lag 4 on the v1.5.1 and v1.4.0 corpora.
+- **`data.o200k.1m.silent-messages` stays at lag 4 on the fallback path, as a known limit.** It holds on the v1.5.1 and
+  v1.4.0 corpora; on the v1.5.0 corpus the run passes at lag 3.
+  - **The cause is not the estimate.** The server drops the request's oldest messages, at calls 30 and 47 on v1.5.1 and
+    at 30 and 45 on v1.4.0. A drop shows only on the request where it happens: the next request grows by exactly its
+    append again (call 31), since the history stays the shorter one. On those requests the growth is 0.46 to 0.62 of
+    the true append, where evidence needs below 0.25. Call 30 reads marginal and pairs with nothing, call 47 (45) reads
+    clean, and the strong sample at 48 (46) detects at the next request.
+  - **No estimate change reaches it.** The estimate of each append was within 4% of the true o200k count. A share of
+    0.62 can't become evidence by a change to the estimate: the floor is never above `textTokens`, and an honest
+    provider's growth is never below the true count. A prototype of 0.10.0's estimate changes (letters of other
+    scripts, runs of one character) gave the same truncations and the same detection call.
+  - **The estimate-based rules that would read it fail on honest content,** on E2's full runs (96 a corpus). A check of
+    a request's reported total against its calibrated estimate: honest requests are over 5% short in 1.4 to 2.5% of
+    calls, in 58 to 62 of 96 runs a corpus. A growth rule that reads a share of 0.62 as evidence (below 0.65): it takes
+    honest samples as evidence in 11 to 32 of 96 runs a corpus, before the honest test's wider spread per kind of
+    content. A narrower form already failed the honest test ("Not adopted").
+  - **The exact path reaches lag 3, with no margin,** computed from the same runs' true counts. The exactness gate sets
+    early (calls 1 to 29 are append-only and exact), and growth is judged on raw deltas: call 30's shortfall (6,466 of
+    12,376 on v1.5.1; 6,780 of 12,523 on v1.4.0) is weak evidence, and call 47's 398 tokens (485 at call 45 on v1.4.0)
+    complete the pair, so detection comes at 48 (46). The absolute bound takes none of the eight truncated calls: the
+    dropped messages carry assistant text and templates, which it leaves out, and reported stays 300 to 9,800 tokens
+    above the text count. The pair rests on call 30's evidence staying pending for 15 to 17 samples; nothing clears it,
+    since the reports between climb by less than 2% above the running maximum each time. E2's exact mode is to confirm
+    it on every release.
 - Every new detection rule must pass the honest test's full run, under its bars, before it ships.
-- **A known limit: a provider that rounds its usage.** With usage rounded to 100 tokens, 50 of the honest test's 300
+- **A known limit: a provider that rounds its usage.** With usage rounded to 100 tokens, 55 of the honest test's 300
   sessions detect. An honest growth under 100 tokens rounds to none, and the rule for an append with no growth judges
   the append by its estimate, so a repetitive append priced high reads as strong evidence. No supported provider is
   known to round. Judging that rule by the floor instead would weaken it where it matters most, on a server that
-  reports exactly its limit. 0.9.0's exact path judges it on the exact append, which ends the question.
+  reports exactly its limit. On the exact path, an append with no growth can be judged on its exact size, which ends
+  the first half. A rounded repeat of the maximum stays a limit for a rounding provider.
