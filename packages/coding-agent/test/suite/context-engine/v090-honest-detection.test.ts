@@ -35,8 +35,10 @@
  * - Power for ADR 0035's exact repeat, by the logged rows of the baseline: samples that report exactly the largest
  *   usage reported so far again for the same request, expected within the allowance below it ("exact repeat not
  *   judged" rows with the expected size below the maximum), at least 20 times in at least 10 sessions. The test counts
- *   it itself ("Power: N in M sessions", in power.<seeds>.txt under HONEST_OUT). The bar is asserted on a whole run;
- *   a run split by seeds, mixes or windows writes its part.
+ *   it itself: each full run writes its part ("Power: N in M sessions", power.<seeds>.json and .txt under
+ *   HONEST_OUT), and with HONEST_POWER_SUM=1 the test adds up the parts under HONEST_OUT and its folders and asserts
+ *   the bar, once they cover seeds 0 to 49, all three mixes and both windows. A full run is split by seed range, one
+ *   corpus per range, so the bar is asserted on the sum.
  *
  * Two runs:
  * - by default, a slice for CI that needs no corpus: the shapes mix, 32,000 tokens, seeds 0 to 9, the shipped engine
@@ -48,9 +50,15 @@
  *   It also runs every session with a provider that rounds its usage to 100 tokens (HONEST_REPORTERS, "exact,round100"
  *   by default), a provider kind the engine does not support yet. Those sessions are recorded, not failed: until the
  *   engine has a guard for rounding, a detection there is expected.
+ *
+ * Each session runs in a working folder of its own fixed name (penpi-honest-<mix>-<window>-<seed>-<reporter> under
+ * the system's temp folder). The folder is in the system prompt, so a session's requests, and every figure, come out
+ * the same on every run, and a session can be replayed. The records carry each call's reported usage and each
+ * request's estimate, to compare two runs call for call.
  */
 
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fauxAssistantMessage, fauxText, fauxToolCall } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
@@ -66,6 +74,8 @@ import { blobExtension, LOG_DIR, resendAnswered, scriptedModel, syntheticText } 
 import { fastO200k } from "./o200k-fast.ts";
 
 const FULL = process.env.HONEST_DETECTION === "1";
+/** Sum the Power parts under HONEST_OUT and assert the bar, instead of running sessions. */
+const POWER_SUM = process.env.HONEST_POWER_SUM === "1";
 const HELD_OUT = "faac585884ae2c013a6b1400f3e9e77f10b34bac";
 const BASELINE = "shipped";
 const VARIANTS: Record<string, Record<string, unknown>> = {
@@ -263,6 +273,9 @@ async function session(
 	let calls = 0;
 	let api: ExtensionAPI | undefined;
 	const harness = await createHarness({
+		// A fixed working folder per session: it is in the system prompt, so the session's requests come out the same
+		// on every run, and a session can be replayed.
+		tempDir: join(tmpdir(), `penpi-honest-${mix}-${window}-${seed}-${reporter}`),
 		models: [{ id: "honest", contextWindow: window, maxTokens: 4_000 }],
 		settings: { compaction: { enabled: false } },
 		extensionFactories: [
@@ -383,6 +396,9 @@ async function session(
 		kindScale: Object.fromEntries(kindScale),
 		kinds: used,
 		calls: sim.calls.length,
+		// Each call's reported usage and each request's estimate, to compare two runs call for call.
+		reported: sim.calls.map((c) => (c.rejected ? null : c.processed)),
+		estimates: stats.sent.map((x) => x.estimate),
 		rejected: sim.calls.filter((c) => c.rejected).length,
 		samples: stats.calibrationSamples.length,
 		growthChecks: stats.growthChecks.length,
@@ -414,6 +430,34 @@ function guarded(rows: Row[]): number {
 	return n;
 }
 
+/** One part of the Power count, as a full run writes it under HONEST_OUT (power.<from>-<to>.json). */
+interface PowerPart {
+	from: number;
+	to: number;
+	mixes: string[];
+	windows: number[];
+	corpus?: string;
+	total: number;
+	sessions: number;
+	of: number;
+}
+
+/** The Power parts under `dir` and its folders, one level down (a full run is split by corpus). */
+function powerParts(dir: string): Array<PowerPart & { file: string }> {
+	const parts: Array<PowerPart & { file: string }> = [];
+	const scan = (d: string, depth: number) => {
+		for (const name of readdirSync(d)) {
+			const path = join(d, name);
+			if (statSync(path).isDirectory()) {
+				if (depth === 0) scan(path, 1);
+			} else if (/^power\.\d+-\d+\.json$/.test(name))
+				parts.push({ ...(JSON.parse(readFileSync(path, "utf8")) as PowerPart), file: path });
+		}
+	};
+	if (existsSync(dir)) scan(dir, 0);
+	return parts;
+}
+
 describe(`0.9.0, ADR 0035: the detector on honest content${FULL ? ", full run" : ", the CI slice"}`, () => {
 	// The baseline's guarded repeats per session (exact reporter), for the Power count.
 	const power: number[] = [];
@@ -421,6 +465,24 @@ describe(`0.9.0, ADR 0035: the detector on honest content${FULL ? ", full run" :
 	afterEach(() => {
 		while (harnesses.length > 0) harnesses.pop()?.cleanup();
 	});
+	if (POWER_SUM) {
+		// The bar on the whole full run: every seed from 0 to 49 once, over all three mixes and both windows.
+		it("Power, summed over the full run's parts: at least 20 guarded repeats in at least 10 sessions", () => {
+			const parts = powerParts(OUT);
+			const seeds = parts.flatMap((p) => Array.from({ length: p.to - p.from + 1 }, (_, i) => p.from + i));
+			const whole = parts.every((p) => p.mixes.length === 3 && p.windows.length === 2);
+			const covered = seeds.length === 50 && new Set(seeds).size === 50 && seeds.every((n) => n >= 0 && n <= 49);
+			const total = parts.reduce((a, p) => a + p.total, 0);
+			const sessions = parts.reduce((a, p) => a + p.sessions, 0);
+			const line = `Power: ${total} in ${sessions} sessions (of ${parts.reduce((a, p) => a + p.of, 0)}), from ${parts.length} part(s): ${parts.map((p) => `${p.from}-${p.to}${p.corpus ? ` on ${p.corpus}` : ""}`).join(", ")}`;
+			writeFileSync(join(OUT, "power.txt"), `${line}\n`);
+			process.stderr.write(`${line}\n`);
+			expect(covered && whole, `the parts cover seeds 0 to 49 once, all mixes and windows: ${line}`).toBe(true);
+			expect(total, line).toBeGreaterThanOrEqual(20);
+			expect(sessions, line).toBeGreaterThanOrEqual(10);
+		});
+		return;
+	}
 	if (FULL) {
 		const asked = process.env.E2_CORPUS_REV;
 		if (!asked || asked === "worktree" || resolveRev(asked) === HELD_OUT)
@@ -473,15 +535,21 @@ describe(`0.9.0, ADR 0035: the detector on honest content${FULL ? ", full run" :
 		const sessions = power.filter((n) => n > 0).length;
 		const line = `Power: ${total} in ${sessions} sessions (of ${power.length})`;
 		if (FULL) {
-			writeFileSync(join(OUT, `power.${from}-${to ?? from}.txt`), `${line}\n`);
+			// The bar is for the whole run, 300 sessions. A run split by HONEST_SEEDS (one corpus per seed range) writes
+			// its part, and HONEST_POWER_SUM=1 adds the parts up and asserts it.
+			const part: PowerPart = {
+				from,
+				to: to ?? from,
+				mixes: MIXES,
+				windows: WINDOWS,
+				corpus: process.env.E2_CORPUS_REV,
+				total,
+				sessions,
+				of: power.length,
+			};
+			writeFileSync(join(OUT, `power.${part.from}-${part.to}.json`), `${JSON.stringify(part)}\n`);
+			writeFileSync(join(OUT, `power.${part.from}-${part.to}.txt`), `${line}\n`);
 			process.stderr.write(`${line}\n`);
-			// The bar is for the whole run (300 sessions). A run split by HONEST_SEEDS, HONEST_MIXES or HONEST_WINDOWS
-			// writes its part, and the parts are added up.
-			const whole = SEEDS.length === 50 && MIXES.length === 3 && WINDOWS.length === 2;
-			if (whole) {
-				expect.soft(total, line).toBeGreaterThanOrEqual(20);
-				expect.soft(sessions, line).toBeGreaterThanOrEqual(10);
-			}
 		} else expect(total, line).toBeGreaterThanOrEqual(1);
 	});
 });

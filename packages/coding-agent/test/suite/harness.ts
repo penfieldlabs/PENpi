@@ -122,6 +122,11 @@ export interface HarnessOptions {
 	modelsJson?: Record<string, unknown>;
 	/** Session to continue, for example to test a resume. Default: a new in-memory session. */
 	sessionManager?: SessionManager;
+	/**
+	 * The working folder, emptied first. Default: a new one under the system's temp folder, named by the time. The
+	 * folder is in the system prompt, so a fixed one makes a session's requests the same from one run to the next.
+	 */
+	tempDir?: string;
 }
 
 export interface Harness {
@@ -142,14 +147,15 @@ export interface Harness {
 	cleanup: () => void;
 }
 
-function createTempDir(): string {
-	const tempDir = join(tmpdir(), `pi-suite-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+function createTempDir(fixed?: string): string {
+	const tempDir = fixed ?? join(tmpdir(), `pi-suite-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+	if (fixed) rmSync(tempDir, { recursive: true, force: true });
 	mkdirSync(tempDir, { recursive: true });
 	return tempDir;
 }
 
 export async function createHarness(options: HarnessOptions = {}): Promise<Harness> {
-	const tempDir = createTempDir();
+	const tempDir = createTempDir(options.tempDir);
 	const fauxProvider: FauxProviderRegistration = registerFauxProvider({
 		provider: options.provider,
 		models: options.models,

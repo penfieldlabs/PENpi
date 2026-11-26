@@ -348,6 +348,7 @@ packages/coding-agent/test/suite/context-engine/v080-search-offset.test.ts	PENpi
 packages/coding-agent/test/suite/context-engine/v090-exact-repeat.test.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/context-engine/v090-honest-detection.test.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/context-engine/vitest.config.ts	PENpi: context engine behaviour suite (ADR 0032)
+packages/coding-agent/test/suite/harness.ts	PENpi: an optional fixed working folder, so the context engine's honest test can replay a session
 packages/coding-agent/test/suite/regressions/copilot-request-size-overflow.test.ts	upstream test adapted to PENpi's compaction-off default
 packages/coding-agent/test/suite/virtual-models.test.ts	upstream test adapted to PENpi's compaction-off default
 packages/coding-agent/vitest.config.ts	the context engine suite runs with its own config (ADR 0032)
