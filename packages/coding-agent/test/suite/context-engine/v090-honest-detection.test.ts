@@ -57,18 +57,20 @@
  * request's estimate, to compare two runs call for call.
  */
 
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { fauxAssistantMessage, fauxText, fauxToolCall } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ExtensionAPI } from "../../../src/core/extensions/types.ts";
 import { type ContentClass, generate, rng } from "../context-engine-e2/content.ts";
 import { resolveRev } from "../context-engine-e2/corpus.ts";
 import { installProviderSim } from "../context-engine-e2/provider-sim.ts";
+import { engineFiles } from "../context-engine-e2/snapshot-engine.ts";
 import { CountingTokenizer, type Tokenizer } from "../context-engine-e2/tokenizers.ts";
 import { createHarness, type Harness } from "../harness.ts";
-import { createContextEngine, newStats } from "./engine.ts";
+import { createContextEngine, ENGINE_LABEL, ENGINE_PATH, newStats } from "./engine.ts";
 import { sweepUnits } from "./floor-sweep-cases.ts";
 import { blobExtension, LOG_DIR, resendAnswered, scriptedModel, syntheticText } from "./helpers.ts";
 import { fastO200k } from "./o200k-fast.ts";
@@ -94,6 +96,8 @@ const PROMPTS = 4;
 const CALLS = 40;
 /** The custom type of the entry that triggers a turn and is never sent (the engine's hiddenCustomTypes). */
 const UNSENT = "honest-unsent";
+/** The package folder the honest sessions' system prompt names, the same from any checkout (it is never read). */
+const HONEST_PACKAGE_DIR = "/penpi-honest/package";
 
 /** o200k with a heap merge (o200k-fast.ts): the same tokens as js-tiktoken, and fast on long runs of one character. */
 const O200K: Tokenizer = { name: "o200k", source: "o200k-fast.ts", count: fastO200k };
@@ -273,9 +277,10 @@ async function session(
 	let calls = 0;
 	let api: ExtensionAPI | undefined;
 	const harness = await createHarness({
-		// A fixed working folder per session: it is in the system prompt, so the session's requests come out the same
-		// on every run, and a session can be replayed.
+		// A fixed working folder per session, and a fixed package folder: both are in the system prompt, so the session's
+		// requests come out the same on every run and from any checkout path, and a session can be replayed.
 		tempDir: join(tmpdir(), `penpi-honest-${mix}-${window}-${seed}-${reporter}`),
+		packageDir: HONEST_PACKAGE_DIR,
 		models: [{ id: "honest", contextWindow: window, maxTokens: 4_000 }],
 		settings: { compaction: { enabled: false } },
 		extensionFactories: [
@@ -431,12 +436,30 @@ function guarded(rows: Row[]): number {
 }
 
 /** One part of the Power count, as a full run writes it under HONEST_OUT (power.<from>-<to>.json). */
+/** The full run's mixes and windows, which every Power part must cover by name. */
+const ALL_MIXES = ["corpus", "mixed", "shapes"];
+const ALL_WINDOWS = [32_000, 48_000];
+
+/**
+ * The engine's files hash: SHA-256 of each file the entry reaches, by its path inside the engine's folder, so it is the
+ * same from any checkout. The summing step requires one value across the parts.
+ */
+function engineHash(): string {
+	const root = dirname(ENGINE_PATH);
+	const lines = engineFiles(ENGINE_PATH).map(
+		(f) => `${relative(root, f)}\t${createHash("sha256").update(readFileSync(f)).digest("hex")}`,
+	);
+	return `${ENGINE_LABEL}:${createHash("sha256").update(lines.join("\n")).digest("hex").slice(0, 16)}`;
+}
+
 interface PowerPart {
 	from: number;
 	to: number;
 	mixes: string[];
 	windows: number[];
 	corpus?: string;
+	/** engineHash(): the engine the part ran. */
+	engine?: string;
 	total: number;
 	sessions: number;
 	of: number;
@@ -470,14 +493,19 @@ describe(`0.9.0, ADR 0035: the detector on honest content${FULL ? ", full run" :
 		it("Power, summed over the full run's parts: at least 20 guarded repeats in at least 10 sessions", () => {
 			const parts = powerParts(OUT);
 			const seeds = parts.flatMap((p) => Array.from({ length: p.to - p.from + 1 }, (_, i) => p.from + i));
-			const whole = parts.every((p) => p.mixes.length === 3 && p.windows.length === 2);
+			const same = (a: Array<string | number>, b: Array<string | number>) =>
+				JSON.stringify([...a].sort()) === JSON.stringify([...b].sort());
+			const whole = parts.every((p) => same(p.mixes, ALL_MIXES) && same(p.windows, ALL_WINDOWS));
+			const engines = new Set(parts.map((p) => p.engine));
+			const oneEngine = engines.size === 1 && !engines.has(undefined);
 			const covered = seeds.length === 50 && new Set(seeds).size === 50 && seeds.every((n) => n >= 0 && n <= 49);
 			const total = parts.reduce((a, p) => a + p.total, 0);
 			const sessions = parts.reduce((a, p) => a + p.sessions, 0);
-			const line = `Power: ${total} in ${sessions} sessions (of ${parts.reduce((a, p) => a + p.of, 0)}), from ${parts.length} part(s): ${parts.map((p) => `${p.from}-${p.to}${p.corpus ? ` on ${p.corpus}` : ""}`).join(", ")}`;
+			const line = `Power: ${total} in ${sessions} sessions (of ${parts.reduce((a, p) => a + p.of, 0)}), from ${parts.length} part(s): ${parts.map((p) => `${p.from}-${p.to}${p.corpus ? ` on ${p.corpus}` : ""}`).join(", ")}; engine ${[...engines].join(", ")}`;
 			writeFileSync(join(OUT, "power.txt"), `${line}\n`);
 			process.stderr.write(`${line}\n`);
 			expect(covered && whole, `the parts cover seeds 0 to 49 once, all mixes and windows: ${line}`).toBe(true);
+			expect(oneEngine, `the parts ran one engine: ${line}`).toBe(true);
 			expect(total, line).toBeGreaterThanOrEqual(20);
 			expect(sessions, line).toBeGreaterThanOrEqual(10);
 		});
@@ -543,6 +571,7 @@ describe(`0.9.0, ADR 0035: the detector on honest content${FULL ? ", full run" :
 				mixes: MIXES,
 				windows: WINDOWS,
 				corpus: process.env.E2_CORPUS_REV,
+				engine: engineHash(),
 				total,
 				sessions,
 				of: power.length,

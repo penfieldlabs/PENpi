@@ -127,6 +127,12 @@ export interface HarnessOptions {
 	 * folder is in the system prompt, so a fixed one makes a session's requests the same from one run to the next.
 	 */
 	tempDir?: string;
+	/**
+	 * The package folder Pi's system prompt names for its docs and examples (PI_PACKAGE_DIR), set for this harness and
+	 * restored at cleanup. Default: the checkout's. A fixed one makes a session's requests the same from any checkout
+	 * path.
+	 */
+	packageDir?: string;
 }
 
 export interface Harness {
@@ -156,6 +162,8 @@ function createTempDir(fixed?: string): string {
 
 export async function createHarness(options: HarnessOptions = {}): Promise<Harness> {
 	const tempDir = createTempDir(options.tempDir);
+	const packageDirBefore = process.env.PI_PACKAGE_DIR;
+	if (options.packageDir !== undefined) process.env.PI_PACKAGE_DIR = options.packageDir;
 	const fauxProvider: FauxProviderRegistration = registerFauxProvider({
 		provider: options.provider,
 		models: options.models,
@@ -276,6 +284,10 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 		cleanup() {
 			session.dispose();
 			fauxProvider.unregister();
+			if (options.packageDir !== undefined) {
+				if (packageDirBefore === undefined) delete process.env.PI_PACKAGE_DIR;
+				else process.env.PI_PACKAGE_DIR = packageDirBefore;
+			}
 			if (existsSync(tempDir)) {
 				rmSync(tempDir, { recursive: true });
 			}
