@@ -65,6 +65,10 @@ e2-corpus: dd30101cfc5b0609411dd80b6f93adbc14db14cf e917a3cbd38a1bd6ae8bb72a99be
 .pi/extensions/penpi/engine/state.ts	PENpi: context engine (ADR 0032)
 .pi/extensions/penpi/engine/telemetry.test.ts	PENpi: context engine (ADR 0032)
 .pi/extensions/penpi/engine/telemetry.ts	PENpi: context engine (ADR 0032)
+.pi/extensions/penpi/engine/tokenizers/classify.test.ts	PENpi: context engine tokenizers (0.9.0)
+.pi/extensions/penpi/engine/tokenizers/classify.ts	PENpi: context engine tokenizers (0.9.0)
+.pi/extensions/penpi/engine/tokenizers/table.test.ts	PENpi: context engine tokenizers (0.9.0)
+.pi/extensions/penpi/engine/tokenizers/table.ts	PENpi: context engine tokenizers (0.9.0)
 .pi/extensions/penpi/engine/tools/doctor.ts	PENpi: context engine (ADR 0032)
 .pi/extensions/penpi/engine/tools/notes.ts	PENpi: context engine (ADR 0032)
 .pi/extensions/penpi/engine/tools/recall.ts	PENpi: context engine (ADR 0032)
@@ -138,6 +142,7 @@ docs/adr/0033-marginal-pair.md	PENpi decision record
 docs/adr/0034-names-at-the-ratio-before-doubt.md	PENpi decision record
 docs/adr/0035-exact-repeat-within-the-allowance.md	PENpi decision record
 docs/adr/README.md	PENpi decision record
+docs/tokenizers.md	PENpi documentation
 package-lock.json	follows package.json (PENpi workspaces and pins; nothing for upstream's apps/); pi-mcp-adapter installed with --legacy-peer-deps (CONTRIBUTING.md); overrides include recheck 4.6.2 (pi-mcp-adapter pins 4.6.0-beta.3) and miniflare's undici 7.30.2
 package.json	PENpi version, workspaces (no apps/*), checks and pins, context engine suite and tokenizer scripts; no npm publishing or model-catalog scripts
 packages/ai/package.json	build uses the committed model-data snapshot (offline)
