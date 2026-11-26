@@ -10,12 +10,14 @@
  * it by the provider (a denser count, `extra`): exactly the maximum again, expected within the allowance below it.
  *
  * On honest providers: the same request sent again reports the same count, so the rule asks for a different request
- * than the one that set the maximum, by the requests' own estimates. And one honest repeat is weak evidence: it acts
- * with a second suspect, or with a growth marginal within the evidence span (ADR 0033).
+ * than the one that set the maximum: a different shape (its messages, by identity), or an estimate more than 0.5% from
+ * the maximum's. And one honest repeat is weak evidence: it acts with a second suspect, or with a growth marginal
+ * within the evidence span (ADR 0033).
  */
 
 import { fauxAssistantMessage, fauxText, fauxToolCall } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
+import type { ExtensionAPI } from "../../../src/core/extensions/types.ts";
 import { createHarness, type Harness } from "../harness.ts";
 import { createContextEngine, newStats } from "./engine.ts";
 import {
@@ -127,7 +129,7 @@ describe("0.9.0, ADR 0035: the exact repeat within the allowance, at session lev
 	});
 });
 
-describe("0.9.0, ADR 0035: the different-request guard compares the requests' own estimates", () => {
+describe("0.9.0, ADR 0035: the different-request guard compares the requests' own estimates, not their expected sizes", () => {
 	afterEach(() => {
 		while (harnesses.length > 0) harnesses.pop()?.cleanup();
 	});
@@ -180,6 +182,64 @@ describe("0.9.0, ADR 0035: the different-request guard compares the requests' ow
 		expect(Math.abs(expected - maxExpected) / expected).toBeGreaterThanOrEqual(0.005);
 		expect(expected).toBeLessThan(again.processedTokens);
 		expect(expected).toBeGreaterThanOrEqual(0.95 * again.processedTokens);
+	});
+	it("the same request sent again by a real session's route, an empty answer and then an entry that isn't sent, is no evidence", async () => {
+		const rows: Array<{ call: number; line: string }> = [];
+		let sim: ProviderSim | undefined;
+		let api: ExtensionAPI | undefined;
+		const harness = await createHarness({
+			models: [{ id: "srv", contextWindow: 32_000, maxTokens: 4_000 }],
+			settings: { compaction: { enabled: false } },
+			extensionFactories: [
+				workExtension,
+				(pi: ExtensionAPI) => {
+					api = pi;
+				},
+				createContextEngine({
+					stats: newStats(),
+					hiddenCustomTypes: ["unsent"],
+					log: (line: string) => rows.push({ call: (sim?.calls.length ?? 0) - 1, line }),
+				}),
+			],
+		});
+		harnesses.push(harness);
+		await harness.session.bindExtensions({});
+		const TOOLS = 14;
+		// Pi's converters skip the empty answer, but this simulator counts its characters: the resend is counted as the
+		// request it repeats.
+		sim = installProviderSim(harness, {
+			servedBy: (index) => {
+				if (index < TOOLS) return {};
+				if (index === TOOLS + 1) {
+					const first = sim!.calls[TOOLS];
+					return { offset: sim!.calls[index].promptTokens - first.promptTokens, scale: 1.04 };
+				}
+				return { scale: 1.04 };
+			},
+		});
+		const model = scriptedModel(harness);
+		for (let t = 0; t < TOOLS; t++)
+			model.push(() =>
+				fauxAssistantMessage(
+					[fauxText(`Step ${t}.`), fauxToolCall("work", { size: 4_000, seed: t }, { id: `call-${t}` })],
+					{ stopReason: "toolUse" },
+				),
+			);
+		// The answer to the largest request is empty: it sends nothing.
+		model.push(finalTurn(""));
+		await harness.session.prompt(`First task: ${syntheticText(1_600, 99).replace(/\s+/g, " ")}`);
+		model.push(finalTurn("done"));
+		api!.sendMessage(
+			{ customType: "unsent", content: "A reminder, not sent.", display: false },
+			{ triggerTurn: true },
+		);
+		await harness.session.waitForIdle();
+
+		expect(sim.calls).toHaveLength(TOOLS + 2);
+		const [first, again] = sim.calls.slice(TOOLS);
+		expect(again.processedTokens).toBe(first.processedTokens);
+		expect(rows.some((r) => r.line.includes("silent truncation evidence"))).toBe(false);
+		expect(rows.some((r) => r.call === TOOLS + 1 && r.line.includes("exact repeat not judged"))).toBe(true);
 	});
 });
 
@@ -280,5 +340,86 @@ describe("0.9.0, ADR 0035: one honest repeat is weak evidence (ADR 0033)", () =>
 		expect(lines.some((l) => l.includes("reported exactly the previous maximum") && l.includes("window ->"))).toBe(
 			true,
 		);
+	});
+});
+
+/**
+ * A server that silently truncates at exactly the count of the request that set the maximum (`holds`). The session
+ * grows to that request, then a large tool result makes the engine cut; the first request after the cut counts a
+ * little denser than the engine expects (`extra`), so it is truncated and reports exactly the maximum again. `early`
+ * is the size of the first step, which the cut drops: it moves the maximum-setter's estimate and not the post-cut
+ * request's, so the two can be brought within 0.5% of each other.
+ */
+async function postCut(early: number, GROW_TO = 9_000, lowWater?: number) {
+	const stats = newStats();
+	const rows: Array<{ call: number; line: string }> = [];
+	let sim: ProviderSim | undefined;
+	const harness = await createHarness({
+		models: [{ id: "srv", contextWindow: 22_000, maxTokens: 4_000 }],
+		settings: { compaction: { enabled: false } },
+		extensionFactories: [
+			workExtension,
+			createContextEngine({
+				stats,
+				...(lowWater !== undefined ? { lowWater } : {}),
+				log: (line: string) => rows.push({ call: (sim?.calls.length ?? 0) - 1, line }),
+			}),
+		],
+	});
+	harnesses.push(harness);
+	await harness.session.bindExtensions({});
+	let maxAt: number | undefined;
+	sim = installProviderSim(harness, {
+		servedBy: (index) => {
+			if (maxAt === undefined || index <= maxAt) return {};
+			return { holds: sim!.calls[maxAt].processedTokens, ...(index === maxAt + 1 ? { offset: -300 } : {}) };
+		},
+	});
+	const model = scriptedModel(harness);
+	for (let turn = 0; turn < 40; turn++)
+		model.push(() => {
+			const calls = sim!.calls;
+			let size = turn === 0 ? early : 4_000;
+			if (maxAt === undefined && (calls.at(-1)?.promptTokens ?? 0) >= GROW_TO) {
+				maxAt = calls.length - 1;
+				size = 56_000;
+			} else if (maxAt !== undefined) size = 160;
+			return fauxAssistantMessage(
+				[fauxText(`Step ${turn}.`), fauxToolCall("work", { size, seed: turn }, { id: `call-${turn}` })],
+				{ stopReason: "toolUse" },
+			);
+		});
+	model.push(finalTurn("done"));
+	await harness.session.prompt(`First task: ${syntheticText(1_600, 99).replace(/\s+/g, " ")}`);
+	const after = maxAt! + 1;
+	return {
+		rows,
+		sim,
+		maxAt: maxAt!,
+		after,
+		estimates: [stats.sent[maxAt!].estimate, stats.sent[after].estimate],
+		at: (call: number) => rows.filter((r) => r.call === call).map((r) => r.line),
+	};
+}
+
+describe("0.9.0, ADR 0035: the guard tells requests apart by their shape", () => {
+	afterEach(() => {
+		while (harnesses.length > 0) harnesses.pop()?.cleanup();
+	});
+
+	it("a truncated request after a cut, its estimate within 0.5% of the maximum's, reporting exactly the maximum, is evidence", async () => {
+		const r = await postCut(7_300, 9_000, 0.55);
+		const [maxEstimate, estimate] = r.estimates;
+		// What the estimate alone took for the same request: within 0.5% of the maximum-setter's.
+		expect(Math.abs(estimate - maxEstimate) / maxEstimate).toBeLessThan(0.005);
+		// A different request: the engine cut in it, so it is not the maximum-setter's shape.
+		expect(r.at(r.after - 1).some((l) => l.includes("cut #1"))).toBe(true);
+		// Truncated: the provider counted more than it holds, and reported exactly the maximum.
+		const call = r.sim.calls[r.after];
+		expect(call.promptTokens + 300).toBeGreaterThan(r.sim.calls[r.maxAt].processedTokens);
+		expect(call.processedTokens).toBe(r.sim.calls[r.maxAt].processedTokens);
+		const lines = r.at(r.after);
+		expect(lines.some((l) => l.includes("evidence 1/2: reported exactly the previous maximum"))).toBe(true);
+		expect(lines.some((l) => l.includes("exact repeat not judged"))).toBe(false);
 	});
 });

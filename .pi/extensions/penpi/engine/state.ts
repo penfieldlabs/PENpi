@@ -93,6 +93,7 @@ export interface ModelState {
 			maxReported: number;
 			maxExpected?: number;
 			maxEstimate?: number;
+			maxShape?: string;
 			suspects: ModelState["suspects"];
 			marginals?: ModelState["marginals"];
 		}
@@ -103,6 +104,8 @@ export interface ModelState {
 	maxExpected?: number;
 	/** The request estimate of the sample that set maxReported (a repeat of the same request is no evidence). */
 	maxEstimate?: number;
+	/** The shape hash of the request that set maxReported (lastSent.shapeHash). */
+	maxShape?: string;
 	/** Quarantined samples (evidence of silent truncation), with the sample count when seen. */
 	suspects: Array<{ reported: number; at: number; sample: number; why: string }>;
 	/**
@@ -220,6 +223,8 @@ export function newEngineState(faults: FaultConfig | undefined) {
 		lastSent: undefined as
 			| {
 					estimate: number;
+					/** SHA-1 of the request's shape keys (requestShape): which messages, by identity. */
+					shapeHash: string;
 					key: string;
 					seq: number;
 					appendOnly: boolean;

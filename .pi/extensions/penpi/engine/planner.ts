@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { AssistantMessage, ImageContent, TextContent } from "@earendil-works/pi-ai";
 import { getCurrentSystemMessage } from "@earendil-works/pi-ai";
 import type { ExtensionContext, ProjectedSessionEntry, SessionEntry } from "@earendil-works/pi-coding-agent";
@@ -880,6 +881,12 @@ export function installPlanner(core: EngineCore): void {
 		}
 		st.lastSent = {
 			estimate,
+			// The request's shape, the identities of the messages that send anything: the exact repeat's guard tells two
+			// requests apart by it. A message that sends nothing (an empty answer, which Pi's converters skip) leaves it as
+			// it was.
+			shapeHash: createHash("sha1")
+				.update(shape.keys.filter((_k, i) => sendsSomething(sentMessages[i])).join("\n"))
+				.digest("hex"),
 			key: limits.key,
 			seq: ++st.sendSeq,
 			appendOnly,
@@ -904,6 +911,22 @@ export function installPlanner(core: EngineCore): void {
 		if (result) return { messages: result };
 		return visible !== event.messages ? { messages: visible } : undefined;
 	});
+
+	/**
+	 * Whether a message sends anything: not priced at nothing, and not an answer with no text, tool call or reasoning
+	 * (Pi's converters skip one; Bedrock sends a placeholder, which a provider counts, so a repeat there is not exact).
+	 */
+	function sendsSomething(message: AgentMessage): boolean {
+		if (core.parts(message).tokens === 0) return false;
+		if (message.role !== "assistant") return true;
+		const content = (message as AssistantMessage).content;
+		return content.some(
+			(b) =>
+				(b.type === "text" && b.text.trim().length > 0) ||
+				b.type === "toolCall" ||
+				(b.type === "thinking" && (b.thinking.length > 0 || !!b.thinkingSignature)),
+		);
+	}
 
 	// ---------------------------------------------------------- boundaries (E2 b, E5, E6, H4)
 	function buildSlots(
