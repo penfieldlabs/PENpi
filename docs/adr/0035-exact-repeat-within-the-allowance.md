@@ -54,8 +54,11 @@ Chance does land on the maximum now and then. One repeat is weak evidence: it ac
 growth marginal within the evidence span (ADR 0033).
 
 **The same request sent again is no evidence.** An identical resend reports the same count, so the rule asks for a
-different request than the one that set the maximum: a different shape (the messages that send anything, by
-identity), or the requests' own estimates 0.5% or more apart. The shape is needed too: a different request, such as
+different request than the one that set the maximum: a different shape, or the requests' own estimates 0.5% or more
+apart. The shape is the messages that send anything: a session message by its identity, and the engine's own messages
+(the window header, the notice) and system messages (the engine's checkpoint among them) by their text. The engine
+rebuilds those with a new timestamp when it rebuilds its window, and the timestamp is never sent, so an identical
+request must not look different for it. The shape is needed too: a different request, such as
 the first after a cut, can land within 0.5% of the maximum's estimate, and if truncated it reports exactly the maximum.
 Their expected sizes are not enough. The ratio moves after every clean sample, so a resend's expected size moves too, and with the
 allowance below the maximum, a resend of a request first estimated 2.5% to about 6% low would pass. An overestimated one
@@ -120,6 +123,8 @@ different-request guard stops.
   guard has to stop at least 20 times in at least 10 sessions. For the exact repeat, that shape is a sample that
   reports exactly the maximum again for the same request, expected within the allowance below it, counted from the
   logged rows. The test counts it itself and prints "Power: N in M sessions".
+  A full run writes its part of the count, and `HONEST_POWER_SUM=1` adds the parts, checks they cover the 300 sessions
+  once, and asserts the bar.
 
 **How it runs:**
 - **By default (CI),** a slice that needs no corpus: the shapes mix, a 32k window, 10 seeds with their resends, the
@@ -129,6 +134,8 @@ different-request guard stops.
   its usage to 100 tokens. No supported provider is known to round, and the engine has no guard for one, so those
   sessions are recorded and not failed. Rounding turns an honest growth under 100 tokens into none, which the rule for an append
   with no growth reads as strong evidence (Results).
+- **Each session runs in a fixed folder,** named by its mix, window, seed and reporter, so running a session again
+  gives the same calls.
 
 ## The exact path, later
 
@@ -171,24 +178,24 @@ call:
   - `research.o200k.32k.silent-messages` on v1.5.0 to lag 2 (was 3);
   - on v1.4.0, the wrong name in `data.glm.32k.silent-front`, which is gone.
 - The honest test's full run, on the shipped engine, with both resend routes: 300 sessions, 0 detections.
-  - **Resends:** 2,213 reported the same count again (1,186 by a real session's route, 1,027 from the same point), 512
-    of them at the maximum. 187 more reported a different count and are left out.
-  - **Power:** the guard stopped a resend that reported the maximum again, expected below it, 22 times in 18 sessions.
-  - **One honest repeat** of the maximum by a different request was taken as evidence. It stayed one suspect and never
-    acted.
-  - **With the guard comparing expected sizes,** as it did before 0.9.0's final change, 14 of the same sessions detect,
+  - **Resends:** 2,212 reported the same count again (1,186 by a real session's route, 1,026 from the same point), 512
+    of them at the maximum. 188 more reported a different count and are left out.
+  - **Power:** the guard stopped a resend that reported the maximum again, expected below it, 24 times in 19 sessions.
+    The test's summing step adds the runs' parts and asserts the bar.
+  - **No honest repeat** is taken as evidence. Keyed by message identity, one was taken, in `mixed.48000.48`: the engine
+    rebuilt its window header with another timestamp, and the same request looked like a different one.
+  - **With the guard on expected sizes alone,** 14 of the same sessions detect,
     and 21 take a resend as evidence.
-  - **With usage rounded to 100:** 48 sessions detect (39 before the second resend route was added). 30 follow an
-    append the rounding shows as no growth (69 real tokens of 1,410 estimated, in one), and 18 a rounded repeat of
-    the maximum.
+  - **With usage rounded to 100:** 50 sessions detect. 26 act on an append the rounding shows as no growth, and 24 on
+    a rounded repeat of the maximum.
 
 ## Consequences
 
 - E2's known failure `data.o200k.32k.silent-front` (v1.5.1, lag 4, until 0.9.0) is gone, and its entry is removed.
 - `data.o200k.1m.silent-messages` stays at lag 4 on the v1.5.1 and v1.4.0 corpora.
 - Every new detection rule must pass the honest test's full run, under its bars, before it ships.
-- **A known limit: a provider that rounds its usage.** With usage rounded to 100 tokens, 48 of the honest test's 300
+- **A known limit: a provider that rounds its usage.** With usage rounded to 100 tokens, 50 of the honest test's 300
   sessions detect. An honest growth under 100 tokens rounds to none, and the rule for an append with no growth judges
   the append by its estimate, so a repetitive append priced high reads as strong evidence. No supported provider is
   known to round. Judging that rule by the floor instead would weaken it where it matters most, on a server that
-  reports exactly its limit. The exact path (0.10.0) judges it on the exact append, which ends the question.
+  reports exactly its limit. 0.9.0's exact path judges it on the exact append, which ends the question.
