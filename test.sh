@@ -83,5 +83,8 @@ for name in CI GITHUB_ACTIONS; do
 	[[ -z "$value" ]] || test_env+=("$name=$value")
 done
 
+# PENpi: npm test runs this script. With no arguments it runs test:workspaces; with arguments, those npm scripts
+# in turn (CI runs PENpi's and upstream's tests as separate steps). npm run test:live runs with your keys.
 echo "Running tests without API keys in isolated home: $test_root/home"
-env -i "${test_env[@]}" npm test
+if [[ $# -eq 0 ]]; then set -- test:workspaces; fi
+env -i "${test_env[@]}" bash -c 'for script; do npm run "$script" || exit; done' _ "$@"

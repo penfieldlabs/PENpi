@@ -11,8 +11,7 @@ release and whenever an auth/hook/tool path changes, since they need external se
 npm ci                 # install from the committed lockfile
 npm run build          # REQUIRED before check/test — see note
 npm run check          # biome lint/format + tsc + supply-chain checks + check:penpi (extension tsc)
-npm test               # all workspace tests
-npm test -w penpi      # just the PENpi extension suite
+npm test               # all workspace tests, isolated (./test.sh: no keys, a temporary home)
 npm audit --omit=dev   # production advisories — must be clean
 npm audit              # including dev advisories — must be clean
 npm audit signatures --omit=dev   # registry signatures/attestations — must verify
@@ -73,7 +72,16 @@ match. PENpi releases ship source only — see `.github/workflows/release.yml`.
 
 Once you already have a built tree, `npm run check` / `npm test` / `npm test -w penpi`
 are enough for an edit-test loop. All must be green before commit (husky) and in CI.
-Unit tests use fixtures only — they **never** touch real session logs or live network.
+Unit tests use fixtures only — they **never** touch real session logs.
+
+**`npm test` is isolated.** It runs `./test.sh`, which starts the tests with `env -i`, a
+temporary empty home and no API keys, OAuth tokens or cloud credentials. The provider tests
+that need a key or a token skip, and no request can carry one, so `npm test` can't spend
+money. It isn't offline: without keys, npm itself and a few tests still open connections
+(npm's registry, and openrouter.ai from pi-ai's tests), and `npm run setup:tokenizers` fetches
+from the npm registry and huggingface.co. **`npm run test:live`** runs the same tests with your
+environment, so the gated provider tests reach live APIs with your keys and can spend money. It
+refuses to start without `PI_LIVE_E2E=1`. It is the only way to run them.
 
 Covered by unit tests: config precedence, the context engine's settings, entry points and
 telemetry, `mcp-config` generation, `TokenManager` (single-flight and device-login guard),

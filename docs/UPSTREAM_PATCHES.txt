@@ -415,4 +415,7 @@ scripts/release-notes.mjs	accepts PENpi's changelog heading format; carries the 
 scripts/release-notes.test.mjs	tests a PENpi script
 scripts/release.mjs	bumps and tags PENpi's version, not upstream's
 scripts/release.test.mjs	tests a PENpi script
+scripts/test-live.mjs	PENpi: npm run test:live, the workspace tests with the caller's environment, only with PI_LIVE_E2E=1
+scripts/test-live.test.mjs	tests a PENpi script
 scripts/zod-override.test.mjs	tests a PENpi dependency override
+test.sh	PENpi: npm test runs it, and it takes npm script names (test:workspaces by default)
