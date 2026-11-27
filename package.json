@@ -41,6 +41,8 @@
 		"test:extension": "npm run test --workspace .pi/extensions/penpi",
 		"test:live": "node scripts/test-live.mjs",
 		"test:context-engine": "cd packages/coding-agent && vitest --run --config test/suite/context-engine/vitest.config.ts",
+		"test:context-engine:fast": "cd packages/coding-agent && vitest --run --config test/suite/context-engine/vitest.fast.config.ts",
+		"test:penpi": "./test.sh test:scripts test:extension test:context-engine:fast",
 		"setup:tokenizers": "packages/coding-agent/test/suite/context-engine-e2/setup-tokenizers.sh",
 		"test:scripts": "node --test scripts/*.test.mjs scripts/*.test.ts",
 		"test:mcp-conformance": "node packages/coding-agent/test/mcp-conformance/run.ts",

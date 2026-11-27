@@ -15,9 +15,8 @@ A Pi extension (`.pi/extensions/penpi/`) plus a few fork-level defaults. See
 - **The gate is law.** `npm run check` and `npm test` must pass before every commit; CI
   re-runs both. The husky pre-commit hook runs the lockfile check
   (`scripts/check-lockfile-commit.mjs`) and `npm run check` (formatting, lint, the dependency
-  and lockfile checks, `docs/UPSTREAM_PATCHES.txt`, tsc and `check:penpi`), and the browser
-  smoke check when `packages/ai`, `packages/web-ui` or the root package files are staged. It
-  does not run `npm test`: run it yourself. The extension is covered by
+  and lockfile checks, `docs/UPSTREAM_PATCHES.txt`, tsc, `check:penpi` and the browser smoke
+  check). It does not run `npm test`: run it yourself, or `npm run test:penpi` while you work. The extension is covered by
   `npm run check:penpi` (tsc) and biome.
 - **`npm test` is isolated.** It runs `./test.sh`: an empty environment (`env -i`), a temporary
   home, and no API keys, OAuth tokens or cloud credentials, so the provider tests that need them

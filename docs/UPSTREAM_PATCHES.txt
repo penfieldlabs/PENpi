@@ -34,7 +34,7 @@ e2-corpus: dd30101cfc5b0609411dd80b6f93adbc14db14cf e917a3cbd38a1bd6ae8bb72a99be
 .github/workflows/release.yml	PENpi source-only manual release, first-parent tag check
 .github/workflows/remove-labels-on-close.yml	deleted: upstream issue automation
 .gitignore	track the model-data snapshot; ignore .env.*, the runtime .pi/mcp.json and the local .cache/
-.husky/pre-commit	no apps/p2 check: PENpi deletes upstream's apps/
+.husky/pre-commit	no apps/p2 check: PENpi deletes upstream's apps/; no second browser smoke run, since npm run check has one
 .pi/extensions/import-repro.ts	deleted: upstream in-repo dev extension, would load in PENpi sessions
 .pi/extensions/penpi/README.md	PENpi extension
 .pi/extensions/penpi/__fixtures__/penfield-server.ts	PENpi extension
@@ -95,6 +95,7 @@ e2-corpus: dd30101cfc5b0609411dd80b6f93adbc14db14cf e917a3cbd38a1bd6ae8bb72a99be
 .pi/extensions/penpi/transcript-search.test.ts	PENpi extension
 .pi/extensions/penpi/transcript-search.ts	PENpi extension
 .pi/extensions/penpi/tsconfig.json	PENpi extension
+.pi/extensions/penpi/vitest.config.ts	PENpi extension: its tests load Pi from source
 .pi/settings.json	PENpi project defaults (compaction off)
 .pi/skills/p2-ui.md	deleted: upstream skill for apps/p2, which PENpi does not ship
 AGENTS.md	PENpi's agent rules (upstream's live in AGENTS.pi.md)
@@ -387,6 +388,7 @@ packages/coding-agent/test/suite/context-engine/v090-exact-scripts.test.ts	PENpi
 packages/coding-agent/test/suite/context-engine/v090-honest-detection.test.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/context-engine/v090-recall-hidden.test.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/context-engine/vitest.config.ts	PENpi: context engine behaviour suite (ADR 0032)
+packages/coding-agent/test/suite/context-engine/vitest.fast.config.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/harness.ts	PENpi: an optional fixed working folder, so the context engine's honest test can replay a session
 packages/coding-agent/test/suite/regressions/copilot-request-size-overflow.test.ts	upstream test adapted to PENpi's compaction-off default
 packages/coding-agent/test/suite/virtual-models.test.ts	upstream test adapted to PENpi's compaction-off default

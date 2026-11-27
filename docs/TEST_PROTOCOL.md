@@ -17,10 +17,13 @@ npm audit              # including dev advisories — must be clean
 npm audit signatures --omit=dev   # registry signatures/attestations — must verify
 ```
 
-**`npm run build` is not optional.** `@earendil-works/pi-coding-agent` resolves through
-`packages/coding-agent/dist`, which does not exist in a fresh checkout. Without it,
-`npm run check:penpi` and `npm test -w penpi` fail with
-`Failed to resolve entry for package "@earendil-works/pi-coding-agent"`.
+**`npm run build` is not optional for the gate.** `npm run check:penpi` type-checks the
+extension against the built types in `packages/coding-agent/dist`, which does not exist in a
+fresh checkout; without it, it fails with
+`Failed to resolve entry for package "@earendil-works/pi-coding-agent"`. The extension's tests
+don't need it: they load Pi from source (`.pi/extensions/penpi/vitest.config.ts`), as the engine
+suite does, all but `mcp-integration.test.ts`, which starts the built Pi and fails its
+prerequisite check without a build.
 
 **Install with `npm ci`, not `npm install`.** Regenerating the lockfile from scratch
 currently crashes npm 10.x in this workspace (`Cannot read properties of null (reading
@@ -90,8 +93,11 @@ match. PENpi releases ship source only — see `.github/workflows/release.yml`.
 
 ### Developer quick checks
 
-Once you already have a built tree, `npm run check` / `npm test` / `npm test -w penpi`
-are enough for an edit-test loop. All must be green before commit (husky) and in CI.
+For an edit-test loop, `npm run test:penpi` runs the scripts' tests, the extension's suite
+and the engine suite without its sweeps and honest runs (`vitest.fast.config.ts`), isolated as
+`npm test` is: about 13 minutes on two cores, where `npm test` takes about 76. It leaves out
+upstream's packages, the full sweeps, the honest test's full run and E2. `npm run check` and `npm test` must be green before commit (husky) and
+in CI.
 Unit tests use fixtures only — they **never** touch real session logs.
 
 **`npm test` is isolated.** It runs `./test.sh`, which starts the tests with `env -i`, a
