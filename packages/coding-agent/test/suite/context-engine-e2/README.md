@@ -87,6 +87,7 @@ Narrow the matrix for a quick look (all runs of one mix at 60 turns take about 1
 | `E2_WORKERS` | `2` | parallel vitest workers (one mix file each) |
 | `E2_OUT` | `.cache/results/<label>-<sha12>` | results directory |
 | `E2_SKIP_SETUP`, `E2_SKIP_SELFTEST` | | skip those steps |
+| `E2_FRESH` | | `1` reruns every run; by default a retry into the same results directory keeps the runs that passed under the same checkout, engine, corpus and settings, and reruns the missing, failed or changed ones (`resume.ts`) |
 | `E2_ASSERT=0` | | record FAILs without failing the vitest test (the summary still exits 1) |
 
 **Runtime on 2 cores** (`E2_WORKERS=2`, measured on the machine E2 was built on): one `run-e2.sh`

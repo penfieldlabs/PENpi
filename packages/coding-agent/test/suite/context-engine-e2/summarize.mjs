@@ -64,10 +64,14 @@ const mark = (c) =>
 
 function load(dir) {
 	const engine = existsSync(join(dir, "engine.json")) ? JSON.parse(readFileSync(join(dir, "engine.json"), "utf8")) : {};
+	// A resumed folder (resume.ts) lists the runs selected now: the kept ones and the new ones, nothing older.
+	const selection = existsSync(join(dir, ".selection"))
+		? new Set(readFileSync(join(dir, ".selection"), "utf8").split("\n").filter(Boolean))
+		: undefined;
 	const runs = readdirSync(dir)
 		.filter((f) => f.endsWith(".json") && !["engine.json", "summary.json", "selftest.json"].includes(f) && !f.startsWith("selftest"))
 		.map((f) => JSON.parse(readFileSync(join(dir, f), "utf8")))
-		.filter((m) => m.criteria && m.config)
+		.filter((m) => m.criteria && m.config && (!selection || selection.has(m.id)))
 		.sort((a, b) => a.id.localeCompare(b.id));
 	return { dir, engine, runs };
 }

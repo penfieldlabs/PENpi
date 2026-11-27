@@ -83,10 +83,16 @@ function sampleContext(): TranscriptContext {
 
 describe("E2 self-test", () => {
 	it("E2_REASONING_COUNT=ignored also sets the model's replayedReasoning, in reasoning runs only", () => {
-		const saved = { count: process.env.E2_REASONING_COUNT, modes: process.env.E2_MODES };
+		// The selection is the test's own: a run narrowed to other mixes, tokenizers or windows (the heavy runner, a
+		// resumed E2) would otherwise leave it no coding runs.
+		const names = ["E2_REASONING_COUNT", "E2_MODES", "E2_MIXES", "E2_TOKENIZERS", "E2_WINDOWS"] as const;
+		const saved = names.map((k) => [k, process.env[k]] as const);
 		try {
 			process.env.E2_REASONING_COUNT = "ignored";
 			process.env.E2_MODES = "reject,reasoning";
+			process.env.E2_MIXES = "coding";
+			delete process.env.E2_TOKENIZERS;
+			delete process.env.E2_WINDOWS;
 			const configs = matrixConfigs("coding");
 			const reasoning = configs.filter((c) => c.mode === "reasoning");
 			expect(reasoning.length).toBeGreaterThan(0);
@@ -95,10 +101,7 @@ describe("E2 self-test", () => {
 			for (const c of configs.filter((c) => c.mode !== "reasoning"))
 				expect(c.engineOptions.replayedReasoning).toBeUndefined();
 		} finally {
-			for (const [k, v] of [
-				["E2_REASONING_COUNT", saved.count],
-				["E2_MODES", saved.modes],
-			] as const)
+			for (const [k, v] of saved)
 				if (v === undefined) delete process.env[k];
 				else process.env[k] = v;
 		}

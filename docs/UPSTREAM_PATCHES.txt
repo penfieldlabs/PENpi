@@ -243,6 +243,8 @@ packages/coding-agent/test/suite/context-engine-e2/mixes.ts	PENpi: E2, the conte
 packages/coding-agent/test/suite/context-engine-e2/provider-sim.ts	PENpi: E2, the context engine against real tokenizers (ADR 0032)
 packages/coding-agent/test/suite/context-engine-e2/render-header.ts	PENpi: E2, the context engine against real tokenizers (ADR 0032)
 packages/coding-agent/test/suite/context-engine-e2/render.ts	PENpi: E2, the context engine against real tokenizers (ADR 0032)
+packages/coding-agent/test/suite/context-engine-e2/resume.test.ts	PENpi: E2, the context engine against real tokenizers (ADR 0032)
+packages/coding-agent/test/suite/context-engine-e2/resume.ts	PENpi: E2, the context engine against real tokenizers (ADR 0032)
 packages/coding-agent/test/suite/context-engine-e2/run-e2.sh	PENpi: E2, the context engine against real tokenizers (ADR 0032)
 packages/coding-agent/test/suite/context-engine-e2/runner.ts	PENpi: E2, the context engine against real tokenizers (ADR 0032)
 packages/coding-agent/test/suite/context-engine-e2/setup-tokenizers.sh	PENpi: E2, the context engine against real tokenizers (ADR 0032)

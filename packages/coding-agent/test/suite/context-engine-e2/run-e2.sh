@@ -12,6 +12,8 @@
 # Selection and knobs (see matrix.ts): E2_MIXES E2_TOKENIZERS E2_WINDOWS E2_MODES E2_TURNS E2_SEED
 # E2_SILENT_LIMIT E2_ENGINE_OPTIONS E2_PROBE_CONFIRMATIONS; E2_WORKERS (parallel vitest workers, default 2);
 # E2_OUT (results directory); E2_SKIP_SETUP=1 (tokenizers already installed); E2_SKIP_SELFTEST=1.
+# A retry keeps the runs that passed and reruns only the missing, failed or changed ones (resume.ts says which);
+# E2_FRESH=1 starts over.
 # E2_SCRATCH (temp files and the sessions' working directory; default /tmp/penpi-e2-scratch, see below).
 set -uo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -50,7 +52,10 @@ export E2_ENGINE="$snapentry" E2_ENGINE_LABEL="$label" E2_ENGINE_SOURCE="$src"
 out="${E2_OUT:-${E2_OUT_ROOT:-$here/.cache/results}/$label-${sha:0:12}}"
 export E2_OUT="$out"
 mkdir -p "$out"
-rm -f "$out"/*.json "$out"/*.engine.log "$out"/*.dropped.jsonl "$out"/summary.md "$out"/vitest.log
+node "$here/resume.ts" start "$out" "$sha" || { echo "E2: could not start the attempt in $out" >&2; exit 3; }
+E2_RESUME=0
+[ -e "$out/.resuming" ] && E2_RESUME=1
+export E2_RESUME
 echo "E2: engine $label sha256 $sha ($nfiles files, from $src); results in $out; scratch $E2_SCRATCH"
 
 # Expected number of runs for the summary check.
@@ -65,6 +70,7 @@ files=(test/suite/context-engine-e2/e2-coding.e2.ts test/suite/context-engine-e2
 cd "$pkg"
 npx vitest --run --config test/suite/context-engine-e2/vitest.config.ts "${files[@]}" 2>&1 | tee "$out/vitest.log"
 vitest_exit=${PIPESTATUS[0]}
+node "$here/resume.ts" report "$out"
 
 E2_EXPECT_RUNS=$expect E2_DEFAULT_MATRIX=$default_matrix node "$here/summarize.mjs" "$out"
 summary_exit=$?
