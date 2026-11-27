@@ -425,9 +425,11 @@ export const REASONING_RULES: PinnedRule[] = [
 		ids: /deepseek-v4/,
 		examples: ["deepseek/deepseek-v4-pro", "deepseek/deepseek-v4-flash", "deepseek-v4-pro-0813"],
 		templates: [],
+		templateTokens: { call: 2, argument: 18 },
 		note:
 			"no template: encoding/encoding_dsv4.py in deepseek-ai/DeepSeek-V4-Pro at b5968e9190ef611bbf34a7229255be88a0e937c1 " +
-			"keeps every turn's reasoning when tools are sent (effective_drop_thinking is false with tools), as DeepSeek's API docs say",
+			"keeps every turn's reasoning when tools are sent (effective_drop_thinking is false with tools), as DeepSeek's API docs say; " +
+			"the template terms are V4.1 Flash's measure, since encoding_dsv4.py renders the same DSML lines per call and argument",
 	},
 	{
 		rule: "drop",
