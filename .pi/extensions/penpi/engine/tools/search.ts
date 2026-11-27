@@ -1,5 +1,5 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { EngineCore } from "../core.ts";
 import { type AgentMessage, textOfContent } from "../estimator.ts";
@@ -34,6 +34,18 @@ function clip(text: string, max: number): string {
  * its call's label and entry, `resultOfBlock` maps "<call entry>#<block index>" to the result entry. context_search
  * names a call's result; context_recall (0.6.1) returns it with the call.
  */
+/**
+ * Whether the lookup tools may show an entry: one that contributes messages, and not one the host never sends. A
+ * message the host never sends (hiddenCustomTypes: PENpi 0.4's briefing, Penfield memory) and a system message are
+ * neither a search result nor recalled: their text would come back as tool output outside the fence.
+ */
+export function lookupReadable(entry: SessionEntry, hiddenCustomTypes: readonly string[]): boolean {
+	if (!contributesMessages(entry)) return false;
+	if (entry.type === "custom_message") return !hiddenCustomTypes.includes(entry.customType);
+	if (entry.type === "message") return (entry.message as { role?: string }).role !== "system";
+	return true;
+}
+
 export function pairToolResults(branch: ReturnType<ExtensionContext["sessionManager"]["getBranch"]>): {
 	callOfResult: Map<string, { label: string; entry: string }>;
 	resultOfBlock: Map<string, string>;
@@ -111,10 +123,7 @@ export function installSearch(core: EngineCore): void {
 		let assistants = 0;
 		for (let i = 0; i < branch.length; i++) {
 			const entry = branch[i];
-			if (!contributesMessages(entry)) continue;
-			// A message the host never sends (hiddenCustomTypes: PENpi 0.4's briefing, Penfield memory) is not a
-			// search result either: its text would come back as tool output outside the fence.
-			if (entry.type === "custom_message" && opts.hiddenCustomTypes.includes(entry.customType)) continue;
+			if (!lookupReadable(entry, opts.hiddenCustomTypes)) continue;
 			let role: string = entry.type === "custom_message" ? `custom(${entry.customType})` : "branch summary";
 			let text = "";
 			let results: string[] = [];
@@ -122,7 +131,6 @@ export function installSearch(core: EngineCore): void {
 			let callEntry: string | undefined;
 			if (entry.type === "message") {
 				const message = entry.message as AgentMessage & { toolName?: string; content?: unknown };
-				if (message.role === "system") continue;
 				if (message.role === "assistant") assistants++;
 				// The engine's own lookups are copies of other entries (or the query itself): skip them.
 				if (message.role === "toolResult" && (message.toolName === SEARCH_TOOL || message.toolName === RECALL_TOOL))

@@ -3,11 +3,10 @@ import { Type } from "typebox";
 import type { EngineCore } from "../core.ts";
 import { type Block, textOfContent, textTokens } from "../estimator.ts";
 import { RECALL_TOOL, SEARCH_TOOL } from "../options.ts";
-import { contributesMessages } from "../planner.ts";
-import { pairToolResults } from "./search.ts";
+import { lookupReadable, pairToolResults } from "./search.ts";
 
 export function installRecall(core: EngineCore): void {
-	const { pi } = core;
+	const { pi, opts } = core;
 
 	pi.registerTool({
 		name: RECALL_TOOL,
@@ -22,7 +21,9 @@ export function installRecall(core: EngineCore): void {
 		}),
 		execute: async (_id, params, _signal, _onUpdate, ctx) => {
 			const entry = ctx.sessionManager.getEntry(params.entry);
-			if (!entry || !contributesMessages(entry)) throw new Error(`No readable entry ${params.entry}`);
+			// What search hides, recall refuses, with the error of a missing entry: the answer doesn't say it exists.
+			if (!entry || !lookupReadable(entry, opts.hiddenCustomTypes))
+				throw new Error(`No readable entry ${params.entry}`);
 			const content =
 				entry.type === "message"
 					? (entry.message as { content?: unknown }).content
@@ -74,6 +75,8 @@ export function installRecall(core: EngineCore): void {
 						return;
 					}
 					const result = ctx.sessionManager.getEntry(resultId);
+					// A paired result is a tool result; the check keeps the last page from ever reaching a hidden entry.
+					if (!result || !lookupReadable(result, opts.hiddenCustomTypes)) return;
 					const resultText =
 						result?.type === "message" ? textOfContent((result.message as { content?: unknown }).content) : "";
 					const inline = `[result of ${block.name}: entry ${resultId}, ${resultText.length} characters]\n${resultText}`;
