@@ -706,6 +706,60 @@ export function anthropicPayload(context: TranscriptContext): Record<string, unk
 	return { messages, system: [{ type: "text", text: "SYSTEM" }] };
 }
 
+/**
+ * 0.9.0 count APIs: a Gemini generateContent payload for a request, as Pi's converter shapes it: the assistant as
+ * "model" with functionCall parts (each with a thoughtSignature when `signed`, as Gemini 4 returns them), tool results
+ * as user functionResponse parts, consecutive ones merged, images as inlineData parts, and the system prompt in config.
+ */
+export function geminiPayload(context: TranscriptContext, options: { signed?: boolean } = {}): Record<string, unknown> {
+	type Part = Record<string, unknown>;
+	const contents: Array<{ role: string; parts: Part[] }> = [];
+	const parts = (content: unknown): Part[] =>
+		typeof content === "string"
+			? [{ text: content }]
+			: Array.isArray(content)
+				? (content as Array<{ type: string; text?: string; mimeType?: string }>).flatMap((b): Part[] =>
+						b.type === "text"
+							? [{ text: b.text ?? "" }]
+							: b.type === "image"
+								? [{ inlineData: { mimeType: b.mimeType, data: "" } }]
+								: [],
+					)
+				: [];
+	for (const m of context.messages) {
+		if (m.role === "system") continue;
+		if (m.role === "toolResult") {
+			const own = parts(m.content);
+			const text = own
+				.filter((p) => "text" in p)
+				.map((p) => p.text)
+				.join("");
+			const part: Part = { functionResponse: { name: m.toolName, id: m.toolCallId, response: { output: text } } };
+			const last = contents.at(-1);
+			if (last?.role === "user" && last.parts.some((p) => p.functionResponse)) last.parts.push(part);
+			else contents.push({ role: "user", parts: [part] });
+			for (const image of own.filter((p) => "inlineData" in p)) contents.at(-1)!.parts.push(image);
+		} else if (m.role === "assistant") {
+			contents.push({
+				role: "model",
+				parts: m.content.flatMap((b): Part[] =>
+					b.type === "text"
+						? [{ text: b.text }]
+						: b.type === "toolCall"
+							? [
+									{
+										functionCall: { name: b.name, args: b.arguments, id: b.id },
+										...(options.signed ? { thoughtSignature: "c2ln" } : {}),
+									},
+								]
+							: [],
+				),
+			});
+		} else contents.push({ role: "user", parts: parts((m as { content?: unknown }).content) });
+	}
+	return { contents, config: { systemInstruction: "SYSTEM" } };
+}
+
 export function countEntries(harness: Harness): Record<string, number> {
 	const counts: Record<string, number> = {};
 	for (const entry of harness.sessionManager.getEntries()) {

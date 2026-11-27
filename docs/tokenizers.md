@@ -128,10 +128,10 @@ Of pi-ai's 1,698 chat models, 847 (49.9%) have a file:
 
 ## Provider count APIs
 
-Claude has no public tokenizer, so on a direct key its count API is its exact path: the
-`countApi` setting in the `penpi` block, `"auto"` (default) or `"off"`.
-- **Where it applies:** Anthropic's own API with an API key. A login, OpenRouter, Bedrock, Vertex,
-  Foundry or a proxy at another address stays on the estimate.
+Claude and Gemini have no public tokenizer, so on a direct key their count APIs are their exact
+path: the `countApi` setting in the `penpi` block, `"auto"` (default) or `"off"`.
+- **Where it applies:** Anthropic's own API, or Google's Gemini API, with an API key. A login,
+  OpenRouter, Bedrock, Vertex, Foundry or a proxy at another address stays on the estimate.
 - **What it sends:** each counted request's body, as the engine's `before_provider_request` handler
   sees it, to `count_tokens` at the same provider, with the request's betas and without its
   output fields or a `thread` field. Counting is free. It runs beside the request, never before it.
@@ -140,6 +140,13 @@ Claude has no public tokenizer, so on a direct key its count API is its exact pa
   largest usage, and the one before each, are counted.
 - **When it stops:** a 429 pauses it (Retry-After, or 60 s); three other failures in a row turn it
   off for the session, with one notice naming the reason, a refused beta among them.
+- **Gemini:** `countTokens` gets the request's contents, system instruction and tools, with the
+  key in the `x-goog-api-key` header, never in the URL. Gemini 4 counts an image above what it
+  bills, so an image appended is judged on the estimate's rules, and while the history holds one
+  the exact repeat and the absolute bound are off. It counts a tool call that carries its
+  `thoughtSignature` 8 tokens below billed: the allowance for that is on the surplus side only, and
+  on totals it hides a truncation under 8 tokens a call in the history, about 1,600 tokens at 200
+  calls. Flash counts exactly.
 - **A known limit:** an extension loaded after PENpi that changes the payload makes the count wrong.
   A constant change keeps the exactness gate unset, which is safe; one that varies and removes
   content can read as a shortfall.

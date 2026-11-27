@@ -1,7 +1,7 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { ExtensionContext, SessionBoundaryDraft } from "@earendil-works/pi-coding-agent";
 import type { EngineCore } from "./core.ts";
-import { COUNT_API_TOLERANCE } from "./countapi.ts";
+import { COUNT_API_TOLERANCE, GEMINI_SIGNED_CALL_ALLOWANCE, GEMINI_SIGNED_CALL_EXCESS } from "./countapi.ts";
 import { STATE_TYPE, type TruncatedTurn } from "./options.ts";
 import type { ModelState } from "./state.ts";
 import type { TemplateTokens } from "./tokenizers/reasoning.ts";
@@ -293,17 +293,31 @@ export function installDetector(core: EngineCore): void {
 		const tol = (messages: number, calls = 0, args = 0) =>
 			counted ? COUNT_API_TOLERANCE : exactTolerance(sent.exactEntry, messages, sent.exactTemplate, calls, args);
 		const appended = () => tol(ex.appendedMessages, ex.appendedCalls, ex.appendedArguments);
+		// Gemini 4 bills a tool call with its thoughtSignature above the count: allowed on the surplus side only, so it
+		// never widens the window a truncation could hide in.
+		const surplusAllowance = counted?.kind === "gemini" ? GEMINI_SIGNED_CALL_ALLOWANCE * ex.appendedCalls : 0;
+		// Gemini 4 counts an image above billed: while the history holds one, the bound and the repeat are off.
+		const imageOffset = counted?.kind === "gemini" && counted.images > 0;
 		const consecutive = !!prev && prev.seq === sent.seq - 1 && sent.appendOnly && !sent.afterLengthStop && !switched;
 		const delta = consecutive ? reported - prev!.reported : 0;
 		const exactDelta =
 			consecutive && prev!.exactRendered !== undefined ? ex.rendered - prev!.exactRendered : undefined;
 		const judged = exactDelta !== undefined && !ex.fallback && ex.appendedBand <= 0.25 * Math.max(exactDelta, 0);
-		// A count API's totals check is two-sided, so a generation with a constant excess never sets the gate.
-		const totals = counted ? Math.abs(reported - ex.text) <= COUNT_API_TOLERANCE : reported >= ex.text - ex.band;
+		// A count API's totals check is two-sided, so a generation with a constant excess never sets the gate. Gemini's
+		// signed calls in the history bill above the count, and its images below it.
+		const totals = counted
+			? (imageOffset || reported >= ex.text - COUNT_API_TOLERANCE) &&
+				reported <=
+					ex.text +
+						COUNT_API_TOLERANCE +
+						(counted.kind === "gemini" ? GEMINI_SIGNED_CALL_EXCESS * counted.signedCalls : 0)
+			: reported >= ex.text - ex.band;
 		if (!gate.set) {
 			// An append with an image can't show a match: the provider prices images by its own rule.
 			if (!judged || ex.appendedImages) return none;
-			const matches = Math.abs(delta - exactDelta!) <= appended() + ex.appendedBand && totals;
+			const off = delta - exactDelta!;
+			const matches =
+				off >= -(appended() + ex.appendedBand) && off <= appended() + ex.appendedBand + surplusAllowance && totals;
 			gate.matches = matches ? gate.matches + 1 : 0;
 			if (gate.matches >= EXACT_GATE_SAMPLES) {
 				gate.set = true;
@@ -317,7 +331,7 @@ export function installDetector(core: EngineCore): void {
 		}
 		// The absolute bound: a sample under its own text count is truncated, whatever its delta.
 		const bound = ex.text - ex.band - appended() - EXACT_DRIFT_SHARE * ex.text;
-		if (reported < bound)
+		if (!imageOffset && reported < bound)
 			return {
 				path: true,
 				suspect: `reported ${reported}, under the request's exact text count ${ex.text} (band ${ex.band}, so at least ${Math.round(bound)})`,
@@ -327,7 +341,7 @@ export function installDetector(core: EngineCore): void {
 			const shortfall = exactDelta! - delta - ex.appendedBand;
 			const t = appended() + Math.round(EXACT_DRIFT_SHARE * Math.max(exactDelta!, 0));
 			// A surplus is a count error, unless the append's images made it: those only add to what the provider reports.
-			if (!ex.appendedImages && delta - exactDelta! > t + ex.appendedBand) {
+			if (!ex.appendedImages && delta - exactDelta! > t + ex.appendedBand + surplusAllowance) {
 				log(
 					`exact count off: reported usage grew ${delta} for an exact append of ${exactDelta} (tolerance ${t}); a fallback sample`,
 				);
@@ -343,7 +357,7 @@ export function installDetector(core: EngineCore): void {
 		}
 		// The exact repeat, reversed: an honest request whose exact size is the maximum's reports exactly the maximum; a
 		// truncated one is over it.
-		if (reported === state.maxReported && state.maxRendered !== undefined && !sent.afterLengthStop) {
+		if (!imageOffset && reported === state.maxReported && state.maxRendered !== undefined && !sent.afterLengthStop) {
 			const over = ex.rendered - state.maxRendered;
 			if (over > tol(1))
 				return {

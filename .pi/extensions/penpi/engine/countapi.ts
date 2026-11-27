@@ -1,7 +1,7 @@
 /**
- * 0.9.0: the provider count APIs (design section 6), the exact path for a family with no public tokenizer, on a direct
- * key: Claude's `count_tokens` (Anthropic's own API). OpenRouter, the cloud platforms, a login and offline stay on the
- * fallback path.
+ * 0.9.0: the provider count APIs (design section 6), the exact path for the two families with no public tokenizer, on
+ * a direct key: Claude's `count_tokens` (Anthropic's own API) and Gemini's `countTokens` (Google's Gemini API with an
+ * API key). OpenRouter, the cloud platforms, a login and offline stay on the fallback path.
  *
  * - **The setting:** `countApi` "auto" (default) or "off". "off" keeps every sample on the fallback rules.
  * - **What is counted:** the payload as the engine's `before_provider_request` handler sees it, sent to the provider
@@ -21,6 +21,12 @@
  * - **Claude:** the body without the output fields, `max_tokens` among them, and never a `thread` field; the request's
  *   betas as the `anthropic-beta` header. A response served by another model than the one asked for, or by an unnamed
  *   model when the request names fallbacks, is a fallback sample.
+ * - **Gemini:** the `contents`, `systemInstruction` and `tools`, as a `generateContentRequest`, with the key only in
+ *   the `x-goog-api-key` header, never in the URL. Gemini 4 counts an image above billed (29 measured), so an append
+ *   with an image is a fallback sample, and while the history holds one the absolute bound and the exact repeat are
+ *   off. It counts a tool call with its `thoughtSignature` below billed (8 measured): an appended one is allowed
+ *   GEMINI_SIGNED_CALL_ALLOWANCE on the surplus side only, and billed may run GEMINI_SIGNED_CALL_EXCESS above the count
+ *   per one in the history (detector.ts). Flash counts exactly; each generation has its own key, by model.
  * - **Detection:** a counted sample is an exact sample (detector.ts judgeExact): its count is the request's whole
  *   rendered size and its text count, with COUNT_API_TOLERANCE a request.
  */
@@ -42,7 +48,12 @@ export const COUNT_API_FAILURES = 3;
 export const COUNT_API_BIG_BODY = 1_000_000;
 /** A request is near the largest usage when its expected size is within this share of it. */
 export const COUNT_API_BAND = 0.15;
-export type CountApiKind = "claude";
+/** Gemini 4: billed tokens above the count per tool call with its thoughtSignature in the history. */
+export const GEMINI_SIGNED_CALL_EXCESS = 8;
+/** Gemini 4: the surplus allowance a signed tool call appended adds to a delta (never to the shortfall side). */
+export const GEMINI_SIGNED_CALL_ALLOWANCE = 16;
+
+export type CountApiKind = "claude" | "gemini";
 
 /** Where a model's count goes: its endpoint and the headers that carry the key. */
 export interface CountTarget {
@@ -72,6 +83,9 @@ export interface CountSlot {
 	model: string;
 	fallbacksNamed: boolean;
 	bytes: number;
+	/** Gemini: tool calls with a thoughtSignature, and images, in the payload. */
+	signedCalls: number;
+	images: number;
 	/** The count, once it settles; or why there is none. */
 	total?: number;
 	failed?: string;
@@ -87,6 +101,9 @@ export interface CountSlot {
 /** What detection reads of a counted sample (lastSent.countApi). */
 export interface CountedSample {
 	kind: CountApiKind;
+	/** Gemini: tool calls with a thoughtSignature, and images, in the request. */
+	signedCalls: number;
+	images: number;
 }
 
 export interface CountApiStats {
@@ -163,9 +180,24 @@ function textOf(content: unknown): string {
 		.trim();
 }
 
-/** The payload's end, in the planned tail's shape: Anthropic's messages. */
-export function payloadTail(_kind: CountApiKind, payload: Json): PlannedTail | undefined {
+/** The payload's end, in the planned tail's shape: Anthropic's messages, or Gemini's contents. */
+export function payloadTail(kind: CountApiKind, payload: Json): PlannedTail | undefined {
 	const tail: PlannedTail = { toolIds: [], toolNames: [] };
+	if (kind === "gemini") {
+		const contents = payload.contents;
+		if (!Array.isArray(contents) || contents.length === 0) return undefined;
+		const last = contents.at(-1) as {
+			parts?: Array<{ text?: string; functionResponse?: { id?: string; name?: string } }>;
+		};
+		const parts = Array.isArray(last.parts) ? last.parts : [];
+		for (const p of parts)
+			if (p.functionResponse) {
+				tail.toolIds.push(p.functionResponse.id ?? "");
+				tail.toolNames.push(p.functionResponse.name ?? "");
+			}
+		if (tail.toolIds.length === 0) tail.text = textOf(parts.map((p) => ({ text: p.text })));
+		return tail;
+	}
 	const messages = payload.messages;
 	if (!Array.isArray(messages) || messages.length === 0) return undefined;
 	const last = messages.at(-1) as { content?: unknown };
@@ -191,7 +223,8 @@ export function tailsMatch(planned: PlannedTail, found: PlannedTail | undefined)
 
 /** Whether a payload is the cache warmer's: an output limit of 1. */
 export function isWarmPayload(payload: Json): boolean {
-	return payload.max_tokens === 1;
+	const config = (isObject(payload.config) ? payload.config : {}) as Json;
+	return payload.max_tokens === 1 || config.maxOutputTokens === 1;
 }
 
 /** Fields of a Messages request that `count_tokens` doesn't take, or that don't change the count. */
@@ -211,19 +244,51 @@ const CLAUDE_OUTPUT_FIELDS = [
 
 /** The count's body and extra headers, from the payload at the engine's handler. */
 export function countBody(
-	_kind: CountApiKind,
+	kind: CountApiKind,
 	payload: Json,
-	_model: string,
+	model: string,
 ): { body: Json; headers: Record<string, string> } {
+	if (kind === "gemini") {
+		const config = (isObject(payload.config) ? payload.config : {}) as Json;
+		const system = config.systemInstruction;
+		return {
+			body: {
+				generateContentRequest: {
+					model: `models/${model}`,
+					contents: payload.contents,
+					...(system === undefined
+						? {}
+						: { systemInstruction: typeof system === "string" ? { parts: [{ text: system }] } : system }),
+					...(config.tools === undefined ? {} : { tools: config.tools }),
+				},
+			},
+			headers: {},
+		};
+	}
 	const body: Json = {};
 	for (const [k, v] of Object.entries(payload)) if (!CLAUDE_OUTPUT_FIELDS.includes(k)) body[k] = v;
 	const betas = Array.isArray(payload.betas) ? (payload.betas as unknown[]).filter((b) => typeof b === "string") : [];
 	return { body, headers: betas.length ? { "anthropic-beta": betas.join(",") } : {} };
 }
 
+/** Gemini: the tool calls carrying a thoughtSignature, and the images, in a payload's contents. */
+export function geminiHistory(payload: Json): { signedCalls: number; images: number } {
+	let signedCalls = 0;
+	let images = 0;
+	const contents = Array.isArray(payload.contents) ? payload.contents : [];
+	for (const c of contents as Array<{ parts?: Json[] }>)
+		for (const p of Array.isArray(c.parts) ? c.parts : []) {
+			if (p.functionCall && p.thoughtSignature) signedCalls++;
+			if (isObject(p.inlineData) && String(p.inlineData.mimeType ?? "").startsWith("image/")) images++;
+			if (isObject(p.functionResponse) && Array.isArray(p.functionResponse.parts))
+				for (const q of p.functionResponse.parts as Json[]) if (isObject(q.inlineData)) images++;
+		}
+	return { signedCalls, images };
+}
+
 /** The count in a count API's answer. */
 function totalOf(kind: CountApiKind, answer: unknown): number | undefined {
-	const n = isObject(answer) && kind === "claude" ? answer.input_tokens : undefined;
+	const n = isObject(answer) ? (kind === "claude" ? answer.input_tokens : answer.totalTokens) : undefined;
 	return typeof n === "number" && Number.isFinite(n) && n > 0 ? n : undefined;
 }
 
@@ -234,23 +299,32 @@ export interface CountRegistry {
 }
 
 /**
- * Where a model's count goes on a direct key: Anthropic's own API with an API key, not a login (OAuth), OpenRouter, a
- * cloud platform or a proxy at another address. Undefined for every other route.
+ * Where a model's count goes on a direct key: Anthropic's own API, or Google's Gemini API, with an API key; not a login
+ * (OAuth), OpenRouter, a cloud platform (Vertex among them) or a proxy at another address. Undefined for every other
+ * route. Gemini's key goes in the x-goog-api-key header, never in the URL.
  */
 export async function directCountTarget(
 	model: Model<Api>,
 	registry: CountRegistry | undefined,
 ): Promise<CountTarget | undefined> {
-	const host = "api.anthropic.com";
-	if (model.api !== "anthropic-messages" || model.provider !== "anthropic" || hostOf(model.baseUrl) !== host)
-		return undefined;
+	const claude = model.api === "anthropic-messages" && model.provider === "anthropic";
+	const gemini = model.api === "google-generative-ai" && model.provider === "google";
+	if (!claude && !gemini) return undefined;
+	const host = claude ? "api.anthropic.com" : "generativelanguage.googleapis.com";
+	if (hostOf(model.baseUrl) !== host) return undefined;
 	if (!registry || registry.isUsingOAuth(model)) return undefined;
 	const auth = (await registry.getProviderAuth(model.provider).catch(() => undefined))?.auth;
 	if (!auth?.apiKey || (auth.baseUrl && hostOf(auth.baseUrl) !== host)) return undefined;
-	const base = (auth.baseUrl ?? model.baseUrl).replace(/\/+$/, "").replace(/\/v1$/, "");
+	const base = (auth.baseUrl ?? model.baseUrl).replace(/\/+$/, "");
+	if (gemini)
+		return {
+			kind: "gemini",
+			url: `${base}/models/${encodeURIComponent(model.id)}:countTokens`,
+			headers: { "x-goog-api-key": auth.apiKey },
+		};
 	return {
 		kind: "claude",
-		url: `${base}/v1/messages/count_tokens`,
+		url: `${base.replace(/\/v1$/, "")}/v1/messages/count_tokens`,
 		headers: { "x-api-key": auth.apiKey, "anthropic-version": "2023-06-01" },
 	};
 }
@@ -379,6 +453,7 @@ export function installCountApi(core: EngineCore): void {
 				model,
 				fallbacksNamed: Array.isArray(payload.fallbacks) && payload.fallbacks.length > 0,
 				bytes,
+				...(t.kind === "gemini" ? geminiHistory(payload) : { signedCalls: 0, images: 0 }),
 			};
 			sent.count = slot;
 			const keep =
@@ -437,12 +512,15 @@ export function installCountApi(core: EngineCore): void {
 				}
 				return;
 			}
-			if (slot.served !== undefined && slot.served !== slot.model)
-				return void log(`count API: served by ${slot.served}, not ${slot.model}; a fallback sample`);
-			if (slot.served === undefined && slot.fallbacksNamed)
-				return void log(
-					"count API: the request names fallback models and the response names none; a fallback sample",
-				);
+			// Claude: the served model (Gemini's stream names a dated build, not the id asked for).
+			if (slot.kind === "claude") {
+				if (slot.served !== undefined && slot.served !== slot.model)
+					return void log(`count API: served by ${slot.served}, not ${slot.model}; a fallback sample`);
+				if (slot.served === undefined && slot.fallbacksNamed)
+					return void log(
+						"count API: the request names fallback models and the response names none; a fallback sample",
+					);
+			}
 			const counts = sent.appendedCounts ?? { messages: 0, calls: 0, args: 0 };
 			const request: ExactRequest = {
 				rendered: slot.total,
@@ -450,10 +528,13 @@ export function installCountApi(core: EngineCore): void {
 				band: 0,
 				appendedMessages: counts.messages,
 				appendedBand: 0,
-				// Claude counts images as it bills them.
+				// Claude counts images as it bills them; Gemini 4 above, so an image appended is a fallback sample there.
 				appendedImages: false,
 				appendedCalls: counts.calls,
 				appendedArguments: counts.args,
+				...(slot.kind === "gemini" && sent.appendedImages > 0
+					? { fallback: "an image appended (Gemini counts images above billed)" }
+					: {}),
 			};
 			sent.exactRequest = request;
 			sent.exact = slot.total;
@@ -461,7 +542,7 @@ export function installCountApi(core: EngineCore): void {
 			sent.exactAssumed = false;
 			sent.exactEntry = undefined;
 			sent.exactTemplate = undefined;
-			sent.countApi = { kind: slot.kind };
+			sent.countApi = { kind: slot.kind, signedCalls: slot.signedCalls, images: slot.images };
 		},
 	};
 }
