@@ -392,6 +392,17 @@ export interface SimOptions {
 	 * provider counts of a cut answer is provider-specific).
 	 */
 	cutAnswerShare?: number;
+	/**
+	 * 0.9.0 count APIs: fields merged into the synthetic payload, built from the request (anthropicPayload makes an
+	 * Anthropic-shaped one), so the engine's count API client sees a payload to match and count.
+	 */
+	payload?: (context: TranscriptContext, model: Model<string>, callIndex: number) => Record<string, unknown>;
+	/** 0.9.0: provider stream data emitted before the response (a Messages message_start naming the served model). */
+	streamData?: (callIndex: number) => unknown;
+	/** 0.9.0: the status Pi's after_provider_response reports for a call; a 429 rejects the call. */
+	responseStatus?: (callIndex: number) => number | undefined;
+	/** 0.9.0: how long the provider takes to answer (the faux model answers at once; a count API takes less). */
+	responseDelayMs?: number;
 	/** Round 4: reject a request with this error text (output limits, combined errors, ...). */
 	reject?: (request: {
 		index: number;
@@ -518,6 +529,7 @@ export function installProviderSim(harness: Harness, options: SimOptions = {}): 
 			messages: context.messages.length,
 		};
 		if (options.thinkingBudget) payload.thinking = { type: "enabled", budget_tokens: options.thinkingBudget };
+		if (options.payload) payload = { ...payload, ...options.payload(context, model, index) };
 		if (streamOptions?.onPayload) {
 			const replaced = await streamOptions.onPayload(payload, model);
 			if (replaced !== undefined) payload = replaced as Record<string, unknown>;
@@ -538,6 +550,27 @@ export function installProviderSim(harness: Harness, options: SimOptions = {}): 
 			...(streamOptions?.signal?.aborted ? { aborted: true } : {}),
 		};
 		sim.calls.push(call);
+		const status = options.responseStatus?.(index);
+		if (status !== undefined) {
+			await harness.session.extensionRunner.emit({ type: "after_provider_response", status, headers: {} });
+			if (status === 429) {
+				call.rejected = true;
+				return errorStream(
+					model,
+					"429 rate_limit_error: Number of request tokens has exceeded your per-minute rate limit",
+				);
+			}
+		}
+		if (options.responseDelayMs) await new Promise((resolve) => setTimeout(resolve, options.responseDelayMs));
+		const data = options.streamData?.(index);
+		if (data !== undefined)
+			await harness.session.extensionRunner.emit({
+				type: "provider_stream_event",
+				provider: model.provider,
+				api: model.api,
+				model: model.id,
+				data,
+			});
 		const served = options.servedBy?.(index);
 		if (served?.name)
 			await harness.session.extensionRunner.emit({
@@ -627,6 +660,50 @@ export function installProviderSim(harness: Harness, options: SimOptions = {}): 
 		return outer;
 	};
 	return sim;
+}
+
+/**
+ * 0.9.0 count APIs: an Anthropic Messages payload's messages for a request, as Pi's converter shapes them: tool results
+ * as user messages of tool_result blocks, consecutive ones merged, and system messages left out.
+ */
+export function anthropicPayload(context: TranscriptContext): Record<string, unknown> {
+	const messages: Array<{ role: string; content: unknown }> = [];
+	const text = (content: unknown): string =>
+		typeof content === "string"
+			? content
+			: Array.isArray(content)
+				? (content as Array<{ type: string; text?: string }>)
+						.filter((b) => b.type === "text")
+						.map((b) => b.text ?? "")
+						.join("")
+				: "";
+	for (const m of context.messages) {
+		if (m.role === "system") continue;
+		if (m.role === "toolResult") {
+			const block = { type: "tool_result", tool_use_id: m.toolCallId, content: text(m.content) };
+			const last = messages.at(-1);
+			if (
+				last?.role === "user" &&
+				Array.isArray(last.content) &&
+				(last.content as Array<{ type: string }>)[0]?.type === "tool_result"
+			)
+				(last.content as unknown[]).push(block);
+			else messages.push({ role: "user", content: [block] });
+		} else if (m.role === "assistant") {
+			messages.push({
+				role: "assistant",
+				content: m.content.flatMap(
+					(b): Array<Record<string, unknown>> =>
+						b.type === "text"
+							? [{ type: "text", text: b.text }]
+							: b.type === "toolCall"
+								? [{ type: "tool_use", id: b.id, name: b.name, input: b.arguments }]
+								: [],
+				),
+			});
+		} else messages.push({ role: "user", content: text((m as { content?: unknown }).content) });
+	}
+	return { messages, system: [{ type: "text", text: "SYSTEM" }] };
 }
 
 export function countEntries(harness: Harness): Record<string, number> {

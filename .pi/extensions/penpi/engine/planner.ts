@@ -3,6 +3,7 @@ import type { AssistantMessage, ImageContent, TextContent } from "@earendil-work
 import { getCurrentSystemMessage } from "@earendil-works/pi-ai";
 import type { ExtensionContext, ProjectedSessionEntry, SessionEntry } from "@earendil-works/pi-coding-agent";
 import type { EngineCore } from "./core.ts";
+import { appendedCounts, plannedTail } from "./countapi.ts";
 import {
 	type AgentMessage,
 	imageSize,
@@ -1001,6 +1002,15 @@ export function installPlanner(core: EngineCore): void {
 			chain: st.appendChain,
 			cum: st.appendCum,
 			slack: st.appendSlack,
+			// 0.9.0 count APIs (countapi.ts): the end the payload must show, and what was appended.
+			plannedTail: plannedTail(sentMessages),
+			...(appendOnly
+				? {
+						appendedCounts: appendedCounts(
+							sentMessages.slice(st.sentShape!.keys.length).filter((m) => sendsSomething(m)),
+						),
+					}
+				: {}),
 			...(exact !== undefined ? { exact, exactKey: core.exact.key(limits.key) } : {}),
 			// 0.9.0: what exact detection reads, for a request counted whole.
 			...(exact !== undefined && parts && parts.length === sentMessages.length

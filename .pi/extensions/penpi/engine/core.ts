@@ -39,6 +39,8 @@ export interface EngineCore {
 	command: (args: string, ctx: ExtensionCommandContext) => Promise<void>;
 	parts: (message: AgentMessage) => { tokens: number; reasoning: number; asText?: number };
 	sendTokens: (message: AgentMessage) => number;
+	/** 0.9.0: the provider count APIs (countapi.ts); set at install. */
+	countApi?: import("./countapi.ts").CountApi;
 	/** 0.9.0: exact counts for the budget (exact.ts). */
 	exact: ExactApi;
 	modelState: (key: string) => ModelState;

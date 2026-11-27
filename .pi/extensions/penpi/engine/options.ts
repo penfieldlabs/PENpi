@@ -1,3 +1,4 @@
+import { newCountApiStats } from "./countapi.ts";
 import type { FaultConfig, ProviderErrorClass } from "./recovery.ts";
 import type { TokenizerWorker } from "./tokenizers/counter.ts";
 import type { ReasoningRule, TemplateTokens } from "./tokenizers/reasoning.ts";
@@ -204,6 +205,16 @@ export interface EngineOptions {
 	/** 0.9.0: the tokenizer cache folder (default `<agent dir>/cache/penpi/tokenizers`). Tests use their own. */
 	tokenizerCacheDir?: string;
 	/**
+	 * 0.9.0: the provider count APIs (countapi.ts) on a direct key: Claude's count_tokens and Gemini's countTokens.
+	 * "auto" (default) uses them; "off" keeps every sample on the fallback rules.
+	 */
+	countApi?: "auto" | "off";
+	/** 0.9.0, tests and E2 only (not a setting): by model key, where its count goes, in place of the direct-key check. */
+	countApiTarget?: (modelKey: string) => import("./countapi.ts").CountTarget | undefined;
+	/** 0.9.0, tests and E2 only (not a setting): the count API's fetch, and its time limit (default 2 s). */
+	countApiFetch?: typeof fetch;
+	countApiTimeoutMs?: number;
+	/**
 	 * 0.9.0, tests and E2 only (not a setting): by model key ("provider/id"), the table entry that counts it, whether
 	 * the name is only assumed, and its reasoning rule, in place of the classifier and the pinned rules.
 	 */
@@ -233,6 +244,8 @@ export interface EngineStats {
 	 * and requests with a tokenizer ready but a part still uncounted (mixed).
 	 */
 	exact: { calls: number; texts: number; samples: number; mixed: number };
+	/** 0.9.0: the provider count APIs (countapi.ts). */
+	countApi: import("./countapi.ts").CountApiStats;
 	/** Pin on: per cut, the header size planned with (fixedAfter - base) and the header actually rendered. */
 	headerPlans: Array<{ upper: number; planned: number; rendered: number; secondPass: boolean }>;
 	/** Times the rendered header exceeded the upper bound (expected 0). */
@@ -329,6 +342,7 @@ export function newStats(): EngineStats {
 	return {
 		cuts: [],
 		exact: { calls: 0, texts: 0, samples: 0, mixed: 0 },
+		countApi: newCountApiStats(),
 		headerPlans: [],
 		headerBoundMisses: 0,
 		guardTrims: 0,

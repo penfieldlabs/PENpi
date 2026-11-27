@@ -5,6 +5,7 @@ import type {
 	ExtensionFactory,
 } from "@earendil-works/pi-coding-agent";
 import type { EngineCore } from "./core.ts";
+import { installCountApi } from "./countapi.ts";
 import { installDetector } from "./detector.ts";
 import { setDefaultImageTokens, textTokens } from "./estimator.ts";
 import { installExact } from "./exact.ts";
@@ -238,6 +239,7 @@ export function createContextEngine(
 		installDoctor(core);
 		installRecovery(core);
 		installDetector(core);
+		installCountApi(core);
 		installNotes(core);
 		installRecall(core);
 		installSearch(core);

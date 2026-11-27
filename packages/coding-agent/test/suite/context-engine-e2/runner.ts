@@ -14,10 +14,11 @@ import type { ExtensionAPI } from "../../../src/core/extensions/types.ts";
 import { resetEntryIds } from "../context-engine/deterministic-ids.ts";
 import { createHarness, createTestUiContext } from "../harness.ts";
 import { loadCorpus } from "./corpus.ts";
+import { countEngineOptions, countSimOptions } from "./count-profile.ts";
 import type { EngineUnderTest } from "./engine-under-test.ts";
 import { evaluate, type RunMetrics } from "./metrics.ts";
 import { type MixName, planSession, type ToolTurn, toolResult } from "./mixes.ts";
-import { type ErrorStyle, installProviderSim, type TruncationStyle } from "./provider-sim.ts";
+import { type ErrorStyle, installProviderSim, type SimCall, type TruncationStyle } from "./provider-sim.ts";
 import { CACHE_DIR, verifiedHfFile } from "./tokenizer-cache.ts";
 import { CountingTokenizer, loadTokenizer, type TokenizerName } from "./tokenizers.ts";
 
@@ -288,6 +289,9 @@ export async function runOne(engine: EngineUnderTest, config: RunConfig): Promis
 	const model = WINDOWS[config.window];
 	const reasoningMode = config.mode === "reasoning";
 	const thinking = THINKING[config.thinking ?? "minimal"];
+	// The count profiles' fake endpoint reads the simulator's calls, once it is installed (after the engine).
+	let simRef: { calls: SimCall[] } | undefined;
+	const simCalls = () => simRef?.calls ?? [];
 	const harness = await reproducibleHarness(config.id, {
 		models: [
 			{
@@ -305,6 +309,8 @@ export async function runOne(engine: EngineUnderTest, config: RunConfig): Promis
 			engine.createContextEngine({
 				...config.engineOptions,
 				...exactModeOptions(config.window, config.tokenizer),
+				// 0.9.0: the count API profiles (E2_COUNT_API), against the simulator's own counts.
+				...countEngineOptions(`e2-${config.window}`, () => simCalls()),
 				// 0.9.0: the counting path's telemetry line, into the run's log.
 				report: (json: string) => {
 					reports.push(json);
@@ -321,6 +327,7 @@ export async function runOne(engine: EngineUnderTest, config: RunConfig): Promis
 	try {
 		await harness.session.bindExtensions({ uiContext: createTestUiContext({ notify: (m) => notices.push(m) }) });
 		const sim = installProviderSim(harness, {
+			...countSimOptions(),
 			tokenizer: config.tokenizer,
 			counter,
 			limit: config.limit,
@@ -355,6 +362,7 @@ export async function runOne(engine: EngineUnderTest, config: RunConfig): Promis
 				};
 			},
 		});
+		simRef = sim;
 
 		// Scripted model: answers follow the plan of the current task; rejected requests never reach it.
 		const cursor = { task: 0, turn: 0, answered: 0, calls: 0, lengthStops: 0, stopsThisTask: 0 };

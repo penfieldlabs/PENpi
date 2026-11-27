@@ -263,6 +263,12 @@ export function newEngineState(faults: FaultConfig | undefined) {
 					exactAssumed?: boolean;
 					/** The model's template tokens around tool calls (tokenizers/reasoning.ts), when pinned. */
 					exactTemplate?: import("./tokenizers/reasoning.ts").TemplateTokens;
+					/** 0.9.0 count APIs (countapi.ts): the planned request's end, what it appended, and its count. */
+					plannedTail?: import("./countapi.ts").PlannedTail;
+					appendedCounts?: import("./countapi.ts").AppendedCounts;
+					count?: import("./countapi.ts").CountSlot;
+					/** A counted sample: which count API, and what Gemini's rules read of its history. */
+					countApi?: import("./countapi.ts").CountedSample;
 			  }
 			| undefined,
 		sendSeq: 0,

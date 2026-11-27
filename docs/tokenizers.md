@@ -126,6 +126,24 @@ Of pi-ai's 1,698 chat models, 847 (49.9%) have a file:
 - **left out:** MiniMax M3 (its license), Mistral Large 4 (license "other", with no terms to pin),
   and Nemotron Nano v2 and Cosmos.
 
+## Provider count APIs
+
+Claude has no public tokenizer, so on a direct key its count API is its exact path: the
+`countApi` setting in the `penpi` block, `"auto"` (default) or `"off"`.
+- **Where it applies:** Anthropic's own API with an API key. A login, OpenRouter, Bedrock, Vertex,
+  Foundry or a proxy at another address stays on the estimate.
+- **What it sends:** each counted request's body, as the engine's `before_provider_request` handler
+  sees it, to `count_tokens` at the same provider, with the request's betas and without its
+  output fields or a `thread` field. Counting is free. It runs beside the request, never before it.
+- **What it uploads:** most requests in full, about 4 MB a request at 1M tokens, where the request
+  itself, threaded, sends only the new messages. Above 1 MB of body, only the requests near the
+  largest usage, and the one before each, are counted.
+- **When it stops:** a 429 pauses it (Retry-After, or 60 s); three other failures in a row turn it
+  off for the session, with one notice naming the reason, a refused beta among them.
+- **A known limit:** an extension loaded after PENpi that changes the payload makes the count wrong.
+  A constant change keeps the exactness gate unset, which is safe; one that varies and removes
+  content can read as a shortfall.
+
 ## For 0.10.0: xAI's counter
 
 Not built in 0.9.0, and Grok stays on the estimate. Measured in 0.9.0's count checks:

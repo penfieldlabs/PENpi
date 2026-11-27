@@ -1,6 +1,7 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { ExtensionContext, SessionBoundaryDraft } from "@earendil-works/pi-coding-agent";
 import type { EngineCore } from "./core.ts";
+import { COUNT_API_TOLERANCE } from "./countapi.ts";
 import { STATE_TYPE, type TruncatedTurn } from "./options.ts";
 import type { ModelState } from "./state.ts";
 import type { TemplateTokens } from "./tokenizers/reasoning.ts";
@@ -287,15 +288,18 @@ export function installDetector(core: EngineCore): void {
 		}
 		if (!state.exactGate) state.exactGate = { key, matches: 0, set: false };
 		const gate = state.exactGate;
+		// A count API's count is the request's whole size: COUNT_API_TOLERANCE a request (countapi.ts).
+		const counted = sent.countApi;
 		const tol = (messages: number, calls = 0, args = 0) =>
-			exactTolerance(sent.exactEntry, messages, sent.exactTemplate, calls, args);
+			counted ? COUNT_API_TOLERANCE : exactTolerance(sent.exactEntry, messages, sent.exactTemplate, calls, args);
 		const appended = () => tol(ex.appendedMessages, ex.appendedCalls, ex.appendedArguments);
 		const consecutive = !!prev && prev.seq === sent.seq - 1 && sent.appendOnly && !sent.afterLengthStop && !switched;
 		const delta = consecutive ? reported - prev!.reported : 0;
 		const exactDelta =
 			consecutive && prev!.exactRendered !== undefined ? ex.rendered - prev!.exactRendered : undefined;
 		const judged = exactDelta !== undefined && !ex.fallback && ex.appendedBand <= 0.25 * Math.max(exactDelta, 0);
-		const totals = reported >= ex.text - ex.band;
+		// A count API's totals check is two-sided, so a generation with a constant excess never sets the gate.
+		const totals = counted ? Math.abs(reported - ex.text) <= COUNT_API_TOLERANCE : reported >= ex.text - ex.band;
 		if (!gate.set) {
 			// An append with an image can't show a match: the provider prices images by its own rule.
 			if (!judged || ex.appendedImages) return none;
@@ -372,6 +376,8 @@ export function installDetector(core: EngineCore): void {
 		const servedBy = st.streamProvider;
 		st.streamProvider = undefined;
 		if (!sent || sent.estimate <= 0 || reported <= 0) return;
+		// 0.9.0: a provider count that settled in time makes this an exact sample (countapi.ts).
+		core.countApi?.apply(sent);
 		const key = sent.key;
 		const state = core.modelState(key);
 		const switched = servedBy !== undefined && state.servedBy !== undefined && servedBy !== state.servedBy;

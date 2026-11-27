@@ -68,6 +68,8 @@ export interface SimCall {
 	output?: number;
 	/** Timestamp of the answer to this request (the engine names truncated answers by it). */
 	answerAt?: number;
+	/** 0.9.0 count profiles (count-profile.ts): the payload as the provider got it. */
+	payload?: Record<string, unknown>;
 	/** Engine state when the request was sent (filled by the observer). */
 	observed?: Record<string, number | undefined>;
 }
@@ -93,6 +95,12 @@ export interface SimOptions {
 	templateTokens?: number;
 	/** 0.9.0: report usage split into cached input (cacheRead) and the rest (input), as Anthropic does. */
 	cacheSplit?: boolean;
+	/** 0.9.0 count profiles (count-profile.ts): fields merged into the payload, built from the request. */
+	payload?: (context: TranscriptContext) => Record<string, unknown>;
+	/** 0.9.0 count profiles: provider stream data emitted before each response (the served model). */
+	streamData?: (index: number) => unknown;
+	/** 0.9.0 count profiles: how long the provider takes to answer (a count takes less). */
+	responseDelayMs?: number;
 }
 
 function truncate(
@@ -166,6 +174,7 @@ export function installProviderSim(harness: Harness, options: SimOptions): Provi
 			max_tokens: providerMax,
 			messages: context.messages.length,
 		};
+		if (options.payload) payload = { ...payload, ...options.payload(context as TranscriptContext) };
 		if (streamOptions?.onPayload) {
 			const replaced = await streamOptions.onPayload(payload, model);
 			if (replaced !== undefined) payload = replaced as Record<string, unknown>;
@@ -202,8 +211,19 @@ export function installProviderSim(harness: Harness, options: SimOptions): Provi
 			keys: body.map((s) => s.key),
 			noticeTail: body.at(-1)?.notice === true,
 			maxTokens: payload.max_tokens as number | undefined,
+			...(options.payload ? { payload } : {}),
 		};
 		sim.calls.push(call);
+		if (options.responseDelayMs) await new Promise((resolve) => setTimeout(resolve, options.responseDelayMs));
+		const data = options.streamData?.(index);
+		if (data !== undefined)
+			await harness.session.extensionRunner.emit({
+				type: "provider_stream_event",
+				provider: model.provider,
+				api: model.api,
+				model: model.id,
+				data,
+			});
 		options.observe?.(call);
 		if (rendered.tokens > options.limit) {
 			if (options.mode === "reject") {
