@@ -1,5 +1,6 @@
 import type { FaultConfig, ProviderErrorClass } from "./recovery.ts";
 import type { TokenizerWorker } from "./tokenizers/counter.ts";
+import type { ReasoningRule, TemplateTokens } from "./tokenizers/reasoning.ts";
 
 /** Mode "a" (persistent window) is the only mode. */
 export type EngineMode = "a";
@@ -202,6 +203,14 @@ export interface EngineOptions {
 	tokenizer?: "auto" | "local" | "estimate";
 	/** 0.9.0: the tokenizer cache folder (default `<agent dir>/cache/penpi/tokenizers`). Tests use their own. */
 	tokenizerCacheDir?: string;
+	/**
+	 * 0.9.0, tests and E2 only (not a setting): by model key ("provider/id"), the table entry that counts it, whether
+	 * the name is only assumed, and its reasoning rule, in place of the classifier and the pinned rules.
+	 */
+	exactModels?: Record<
+		string,
+		{ entry: string; status?: "exact" | "assumed"; reasoning?: ReasoningRule; templateTokens?: TemplateTokens }
+	>;
 	/** 0.9.0, tests only (not a setting): starts the tokenizer worker in place of the real one. */
 	tokenizerWorker?: () => TokenizerWorker;
 	/** A telemetry report line, as the engine log writes it ("telemetry {json}"); the counting path's goes here. */

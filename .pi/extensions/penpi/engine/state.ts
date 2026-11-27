@@ -75,7 +75,15 @@ export interface ModelState {
 		provider?: string;
 	}>;
 	/** The previous successful sample (send sequence number and reported usage). */
-	lastSample?: { seq: number; reported: number };
+	lastSample?: { seq: number; reported: number; exactRendered?: number };
+	/**
+	 * 0.9.0: the exactness gate (detector.ts, design section 5): judged exact samples matching on deltas and totals in a
+	 * row, for one exact key; set after EXACT_GATE_SAMPLES. Not persisted. A mismatch after it sets never drops it; a
+	 * provider switch or another model or tokenizer does.
+	 */
+	exactGate?: { key: string; matches: number; set: boolean };
+	/** 0.9.0: the rendered exact size of the request that set maxReported, when it was counted whole. */
+	maxRendered?: number;
 	/**
 	 * D24: the upstream provider that served the previous sample, when the response names it (OpenRouter's
 	 * `provider` field). Providers behind one route count tokens differently. Not persisted.
@@ -249,6 +257,12 @@ export function newEngineState(faults: FaultConfig | undefined) {
 					 */
 					exact?: number;
 					exactKey?: string;
+					/** 0.9.0: what exact detection reads (exact.ts exactRequest), the entry counting it, and an assumed name. */
+					exactRequest?: import("./exact.ts").ExactRequest;
+					exactEntry?: string;
+					exactAssumed?: boolean;
+					/** The model's template tokens around tool calls (tokenizers/reasoning.ts), when pinned. */
+					exactTemplate?: import("./tokenizers/reasoning.ts").TemplateTokens;
 			  }
 			| undefined,
 		sendSeq: 0,

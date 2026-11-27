@@ -4,7 +4,7 @@
  * real tokens. Produces the metrics and pass criteria of metrics.ts, written as JSON.
  */
 import { createHash } from "node:crypto";
-import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type AssistantMessage, fauxAssistantMessage, fauxText, fauxToolCall } from "@earendil-works/pi-ai";
@@ -18,9 +18,38 @@ import type { EngineUnderTest } from "./engine-under-test.ts";
 import { evaluate, type RunMetrics } from "./metrics.ts";
 import { type MixName, planSession, type ToolTurn, toolResult } from "./mixes.ts";
 import { type ErrorStyle, installProviderSim, type TruncationStyle } from "./provider-sim.ts";
+import { CACHE_DIR, verifiedHfFile } from "./tokenizer-cache.ts";
 import { CountingTokenizer, loadTokenizer, type TokenizerName } from "./tokenizers.ts";
 
 export type WindowName = "32k" | "128k" | "1m";
+
+/**
+ * 0.9.0, E2's exact mode (E2_EXACT=1, with PENPI_TOKENIZER=local): the engine counts the faux model with the
+ * simulator's own tokenizer, o200k bundled or GLM-5.3-Flash's verified file, placed in a cache folder of E2's own by its
+ * SHA-256 as a user would place it. The simulator's templates render every turn's reasoning, so the rule is "keep".
+ * Off by default: E2 then measures the fallback path.
+ */
+export const EXACT_MODE = process.env.E2_EXACT === "1";
+const GLM5_SHA256 = "19e773648cb4e65de8660ea6365e10acca112d42a854923df93db4a6f333a82d";
+function exactModeOptions(window: WindowName, tokenizer: TokenizerName): Record<string, unknown> {
+	if (!EXACT_MODE) return {};
+	const dir = process.env.E2_ENGINE_TOKENIZER_DIR ?? join(CACHE_DIR, "engine-tokenizers");
+	mkdirSync(dir, { recursive: true });
+	if (tokenizer === "glm") {
+		const target = join(dir, GLM5_SHA256);
+		if (!existsSync(target)) writeFileSync(target, verifiedHfFile("tokenizer.json"));
+	}
+	return {
+		tokenizerCacheDir: dir,
+		exactModels: {
+			[`faux/e2-${window}`]: {
+				entry: tokenizer === "o200k" ? "o200k" : "glm5",
+				// The simulator's templates render every turn's reasoning, unless E2_REASONING_TEMPLATE=drop.
+				reasoning: process.env.E2_REASONING_TEMPLATE === "drop" ? "drop" : "keep",
+			},
+		},
+	};
+}
 export const WINDOWS: Record<WindowName, { contextWindow: number; maxTokens: number }> = {
 	"32k": { contextWindow: 32_768, maxTokens: 8_192 },
 	"128k": { contextWindow: 131_072, maxTokens: 16_384 },
@@ -131,6 +160,21 @@ function systemSectionExtension(tokens: number, counter: CountingTokenizer) {
 	};
 }
 
+/**
+ * 0.9.0, E2_PLANTED=1: one tool result in four carries a line of special-token strings, the tokenizer files' own added
+ * tokens and a rendered-prompt log, as a tool output reading a template or a server log does. The provider counts them
+ * as its file does; the engine counts them both ways (the band).
+ */
+const PLANTED = [
+	"log: <|im_start|>user hello<|im_end|> <|im_start|>assistant <think>ok</think> <|endoftext|>",
+	"log: <|user|>hello<|assistant|><think>ok</think><|observation|><tool_response>x</tool_response>",
+	"[INST] quoted [/INST] <｜begin▁of▁sentence｜> <|eot_id|>",
+];
+function planted(text: string, seed: number): string {
+	if (process.env.E2_PLANTED !== "1" || seed % 4 !== 0) return text;
+	return `${text}\n${PLANTED[seed % PLANTED.length]}`;
+}
+
 function toolsExtension(turns: Map<string, ToolTurn>) {
 	return (pi: ExtensionAPI) => {
 		const run = async (id: string) => {
@@ -138,7 +182,7 @@ function toolsExtension(turns: Map<string, ToolTurn>) {
 			if (!turn) throw new Error(`E2: no planned result for tool call ${id}`);
 			const result = toolResult(turn);
 			return {
-				content: [{ type: "text" as const, text: result.text }, ...(result.images ?? [])],
+				content: [{ type: "text" as const, text: planted(result.text, turn.seed) }, ...(result.images ?? [])],
 				details: { content: turn.content, size: turn.size },
 			};
 		};
@@ -240,6 +284,7 @@ export async function runOne(engine: EngineUnderTest, config: RunConfig): Promis
 	for (const task of plan.tasks) for (const turn of task.turns) if (turn.kind === "tool") turnsById.set(turn.id, turn);
 
 	const stats = engine.newStats();
+	const reports: string[] = [];
 	const model = WINDOWS[config.window];
 	const reasoningMode = config.mode === "reasoning";
 	const thinking = THINKING[config.thinking ?? "minimal"];
@@ -259,6 +304,12 @@ export async function runOne(engine: EngineUnderTest, config: RunConfig): Promis
 			...(config.systemSectionTokens ? [systemSectionExtension(config.systemSectionTokens, counter)] : []),
 			engine.createContextEngine({
 				...config.engineOptions,
+				...exactModeOptions(config.window, config.tokenizer),
+				// 0.9.0: the counting path's telemetry line, into the run's log.
+				report: (json: string) => {
+					reports.push(json);
+					appendFileSync(logFile, `telemetry ${json}\n`);
+				},
 				// reasoning mode: the faux model stands for an OpenAI-compatible endpoint (GLM via OpenRouter).
 				...(reasoningMode ? { serializeAs: { [`faux/e2-${config.window}`]: "openai-completions" } } : {}),
 				stats,
@@ -351,6 +402,13 @@ export async function runOne(engine: EngineUnderTest, config: RunConfig): Promis
 		};
 		harness.setResponses(Array.from({ length: config.turns * 2 + 50 }, () => dispatcher));
 
+		// The exact mode starts once the engine's tokenizer is loaded, as a session of any length is counted from its first
+		// request: the scripted session never yields long enough for a load to land meanwhile.
+		if (EXACT_MODE) {
+			const end = Date.now() + 120_000;
+			while (!reports.some((r) => r.includes('"k":"counting"')) && Date.now() < end)
+				await new Promise((resolve) => setTimeout(resolve, 20));
+		}
 		let abandoned = 0;
 		const promptErrors: string[] = [];
 		for (let t = 0; t < plan.tasks.length; t++) {

@@ -15,7 +15,8 @@
  *   (the window header, the checkpoint, the notice, an override's system message), by their content in an LRU of
  *   4,096 entries. A message is counted when a request first carries it.
  * - **The counting line:** once per session, when the path settles, the engine log gets `telemetry {"k":"counting",
- *   "path":"exact"|"fallback","entry":<name or null>,"reason":<why fallback, or null>}`, and the telemetry report gets
+ *   "path":"exact"|"fallback","entry":<name or null>,"reason":<why fallback, or null>}`, with `"assumed":true` for a name
+ *   only assumed to match its tokenizer (exact for the budget, the fallback rules for detection), and the telemetry report gets
  *   the same JSON. A later change of path (a model switch, a worker failure) logs the new one.
  * - **Notices:** the first download of a file (TokenizerFiles), and, once per session and model, "counting <model>
  *   with the estimate (<reason>)" when the reason is something the user can change or should know: offline, a failed
@@ -26,7 +27,7 @@ import { createHash } from "node:crypto";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { EngineCore } from "./core.ts";
-import type { AgentMessage } from "./estimator.ts";
+import { type AgentMessage, messageImageTokens } from "./estimator.ts";
 import { serializedParts } from "./serializer.ts";
 import { classifyModel } from "./tokenizers/classify.ts";
 import { type CountChunk, TokenCounter } from "./tokenizers/counter.ts";
@@ -39,6 +40,7 @@ import {
 	tokenizerCacheDir,
 	tokenizerMode,
 } from "./tokenizers/download.ts";
+import { pinnedRule, type ReasoningRule, type TemplateTokens } from "./tokenizers/reasoning.ts";
 import { type TokenizerEntry, tokenizerEntry } from "./tokenizers/table.ts";
 
 /** A message's exact parts: serializedParts with text counted by the tokenizer, and the band's width. */
@@ -48,6 +50,155 @@ export interface ExactParts {
 	asText?: number;
 	/** Tokens between counting special-token-like strings as one token and as text. */
 	band: number;
+	/**
+	 * 0.9.0 detection: `tokens` without the serializer's per-message and per-tool-call overheads, and without images:
+	 * the text the tokenizer counted. An image's cost is the provider's own rule, which no tokenizer counts.
+	 */
+	raw: number;
+	/** Whether the message carries an image. */
+	images: boolean;
+	/**
+	 * 0.9.0 detection, the absolute bound's text count: the system prompt and its sections, user text and tool-result
+	 * text, each trimmed. Assistant text, tool calls, reasoning and images are left out.
+	 */
+	text: number;
+	/** An assistant message's own text, for gpt-oss's rule, which drops a tool-call turn's text with its reasoning. */
+	said: number;
+	/** Whether an assistant message calls tools (its turn is not a final answer). */
+	calls: boolean;
+}
+
+/** Whitespace a trim takes off that is worth counting the trimmed text for (below this, the untrimmed count is used). */
+const TRIM_COUNTED = 16;
+
+/** The texts the absolute bound counts in a message, untrimmed (section 5): system, user and tool-result text. */
+function boundTexts(message: AgentMessage): string[] {
+	const m = message as { role: string; content?: unknown; sections?: Record<string, string | null> };
+	if (m.role !== "system" && m.role !== "user" && m.role !== "toolResult") return [];
+	const out: string[] = [];
+	if (typeof m.content === "string") out.push(m.content);
+	else if (Array.isArray(m.content))
+		for (const b of m.content as Array<{ type: string; text?: string }>)
+			if (b.type === "text" && b.text) out.push(b.text);
+	if (m.role === "system") for (const s of Object.values(m.sections ?? {})) if (s) out.push(s);
+	return out;
+}
+
+/** The trimmed form the bound counts, when a trim takes off enough to matter. */
+function trimmed(text: string): string | undefined {
+	const t = text.trim();
+	return text.length - t.length > TRIM_COUNTED ? t : undefined;
+}
+
+/** The serializer's overheads in a message's tokens: 4 a message sent, 8 a tool call, 30 a summary. */
+function overheadOf(message: AgentMessage, tokens: number): number {
+	if (tokens === 0) return 0;
+	const m = message as { role: string; content?: unknown };
+	let overhead = 4;
+	if (m.role === "assistant" && Array.isArray(m.content))
+		overhead += 8 * (m.content as Array<{ type: string }>).filter((b) => b.type === "toolCall").length;
+	if (m.role === "compactionSummary" || m.role === "branchSummary") overhead += 30;
+	return Math.min(overhead, tokens);
+}
+
+/** What detection reads of a request counted whole (detector.ts, section 5). */
+export interface ExactRequest {
+	/** The request as the model's template renders it, in raw exact tokens: its reasoning rule applied. */
+	rendered: number;
+	/** The absolute bound's text count, and the band, of the whole request. */
+	text: number;
+	band: number;
+	/** Of the append (the messages after the previous request's): how many send anything, and their band. */
+	appendedMessages: number;
+	appendedBand: number;
+	/** The append carries an image, whose cost the provider prices by its own rule. */
+	appendedImages: boolean;
+	/** The append's tool calls and their arguments, for a template's tokens around them (TemplateTokens). */
+	appendedCalls: number;
+	appendedArguments: number;
+	/** Why this sample is judged on the fallback rules, when it is. */
+	fallback?: string;
+}
+
+/**
+ * Detection's figures for a request whose every part was counted, `parts` aligned with `sent`. `previous` is the
+ * previous request's message count when this one is append-only (its append is `sent.slice(previous)`).
+ * - **Rendered:** raw exact tokens, less the reasoning (and, for gpt-oss, the text) the model's template leaves out.
+ * - **Fallback samples:** a template that renders no reasoning with reasoning in the append; a model whose rule isn't
+ *   pinned, on an append that crosses a user message after reasoning-bearing turns.
+ */
+export function exactRequest(
+	sent: AgentMessage[],
+	parts: ExactParts[],
+	previous: number | undefined,
+	rule: ReasoningRule | undefined,
+): ExactRequest {
+	const role = (i: number) => (sent[i] as { role: string }).role;
+	let lastUser = -1;
+	let lastFinal = -1;
+	for (let i = 0; i < sent.length; i++) {
+		if (role(i) === "user" && parts[i].tokens > 0) lastUser = i;
+		if (role(i) === "assistant" && parts[i].tokens > 0 && !parts[i].calls) lastFinal = i;
+	}
+	let rendered = 0;
+	let text = 0;
+	let band = 0;
+	for (let i = 0; i < sent.length; i++) {
+		const p = parts[i];
+		let r = p.raw;
+		if (role(i) === "assistant") {
+			const before =
+				rule === "drop"
+					? i < lastUser
+					: rule === "after-final" || rule === "after-final-text"
+						? i <= lastFinal
+						: false;
+			if (before) r -= p.reasoning - (p.asText ?? 0);
+			if (before && rule === "after-final-text" && p.calls) r -= p.said;
+		}
+		rendered += Math.max(0, r);
+		text += p.text;
+		band += p.band;
+	}
+	let appendedMessages = 0;
+	let appendedBand = 0;
+	let appendedImages = false;
+	let appendedCalls = 0;
+	let appendedArguments = 0;
+	let fallback: string | undefined;
+	if (previous !== undefined) {
+		let reasoningBefore = false;
+		for (let i = 0; i < previous; i++) if (role(i) === "assistant" && parts[i].reasoning > 0) reasoningBefore = true;
+		for (let i = previous; i < sent.length; i++) {
+			if (parts[i].tokens === 0) continue;
+			appendedMessages++;
+			appendedBand += parts[i].band;
+			if (parts[i].images) appendedImages = true;
+			const content = (sent[i] as { content?: unknown }).content;
+			if (role(i) === "assistant" && Array.isArray(content))
+				for (const b of content as Array<{ type: string; arguments?: unknown }>) {
+					if (b.type !== "toolCall") continue;
+					appendedCalls++;
+					if (b.arguments && typeof b.arguments === "object") appendedArguments += Object.keys(b.arguments).length;
+				}
+			if (rule === "none" && role(i) === "assistant" && parts[i].reasoning > 0)
+				fallback ??= "reasoning in the append, for a template that renders none";
+			if (rule === undefined && role(i) === "user" && reasoningBefore)
+				fallback ??= "a user message after reasoning-bearing turns, for a model whose reasoning rule isn't pinned";
+			if (role(i) === "assistant" && parts[i].reasoning > 0) reasoningBefore = true;
+		}
+	}
+	return {
+		rendered,
+		text,
+		band,
+		appendedMessages,
+		appendedBand,
+		appendedImages,
+		appendedCalls,
+		appendedArguments,
+		...(fallback ? { fallback } : {}),
+	};
 }
 
 /** The handler waits at least this long for counts, or as long as the misses should take if longer. */
@@ -61,6 +212,10 @@ export const LRU_SIZE = 4096;
 export interface ExactApi {
 	/** The entry counting for the budget now, when its tokenizer is ready. */
 	ready: () => TokenizerEntry | undefined;
+	/** For detection: whether the name is only assumed, and the model's reasoning rule (undefined: not pinned). */
+	detection: () =>
+		| { assumed: boolean; reasoning: ReasoningRule | undefined; template: TemplateTokens | undefined }
+		| undefined;
 	/** The exact ratio's key for a model key on the current entry. */
 	key: (modelKey: string) => string | undefined;
 	/** A message's exact parts, if counted. */
@@ -112,11 +267,22 @@ export function installExact(core: EngineCore): void {
 	};
 
 	// ---------------------------------------------------------------- the path, per session
-	let selected: { model: string; entry?: TokenizerEntry; reason?: FallbackReason } | undefined;
+	let selected:
+		| {
+				model: string;
+				entry?: TokenizerEntry;
+				reason?: FallbackReason;
+				/** An assumed name: exact for the budget, the fallback rules for detection. */
+				assumed?: boolean;
+				reasoning?: ReasoningRule;
+				template?: TemplateTokens;
+		  }
+		| undefined;
 	let logged: string | undefined;
 	let noticed = new Set<string>();
-	const report = (path: "exact" | "fallback", entry: string | null, reason: string | null) => {
-		const json = JSON.stringify({ k: "counting", path, entry, reason });
+	// An assumed name counts exactly for the budget, and stays on the fallback rules for detection: its line says so.
+	const report = (path: "exact" | "fallback", entry: string | null, reason: string | null, assumed = false) => {
+		const json = JSON.stringify({ k: "counting", path, entry, reason, ...(assumed ? { assumed: true } : {}) });
 		if (json === logged) return;
 		logged = json;
 		opts.report?.(json);
@@ -136,7 +302,7 @@ export function installExact(core: EngineCore): void {
 		...(opts.tokenizerWorker ? { startWorker: opts.tokenizerWorker } : {}),
 		onState: (state, entry, reason) => {
 			if (!selected || selected.entry?.id !== entry.id) return;
-			if (state === "ready") report("exact", entry.id, null);
+			if (state === "ready") report("exact", entry.id, null, selected.assumed);
 			else fallback(selected.model, reason ?? "tokenizer worker failed");
 		},
 	});
@@ -172,7 +338,13 @@ export function installExact(core: EngineCore): void {
 			fallback(id, "turned off");
 			return;
 		}
-		const cls = model ? classifyModel(model.id) : { status: "none" as const };
+		// Tests and E2 name a model's entry and reasoning rule (exactModels); otherwise the classifier and the pinned rules.
+		const named = opts.exactModels?.[id];
+		const cls = named
+			? { status: named.status ?? ("exact" as const), entry: named.entry }
+			: model
+				? classifyModel(model.id)
+				: { status: "none" as const };
 		const entry = cls.entry ? tokenizerEntry(cls.entry) : undefined;
 		if (!entry || (cls.status !== "exact" && cls.status !== "assumed")) {
 			selected = { model: id, reason: "no public tokenizer" };
@@ -181,9 +353,15 @@ export function installExact(core: EngineCore): void {
 			fallback(id, "no public tokenizer");
 			return;
 		}
-		selected = { model: id, entry };
+		selected = {
+			model: id,
+			entry,
+			assumed: cls.status === "assumed",
+			reasoning: named ? named.reasoning : model ? pinnedRule(model.id)?.rule : undefined,
+			template: named ? named.templateTokens : model ? pinnedRule(model.id)?.templateTokens : undefined,
+		};
 		if (counter.entry?.id === entry.id && counter.state === "ready") {
-			report("exact", entry.id, null);
+			report("exact", entry.id, null, selected.assumed);
 			return;
 		}
 		if (counter.entry?.id === entry.id && counter.state === "failed") {
@@ -222,6 +400,12 @@ export function installExact(core: EngineCore): void {
 			if (text.length > 0) texts.add(text);
 			return 0;
 		});
+		// The absolute bound's texts: trimmed, when the trim matters, as an extra text to count.
+		for (const text of boundTexts(message)) {
+			const t = trimmed(text);
+			texts.add(t ?? text);
+		}
+		texts.delete("");
 		return [...texts];
 	}
 
@@ -313,7 +497,28 @@ export function installExact(core: EngineCore): void {
 				if (other !== undefined) band += Math.abs(other - counts[i]!);
 			}
 			const p = serializedParts(o.message, target, (t) => (t.length === 0 ? 0 : big(t)));
-			remember(key, o.content, o.message, { ...p, band });
+			let text = 0;
+			for (const t of boundTexts(o.message)) {
+				const form = trimmed(t) ?? t;
+				if (form.length > 0) text += big(form);
+			}
+			const m = o.message as { role: string; content?: unknown };
+			const blocks =
+				m.role === "assistant" && Array.isArray(m.content)
+					? (m.content as Array<{ type: string; text?: string }>)
+					: [];
+			const said = blocks.reduce((n, b) => n + (b.type === "text" && (b.text ?? "").trim() ? big(b.text!) : 0), 0);
+			const calls = blocks.some((b) => b.type === "toolCall");
+			const image = p.tokens > 0 ? messageImageTokens(o.message) : 0;
+			remember(key, o.content, o.message, {
+				...p,
+				band,
+				raw: Math.max(0, p.tokens - overheadOf(o.message, p.tokens) - image),
+				images: image > 0,
+				text,
+				said,
+				calls,
+			});
 		};
 		const left = new Set(owners);
 		const onChunk = (chunk: CountChunk) => {
@@ -347,6 +552,10 @@ export function installExact(core: EngineCore): void {
 
 	core.exact = {
 		ready,
+		detection: () =>
+			ready()
+				? { assumed: selected?.assumed ?? false, reasoning: selected?.reasoning, template: selected?.template }
+				: undefined,
 		key: (modelKey) => {
 			const entry = ready();
 			return entry ? `${modelKey}#${entry.id}` : undefined;

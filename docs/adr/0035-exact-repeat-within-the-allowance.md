@@ -218,6 +218,12 @@ call:
     above the text count. The pair rests on call 30's evidence staying pending for 15 to 17 samples; nothing clears it,
     since the reports between climb by less than 2% above the running maximum each time. E2's exact mode is to confirm
     it on every release.
+  - **Measured on the exact path (0.9.0):** E2's exact mode, the engine counting with o200k, detects the run at call 48
+    on v1.5.1 and 46 on v1.4.0, lag 3, with no false detection. In the engine's own counts call 30 is 6,456 of 12,366
+    short (6,770 of 12,513 on v1.4.0), and call 47 387 (404 at call 45); the gate sets well before call 30. Each
+    shortfall is over three times what the exact rules allow it (1,261 and 128 on v1.5.1, 1,275 and 125 on v1.4.0).
+    The margin is still none, for the reasons above, so the exact mode's run of this case has no known-failure entry
+    and must pass.
 - Every new detection rule must pass the honest test's full run, under its bars, before it ships.
 - **A known limit: a provider that rounds its usage.** With usage rounded to 100 tokens, 55 of the honest test's 300
   sessions detect. An honest growth under 100 tokens rounds to none, and the rule for an append with no growth judges

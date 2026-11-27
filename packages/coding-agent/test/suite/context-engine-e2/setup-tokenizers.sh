@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Tokenizer setup for E2 and the engine suite (`npm run setup:tokenizers`). Installs js-tiktoken (o200k_base)
-# and @huggingface/tokenizers from the lockfile next to this script (npm registry only), and downloads the
-# GLM-5.3-Flash tokenizer files from huggingface.co at a pinned revision. Everything goes into this
+# and @huggingface/tokenizers from the lockfile next to this script (npm registry only), downloads the
+# GLM-5.3-Flash tokenizer files from huggingface.co at a pinned revision, and (0.9.0) the chat templates the
+# engine's reasoning rules pin. Everything goes into this
 # directory's git-ignored .cache/ (E2_TOK_DIR and E2_HF_DIR move it), never a shared path.
 #
 # The installed npm tree must match tok/install.sha256 (see tokenizer-cache.ts); an install that does not is
@@ -32,5 +33,9 @@ while read -r name sha; do
 	mv "$file.part" "$file"
 	echo "$sha  $file" | sha256sum -c -
 done < <($cache hf-files)
+
+# 3. 0.9.0: the chat templates the engine's reasoning rules were read from (reasoning-rules.test.ts renders them),
+#    each at its pinned revision and checked by SHA-256 (fetch-templates.ts).
+node "$here/fetch-templates.ts"
 
 echo "tokenizers ready: packages in $tok, GLM-5.3-Flash files in $hf"

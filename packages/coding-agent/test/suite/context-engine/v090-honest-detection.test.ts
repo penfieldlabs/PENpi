@@ -72,10 +72,42 @@ import { CountingTokenizer, type Tokenizer } from "../context-engine-e2/tokenize
 import { createHarness, type Harness } from "../harness.ts";
 import { createContextEngine, ENGINE_LABEL, ENGINE_PATH, newStats } from "./engine.ts";
 import { sweepUnits } from "./floor-sweep-cases.ts";
-import { blobExtension, LOG_DIR, resendAnswered, scriptedModel, syntheticText } from "./helpers.ts";
+import { blobExtension, endSession, LOG_DIR, resendAnswered, scriptedModel, syntheticText } from "./helpers.ts";
 import { fastO200k } from "./o200k-fast.ts";
 
 const FULL = process.env.HONEST_DETECTION === "1";
+/**
+ * 0.9.0: how the provider counts, and which path the engine counts on (HONEST_PROFILE):
+ * - "" (the default): o200k at a scale per kind of 0.7 to 1.8, a tokenizer that isn't the engine's; the fallback path.
+ * - "exact": the engine counts the model with o200k (its exact path), and so does the provider, with a counter that
+ *   drifts by up to 2% per kind of content, as a provider's tokenizer version or server can.
+ * - "claude": a Claude model on the fallback path, starting at the Claude prior (1.6), with a provider counting 1.1 to
+ *   2.0 times o200k per kind, as Claude counts real output (S4). HONEST_CLAUDE_PRIOR=off runs the same provider under
+ *   a model id that isn't Claude's, so the engine starts it at 1, for a comparison of the prior's effect.
+ */
+type Profile = "" | "exact" | "claude";
+const PROFILE = (process.env.HONEST_PROFILE ?? "") as Profile;
+const CLAUDE_PRIOR_OFF = process.env.HONEST_CLAUDE_PRIOR === "off";
+/** The profile in output names. */
+const PROFILE_TAG = `${PROFILE}${PROFILE === "claude" && CLAUDE_PRIOR_OFF ? "-noprior" : ""}`;
+/** The model each profile runs, and the engine options it adds. */
+function profileModel(profile: Profile): string {
+	return profile === "claude" && !CLAUDE_PRIOR_OFF ? "claude-honest" : "honest";
+}
+function profileOptions(profile: Profile): Record<string, unknown> {
+	if (profile !== "exact") return {};
+	return {
+		// Not the suite's PENPI_TOKENIZER=estimate: this profile counts exactly, with the bundled o200k.
+		env: {},
+		tokenizerCacheDir: join(tmpdir(), "penpi-honest-tokenizers"),
+		exactModels: { "faux/honest": { entry: "o200k", reasoning: "keep" } },
+	};
+}
+/** A kind's provider scale for a profile, from one draw of the session's stream. */
+function profileScale(profile: Profile, draw: number): number {
+	const scale = profile === "exact" ? 0.98 + 0.04 * draw : profile === "claude" ? 1.1 + 0.9 * draw : 0.7 + 1.1 * draw;
+	return Math.round(scale * 100) / 100;
+}
 /** Sum the Power parts under HONEST_OUT and assert the bar, instead of running sessions. */
 const POWER_SUM = process.env.HONEST_POWER_SUM === "1";
 const HELD_OUT = "faac585884ae2c013a6b1400f3e9e77f10b34bac";
@@ -241,11 +273,12 @@ interface Row {
 }
 
 /** A session's tool results, each with its kind and that kind's provider scale. */
-function sessionBlobs(mix: string, window: number, seed: number) {
+function sessionBlobs(mix: string, window: number, seed: number, profile: Profile = PROFILE) {
 	const r = rng(seed * 7_919 + window + mix.length);
 	const makers = MIX_KINDS[mix];
 	const kinds = Object.keys(makers);
-	const kindScale = new Map(kinds.map((k) => [k, Math.round((0.7 + 1.1 * r()) * 100) / 100]));
+	// One draw per kind whatever the profile, so the blobs are the same in every profile.
+	const kindScale = new Map(kinds.map((k) => [k, profileScale(profile, r())]));
 	const scales = new Map<string, number>();
 	const blobs: Record<string, { text: string }> = {};
 	const used: string[] = [];
@@ -267,8 +300,9 @@ async function session(
 	options: Record<string, unknown>,
 	harnesses: Harness[],
 	reporter = "exact",
+	profile: Profile = PROFILE,
 ) {
-	const { blobs, scales, used, kindScale } = sessionBlobs(mix, window, seed);
+	const { blobs, scales, used, kindScale } = sessionBlobs(mix, window, seed, profile);
 	// The resend choices, drawn from their own stream so the blobs stay as they were.
 	const pick = rng(seed * 104_729 + window + mix.length);
 	const started = performance.now();
@@ -281,7 +315,7 @@ async function session(
 		// requests come out the same on every run and from any checkout path, and a session can be replayed.
 		tempDir: join(tmpdir(), `penpi-honest-${mix}-${window}-${seed}-${reporter}`),
 		packageDir: HONEST_PACKAGE_DIR,
-		models: [{ id: "honest", contextWindow: window, maxTokens: 4_000 }],
+		models: [{ id: profileModel(profile), contextWindow: window, maxTokens: 4_000 }],
 		settings: { compaction: { enabled: false } },
 		extensionFactories: [
 			blobExtension(blobs),
@@ -291,9 +325,16 @@ async function session(
 			createContextEngine({
 				stats,
 				hiddenCustomTypes: [UNSENT],
+				...profileOptions(profile),
 				...options,
 				log: (line: string) => {
-					if (line.includes("silent truncation") || line.includes("cut #") || line.includes("exact repeat"))
+					if (
+						line.includes("silent truncation") ||
+						line.includes("cut #") ||
+						line.includes("exact repeat") ||
+						line.includes("exactness gate") ||
+						line.includes("exact count off")
+					)
 						rows.push({ s: stats.calibrationSamples.length, call: calls, line });
 				},
 			}),
@@ -389,9 +430,11 @@ async function session(
 			again: sim.calls[again].processed,
 		});
 	}
-	harness.cleanup();
+	// As Pi's runtime ends a session: the engine frees its tokenizer worker (exact profile).
+	await endSession(harness);
 	harnesses.pop();
 	return {
+		profile,
 		mix,
 		window,
 		seed,
@@ -409,6 +452,8 @@ async function session(
 		growthChecks: stats.growthChecks.length,
 		cuts: stats.cuts.length,
 		detections: stats.plateaus,
+		exactSamples: stats.exact.samples,
+		gateSet: rows.some((row) => row.line.includes("exactness gate set")),
 		// Only resends that reported the same count as the request they repeat are the shape the guard is for.
 		resends: resends.filter((x) => x.reported === x.again),
 		resendsDiffering: resends.filter((x) => x.reported !== x.again).length,
@@ -485,8 +530,8 @@ describe(`0.9.0, ADR 0035: the detector on honest content${FULL ? ", full run" :
 	// The baseline's guarded repeats per session (exact reporter), for the Power count.
 	const power: number[] = [];
 	const harnesses: Harness[] = [];
-	afterEach(() => {
-		while (harnesses.length > 0) harnesses.pop()?.cleanup();
+	afterEach(async () => {
+		while (harnesses.length > 0) await endSession(harnesses.pop()!);
 	});
 	if (POWER_SUM) {
 		// The bar on the whole full run: every seed from 0 to 49 once, over all three mixes and both windows.
@@ -534,7 +579,7 @@ describe(`0.9.0, ADR 0035: the detector on honest content${FULL ? ", full run" :
 									writeFileSync(
 										join(
 											OUT,
-											`${mix}.${window}.${String(seed).padStart(2, "0")}${reporter === "exact" ? "" : `.${reporter}`}.${name}.json`,
+											`${PROFILE_TAG ? `${PROFILE_TAG}.` : ""}${mix}.${window}.${String(seed).padStart(2, "0")}${reporter === "exact" ? "" : `.${reporter}`}.${name}.json`,
 										),
 										JSON.stringify({ variant: name, ...result }),
 									);
@@ -558,6 +603,23 @@ describe(`0.9.0, ADR 0035: the detector on honest content${FULL ? ", full run" :
 					);
 	// Power for the exact repeat's guard, counted from the logged rows: the full run must meet the guarded shape at
 	// least 20 times in at least 10 sessions; the CI slice at least once, so a broken guard can't pass it.
+	// 0.9.0: the exact path's CI slice (the default run only): the same shapes sessions, counted exactly by the engine and
+	// by a provider whose counter drifts by up to 2%. No detection, and the gate sets.
+	if (!FULL && PROFILE === "")
+		it(
+			"the exact path on honest content: no detection, and the exactness gate sets",
+			{ timeout: 1_800_000 },
+			async () => {
+				let set = 0;
+				for (const seed of [0, 1, 2, 3, 4]) {
+					const result = await session("shapes", 32_000, seed, {}, harnesses, "exact", "exact");
+					expect.soft(result.detections, `seed ${seed}: a detection on an honest provider`).toEqual([]);
+					if (result.gateSet) set++;
+				}
+				expect(set).toBeGreaterThan(0);
+			},
+		);
+
 	it("Power: the shipped engine meets the guarded exact repeat", () => {
 		const total = power.reduce((a, b) => a + b, 0);
 		const sessions = power.filter((n) => n > 0).length;
@@ -576,8 +638,9 @@ describe(`0.9.0, ADR 0035: the detector on honest content${FULL ? ", full run" :
 				sessions,
 				of: power.length,
 			};
-			writeFileSync(join(OUT, `power.${part.from}-${part.to}.json`), `${JSON.stringify(part)}\n`);
-			writeFileSync(join(OUT, `power.${part.from}-${part.to}.txt`), `${line}\n`);
+			const tag = `${PROFILE_TAG ? `${PROFILE_TAG}.` : ""}${part.from}-${part.to}`;
+			writeFileSync(join(OUT, `power.${tag}.json`), `${JSON.stringify(part)}\n`);
+			writeFileSync(join(OUT, `power.${tag}.txt`), `${line}\n`);
 			process.stderr.write(`${line}\n`);
 		} else expect(total, line).toBeGreaterThanOrEqual(1);
 	});

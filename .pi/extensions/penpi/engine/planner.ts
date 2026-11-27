@@ -13,6 +13,7 @@ import {
 	requestShape,
 	textTokens,
 } from "./estimator.ts";
+import { type ExactParts, exactRequest } from "./exact.ts";
 import {
 	HEADER_FORMAT,
 	HEADER_TYPE,
@@ -579,9 +580,10 @@ export function installPlanner(core: EngineCore): void {
 		recapped?: SectionMap;
 		/** 0.9.0: what the request costs in the budget's units (times the ratio: provider tokens), exact parts priced. */
 		priced?: number;
-		/** The request's exact count, when every part was counted, and the parts still to count. */
+		/** The request's exact count, when every part was counted (with each message's parts), and the parts still to count. */
 		exact?: number;
 		uncounted?: AgentMessage[];
+		parts?: ExactParts[];
 	} {
 		const limits = core.resolveLimits(ctx);
 		const ratio = core.ratioFor(limits.key);
@@ -798,16 +800,31 @@ export function installPlanner(core: EngineCore): void {
 	 * 0.9.0: the exact count of what a request sends, when every message that sends anything was counted, and the
 	 * messages still to count (in the background, for the next request). None while no tokenizer is ready.
 	 */
-	function exactOf(sent: AgentMessage[]): { exact?: number; uncounted?: AgentMessage[] } {
+	function exactOf(sent: AgentMessage[]): { exact?: number; uncounted?: AgentMessage[]; parts?: ExactParts[] } {
 		if (!core.exact.ready()) return {};
 		let total = 0;
 		const uncounted: AgentMessage[] = [];
+		const parts: ExactParts[] = [];
 		for (const message of sent) {
 			const exact = core.exact.sendTokens(message);
-			if (exact !== undefined) total += exact;
-			else if (core.sendTokens(message) > 0) uncounted.push(message);
+			if (exact !== undefined) {
+				total += exact;
+				parts.push(core.exact.parts(message)!);
+			} else if (core.sendTokens(message) > 0) uncounted.push(message);
+			// Sends nothing: counts nothing on either path.
+			else
+				parts.push({
+					tokens: 0,
+					reasoning: 0,
+					band: 0,
+					raw: 0,
+					images: false,
+					text: 0,
+					said: 0,
+					calls: false,
+				});
 		}
-		return uncounted.length === 0 ? { exact: total } : { uncounted };
+		return uncounted.length === 0 ? { exact: total, parts } : { uncounted };
 	}
 
 	/**
@@ -850,6 +867,7 @@ export function installPlanner(core: EngineCore): void {
 		let priced: number | undefined;
 		let exact: number | undefined;
 		let uncounted: AgentMessage[] | undefined;
+		let parts: ExactParts[] | undefined;
 		const started = performance.now();
 		// D24: the provider a response names belongs to that response (a failed one is never calibrated).
 		st.streamProvider = undefined;
@@ -877,7 +895,7 @@ export function installPlanner(core: EngineCore): void {
 		}
 		try {
 			let refuse: string | undefined;
-			({ result, estimate, refuse, recapped, priced, exact, uncounted } = requestWindowA(visible, ctx));
+			({ result, estimate, refuse, recapped, priced, exact, uncounted, parts } = requestWindowA(visible, ctx));
 			if (refuse) {
 				log(refuse);
 				ctx.ui.notify(refuse, "error");
@@ -984,6 +1002,20 @@ export function installPlanner(core: EngineCore): void {
 			cum: st.appendCum,
 			slack: st.appendSlack,
 			...(exact !== undefined ? { exact, exactKey: core.exact.key(limits.key) } : {}),
+			// 0.9.0: what exact detection reads, for a request counted whole.
+			...(exact !== undefined && parts && parts.length === sentMessages.length
+				? {
+						exactRequest: exactRequest(
+							sentMessages,
+							parts,
+							appendOnly ? st.sentShape!.keys.length : undefined,
+							core.exact.detection()?.reasoning,
+						),
+						exactAssumed: core.exact.detection()?.assumed ?? false,
+						exactEntry: core.exact.ready()?.id,
+						exactTemplate: core.exact.detection()?.template,
+					}
+				: {}),
 		};
 		st.sentShape = shape;
 		if (uncounted && uncounted.length > 0) core.exact.background(uncounted);
