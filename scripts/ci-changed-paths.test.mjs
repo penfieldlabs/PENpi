@@ -70,9 +70,14 @@ describe("ci-changed-paths.sh", () => {
 		assert.equal(run(dir, { BASE_SHA: first }), sel(false, false));
 	});
 
-	it("the engine, its upstream script or the corpus pin: engine-on-upstream only", () => {
+	it("the engine, its suites, its upstream script or the corpus pin: engine-on-upstream only", () => {
 		for (const files of [
 			{ ".pi/extensions/penpi/engine/planner.ts": "x\n" },
+			{ "packages/coding-agent/test/suite/context-engine/v090-recall-hidden.test.ts": "x\n" },
+			{
+				".pi/extensions/penpi/engine/tools/recall.ts": "x\n",
+				"packages/coding-agent/test/suite/context-engine/helpers.ts": "x\n",
+			},
 			{ "scripts/engine-suite-upstream.sh": "x\n" },
 			{ "docs/UPSTREAM_PATCHES.txt": "base: aaa (upstream)\ne2-corpus: ddd eee\nREADME.md\tPENpi\n" },
 		]) {
@@ -84,6 +89,13 @@ describe("ci-changed-paths.sh", () => {
 	it("packages, the root package files, the lockfile, the base, or the filter itself: both", () => {
 		for (const files of [
 			{ "packages/ai/src/x.ts": "x\n" },
+			// E2's unit tests run only in coding-agent's package run.
+			{ "packages/coding-agent/test/suite/context-engine-e2/resume.ts": "x\n" },
+			{ "vitest.base.ts": "x\n" },
+			{ "test.sh": "x\n" },
+			{ ".npmrc": "x\n" },
+			// Beside PENpi's suites, upstream's own coding-agent tests still count.
+			{ "packages/coding-agent/test/suite/context-engine/x.test.ts": "x\n", "packages/coding-agent/test/suite/harness.ts": "x\n" },
 			{ "package.json": "{}\n" },
 			{ "package-lock.json": "{}\n" },
 			{ "docs/UPSTREAM_PATCHES.txt": "base: fff (upstream)\ne2-corpus: bbb ccc\nREADME.md\tPENpi\n" },
@@ -93,6 +105,16 @@ describe("ci-changed-paths.sh", () => {
 			const { dir, first } = repo(files);
 			assert.equal(run(dir, { BASE_SHA: first }), sel(true, true), JSON.stringify(files));
 		}
+	});
+
+	it("a file moved out of packages/ counts as the deletion it is", () => {
+		const { dir, first } = repo({ "packages/ai/src/moved.ts": "export const x = 1;\n" });
+		const git = (...args) => execFileSync("git", args, { cwd: dir, env: gitEnv }).toString().trim();
+		git("mv", "packages/ai/src/moved.ts", "docs/moved.ts");
+		git("commit", "-q", "-m", "move");
+		const second = git("rev-parse", "HEAD~1");
+		assert.equal(run(dir, { BASE_SHA: second }), sel(true, true));
+		assert.ok(first);
 	});
 
 	it("the full set: release branches, tags, the weekly and manual runs, and no base to compare with", () => {

@@ -3,10 +3,14 @@
 # changes. Plain git, no third-party action. The jobs skip with an `if`, never a workflow-level paths filter: a
 # required check that never reports blocks the merge, and a skipped job counts as passing.
 #
-#   upstream=true  upstream's packages/* suites: packages/**, the root package files, the lockfile, the upstream
-#                  base (the base: line of docs/UPSTREAM_PATCHES.txt), or this filter and the workflow itself
-#   engine=true    the engine-on-upstream job: all of the above, the engine, its suite script, or the E2 corpus pin
-#                  (the e2-corpus: line)
+#   upstream=true  upstream's packages/* suites: packages/** but the engine suite (PENpi's own, under coding-agent),
+#                  the root package files, the lockfile, vitest.base.ts, test.sh, .npmrc, the upstream base (the base:
+#                  line of docs/UPSTREAM_PATCHES.txt), or this filter and the workflow itself. E2 stays in: its unit
+#                  tests run only in coding-agent's package run
+#   engine=true    the engine-on-upstream job: all of the above, the engine, its suite, its suite script, or the E2
+#                  corpus pin (the e2-corpus: line)
+#
+# Renames count as a deletion and an addition (--no-renames), so a file moved out of a filtered folder still counts.
 #
 # The full set, both true, on release/** branches, on tags, on the weekly or a manual run, and when the changed
 # paths can't be computed (a new branch, a missing base commit).
@@ -47,7 +51,12 @@ engine=false
 why=()
 while IFS= read -r path; do
 	case "$path" in
-		packages/* | package.json | package-lock.json | .github/workflows/ci.yml | scripts/ci-changed-paths.sh)
+		# The engine suite, PENpi's own: an edit to it doesn't re-test upstream's code.
+		packages/coding-agent/test/suite/context-engine/*)
+			engine=true
+			why+=("$path")
+			;;
+		packages/* | package.json | package-lock.json | vitest.base.ts | test.sh | .npmrc | .github/workflows/ci.yml | scripts/ci-changed-paths.sh)
 			upstream=true
 			why+=("$path")
 			;;
@@ -56,7 +65,7 @@ while IFS= read -r path; do
 			why+=("$path")
 			;;
 	esac
-done < <(git diff --name-only "$base" HEAD)
+done < <(git diff --name-only --no-renames "$base" HEAD)
 if [ "$(line "$base" base)" != "$(line HEAD base)" ]; then
 	upstream=true
 	why+=("the upstream base")

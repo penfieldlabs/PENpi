@@ -22,8 +22,8 @@ extension against the built types in `packages/coding-agent/dist`, which does no
 fresh checkout; without it, it fails with
 `Failed to resolve entry for package "@earendil-works/pi-coding-agent"`. The extension's tests
 don't need it: they load Pi from source (`.pi/extensions/penpi/vitest.config.ts`), as the engine
-suite does, all but `mcp-integration.test.ts`, which starts the built Pi and fails its
-prerequisite check without a build.
+suite does, all but `mcp-integration.test.ts`, which starts the built Pi: without a build its
+tests skip, and its prerequisite check says to run `npm run build`.
 
 **Install with `npm ci`, not `npm install`.** Regenerating the lockfile from scratch
 currently crashes npm 10.x in this workspace (`Cannot read properties of null (reading

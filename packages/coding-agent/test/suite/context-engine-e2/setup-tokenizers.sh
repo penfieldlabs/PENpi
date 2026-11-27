@@ -26,12 +26,14 @@ fi
 #    the harness was built against). "main" moved on 2026-10-15 (chat template change); 91b69215
 #    (2026-10-12) still serves all four files with these hashes.
 rev=91b69215804f2d2036a8867f6ce44848e278dcda
+# sha256sum where it's there (Linux), else shasum -a 256 (a stock macOS).
+sha256check() { if command -v sha256sum >/dev/null; then sha256sum -c "$@"; else shasum -a 256 -c "$@"; fi; }
 while read -r name sha; do
 	file="$hf/$name"
-	if [ -f "$file" ] && echo "$sha  $file" | sha256sum -c --status -; then continue; fi
+	if [ -f "$file" ] && echo "$sha  $file" | sha256check --status -; then continue; fi
 	curl -fsSL "https://huggingface.co/zai-org/GLM-5.3-Flash/resolve/$rev/$name" -o "$file.part"
 	mv "$file.part" "$file"
-	echo "$sha  $file" | sha256sum -c -
+	echo "$sha  $file" | sha256check -
 done < <($cache hf-files)
 
 # 3. 0.9.0: the chat templates the engine's reasoning rules were read from (reasoning-rules.test.ts renders them),
