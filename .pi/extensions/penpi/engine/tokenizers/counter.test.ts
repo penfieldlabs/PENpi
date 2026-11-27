@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { monitorEventLoopDelay } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
 import { Tiktoken } from "js-tiktoken/lite";
+import cl100kRanks from "js-tiktoken/ranks/cl100k_base";
 import o200kRanks from "js-tiktoken/ranks/o200k_base";
 import { describe, expect, it } from "vitest";
 import { type CountChunk, TokenCounter, type TokenizerWorker, type WorkerReply } from "./counter.ts";
@@ -377,6 +378,52 @@ describe("tokenizer counter: the real worker", { timeout: 120_000 }, () => {
 		const reference = new Tiktoken(o200kRanks);
 		expect(counts).toEqual(texts.map((t) => reference.encode(t, "all").length));
 		c.end();
+	});
+
+	it("whitespace before a long piece splits as in the whole text, on o200k and cl100k, token for token", async () => {
+		// Encoded on its own, the text before a long piece would end in "\t\t", one piece where the whole text has two.
+		const texts = ["a\t\t" + "-".repeat(70), `\t\t${"=".repeat(70)}\n`.repeat(1_000), `x \t ${"-".repeat(80)} y\t\t`];
+		for (const [entry, ranks] of [
+			[O200K, o200kRanks],
+			[CL100K, cl100kRanks],
+		] as const) {
+			const c = real();
+			await c.use(entry);
+			const counts: number[] = [];
+			await c.count(texts, "request", (chunk) => {
+				chunk.counts.forEach((n, i) => {
+					counts[chunk.from + i] = n;
+				});
+			}).done;
+			const reference = new Tiktoken(ranks);
+			expect(counts, entry.id).toEqual(texts.map((t) => reference.encode(t, "all").length));
+			c.end();
+		}
+	});
+
+	it('2,000 empty "//" lines, one long piece on o200k, count as js-tiktoken does, well inside the watchdog', async () => {
+		// o200k's punctuation pieces take a tail of line breaks and slashes, so the whole text is one 6,000-character
+		// piece; js-tiktoken's own merge takes about 10 s on it, past the 2 s watchdog. Its counts, computed once:
+		// 1,001 on o200k and 2,000 on cl100k, where each line is its own piece.
+		const text = "//\n".repeat(2_000);
+		for (const [entry, expected] of [
+			[O200K, 1_001],
+			[CL100K, 2_000],
+		] as const) {
+			const c = real();
+			await c.use(entry);
+			const counts: number[] = [];
+			const started = performance.now();
+			await c.count([text], "request", (chunk) => {
+				chunk.counts.forEach((n, i) => {
+					counts[chunk.from + i] = n;
+				});
+			}).done;
+			expect(performance.now() - started, entry.id).toBeLessThan(500);
+			expect(counts, entry.id).toEqual([expected]);
+			expect(c.restarts).toBe(0);
+			c.end();
+		}
 	});
 
 	it("two background calls, the first about 4 MB, are both fulfilled with no restart", async () => {

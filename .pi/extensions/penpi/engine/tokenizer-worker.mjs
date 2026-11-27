@@ -56,8 +56,8 @@ function tiktokenRanks(bytes, pattern, specials) {
 
 /** A piece of the split pattern longer than this is merged by mergedTokens (below), not by js-tiktoken. */
 const LONG = 64;
-/** A run that could make such a piece: letters and marks, punctuation, or whitespace. */
-const LONG_RUN = new RegExp(`[\\p{L}\\p{M}]{${LONG}}|[^\\s\\p{L}\\p{N}]{${LONG}}|\\s{${LONG}}`, "u");
+/** A piece that is all whitespace. */
+const WHITESPACE = /^\s+$/u;
 
 const bytesOf = new TextEncoder();
 /** Whether heap entry a ([rank, start, version]) comes before b: the lower rank, then the leftmost. */
@@ -143,9 +143,11 @@ function mergedTokens(rankMap, piece) {
  * A js-tiktoken tokenizer: specials as one token, and as text.
  *
  * js-tiktoken merges each piece of its split pattern in time quadratic in the piece's length: 8,000 "x" take 20 s,
- * where 40,000 characters of base64, which the pattern splits, take 0.1 s. So a text holding a piece longer than LONG
- * is split at its long pieces: the text between them is encoded whole, as before, and each long piece is merged by
- * mergedTokens, in about n log n: 30,000 "x" take about 0.3 s. The count is js-tiktoken's, token for token.
+ * where 40,000 characters of base64, which the pattern splits, take 0.1 s. So a text longer than LONG is split by the
+ * pattern itself, which finds every long piece whatever it holds (o200k's punctuation pieces take a tail of line
+ * breaks and slashes, so "//\n" repeated is one piece): the text between long pieces is encoded whole, as before,
+ * and each long piece is merged by mergedTokens, in about n log n: 30,000 "x" take about 0.3 s. The count is
+ * js-tiktoken's, token for token.
  */
 function fromTiktoken(ranks) {
 	const encoder = new Tiktoken(ranks);
@@ -153,20 +155,36 @@ function fromTiktoken(ranks) {
 	const own = Object.keys(ranks.special_tokens ?? {});
 	const trigger = own.length > 0 ? new RegExp(own.map(escape).join("|")) : undefined;
 	const specials = own.length > 0 ? new RegExp(own.map(escape).join("|"), "g") : undefined;
+	// Every piece as the whole text's matches make it. A slice encoded on its own is split again, and a run of
+	// whitespace that ends a slice before a long piece would come out one piece where the whole text has two
+	// (\s+(?!\S) takes all of it at the end of a string): so each slice ends after its last piece that isn't
+	// whitespace, and the whitespace pieces after it, up to the long piece, are counted one by one.
 	const split = (text, allowed) => {
 		let n = 0;
-		let last = 0;
+		let from = 0;
+		let solid = 0;
+		const spaces = [];
 		for (const m of text.matchAll(pattern)) {
-			if (m[0].length <= LONG) continue;
-			if (m.index > last) n += encoder.encode(text.slice(last, m.index), allowed, []).length;
-			n += mergedTokens(encoder.rankMap, m[0]);
-			last = m.index + m[0].length;
+			const piece = m[0];
+			if (piece.length > LONG) {
+				if (solid > from) n += encoder.encode(text.slice(from, solid), allowed, []).length;
+				for (const s of spaces) n += mergedTokens(encoder.rankMap, s);
+				n += mergedTokens(encoder.rankMap, piece);
+				from = solid = m.index + piece.length;
+				spaces.length = 0;
+			} else if (WHITESPACE.test(piece)) spaces.push(piece);
+			else {
+				solid = m.index + piece.length;
+				spaces.length = 0;
+			}
 		}
-		if (last < text.length) n += encoder.encode(text.slice(last), allowed, []).length;
+		// The last slice ends where the text does, as it does in the whole text.
+		if (from < text.length) n += encoder.encode(text.slice(from), allowed, []).length;
 		return n;
 	};
 	const count = (text, allowed) => {
-		if (!LONG_RUN.test(text)) return encoder.encode(text, allowed, []).length;
+		// A text this short holds no long piece.
+		if (text.length <= LONG) return encoder.encode(text, allowed, []).length;
 		// Specials first, as encode does, so a long run never swallows one.
 		if (allowed !== "all" || !specials) return split(text, []);
 		let n = 0;
