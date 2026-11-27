@@ -2,9 +2,11 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, "release/**"]
+    tags: ["v*"]
   pull_request:
-    branches: [main]
+    branches: [main, "release/**"]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -20,7 +22,36 @@ concurrency:
 #   (`-builtin:mcp` in the settings the installer writes); PENpi's MCP runs through the
 #   embedded pi-mcp-adapter instead.
 jobs:
+  # Which test sets this run needs, from the paths it changes (scripts/ci-changed-paths.sh, plain git). The jobs
+  # skip with an `if`, never a workflow-level paths filter: a required check that never reports blocks the merge,
+  # and a skipped job counts as passing. Release branches, tags and manual runs get the full set, and so does any
+  # run whose outputs are missing: a failed filter runs everything rather than nothing.
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      upstream: ${{ steps.paths.outputs.upstream }}
+      engine: ${{ steps.paths.outputs.engine }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The base commit to compare with: a pull request's base, or a push's previous head.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Changed paths
+        id: paths
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          GIT_REF: ${{ github.ref }}
+          BASE_REF: ${{ github.base_ref }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: scripts/ci-changed-paths.sh
+
   build-check-test:
+    needs: changes
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     # Backstop for the whole job. Without it the default is GitHub's 360-minute
     # ceiling, so any hung step burns six runner-hours before anyone finds out.
@@ -118,13 +149,22 @@ jobs:
         timeout-minutes: 10
         run: npm run setup:tokenizers
 
+      # npm test in two parts, both isolated (./test.sh): PENpi's tests on every run, upstream's packages/* suites
+      # only when the changes job says they could be affected.
       - name: Test
-        run: npm test
+        run: ./test.sh test:scripts test:extension test:context-engine
+
+      - name: Test upstream packages
+        if: ${{ needs.changes.outputs.upstream != 'false' }}
+        run: ./test.sh test:packages
 
   # The context engine is a plain Pi extension: its suite must pass against stock upstream Pi at the recorded
   # base, without PENpi's core patches (ADR 0032). The script checks the base out as a worktree, copies the
   # engine and the suite in, builds upstream offline with the fork's committed model data, and runs the suite.
   engine-on-upstream:
+    needs: changes
+    # Only when upstream's packages, the engine, its suite script or the E2 corpus pin change (the changes job).
+    if: ${{ !cancelled() && needs.changes.outputs.engine != 'false' }}
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
