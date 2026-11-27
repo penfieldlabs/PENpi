@@ -45,6 +45,26 @@ silencing a warning about a workspace that is not part of the runtime. Revisit a
 upstream merge: either the example's engine requirement will have moved, or it can be
 dropped as part of a change that is already reconciling upstream.
 
+### Heavy runs on a local machine
+
+The runs too long for CI's main job, on macOS (Apple Silicon) or Linux, with one bundle to hand
+back:
+
+```bash
+scripts/run-heavy-local.sh                       # the full engine suite, the honest test's full run, E2
+scripts/run-heavy-local.sh --parts engine,e2-exact --workers 4
+```
+
+- **Parts:**
+  - `engine`: the full engine suite;
+  - `honest`: the honest test's full run in its three profiles, on upstream v1.4.0, v1.5.0 and v1.5.1 (seeds 0-16, 17-33 and 34-49), then the Power bar;
+  - `e2`: E2's default matrix on the pinned corpus;
+  - `e2-exact`: E2's exact mode on the o200k silent runs.
+- **What it needs:** a clean checkout, Node 22, `npm ci`, and, for `honest` and the E2 parts, a clone with the full history, which holds the corpora. It refuses to start otherwise and says why.
+- **Isolation:** each part runs as `npm test` does, with `env -i`, an empty temporary home and no keys. The tokenizer setup downloads only from the npm registry and huggingface.co, checked by hash.
+- **Workers:** set from the cores and memory, about 2 GB a worker; `--workers` overrides them.
+- **Output:** `bundle.md` under `.cache/heavy/<commit>-<time>/`, or `--out`, with the commit, the engine's hash, the machine, each part's result, time and failures, and E2's lags. It holds no home paths, user names or host names. Each part's full log sits beside it.
+
 ### Release / review archives
 
 One canonical command. It builds from `git archive`, so the archive contains exactly the
