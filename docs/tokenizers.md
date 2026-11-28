@@ -142,8 +142,8 @@ path: the `countApi` setting in the `penpi` block, `"auto"` (default) or `"off"`
   off for the session, with one notice naming the reason, a refused beta among them.
 - **Gemini:** `countTokens` gets the request's contents, system instruction and tools, with the
   key in the `x-goog-api-key` header, never in the URL. Gemini 4 counts an image above what it
-  bills, so an image appended is judged on the estimate's rules, and while the history holds one
-  the exact repeat and the absolute bound are off. It counts a tool call that carries its
+  bills, so once an image is in the session, every request from then on is judged on the
+  estimate's rules. It counts a tool call that carries its
   `thoughtSignature` 8 tokens below billed: the allowance for that is on the surplus side only, and
   on totals it hides a truncation under 8 tokens a call in the history, about 1,600 tokens at 200
   calls. Flash counts exactly.

@@ -937,3 +937,42 @@ export function anthropicCacheModel(
 	}
 	return { total, read, written, tail, missShare: total ? (written + tail) / total : 0 };
 }
+
+/**
+ * 0.9.0: two local servers, the first answering every request with a 307 to the second, which records the headers of
+ * whatever reaches it. For the count API: a redirect must never carry the key to another origin.
+ */
+export async function redirectPair(): Promise<{
+	from: string;
+	reached: Array<Record<string, string | string[] | undefined>>;
+	first: number;
+	close: () => Promise<void>;
+}> {
+	const { createServer } = await import("node:http");
+	const reached: Array<Record<string, string | string[] | undefined>> = [];
+	const state = { first: 0 };
+	const to = createServer((req, res) => {
+		reached.push(req.headers);
+		res.writeHead(200, { "content-type": "application/json" }).end('{"input_tokens":1,"totalTokens":1}');
+	});
+	await new Promise<void>((resolve) => to.listen(0, "127.0.0.1", resolve));
+	const toPort = (to.address() as { port: number }).port;
+	const from = createServer((req, res) => {
+		state.first++;
+		req.resume();
+		res.writeHead(307, { location: `http://localhost:${toPort}${req.url}` }).end();
+	});
+	await new Promise<void>((resolve) => from.listen(0, "127.0.0.1", resolve));
+	const fromPort = (from.address() as { port: number }).port;
+	return {
+		from: `http://127.0.0.1:${fromPort}`,
+		reached,
+		get first() {
+			return state.first;
+		},
+		close: async () => {
+			await new Promise((resolve) => from.close(resolve));
+			await new Promise((resolve) => to.close(resolve));
+		},
+	};
+}

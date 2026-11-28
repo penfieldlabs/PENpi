@@ -16,7 +16,7 @@ import {
 	tailsMatch,
 } from "../../../../../.pi/extensions/penpi/engine/countapi.ts";
 import { type ExactSession, endExactSessions, exactSession, prompt } from "./exact-session.ts";
-import { anthropicPayload } from "./helpers.ts";
+import { anthropicPayload, redirectPair } from "./helpers.ts";
 
 const MODEL = "claude-count";
 const KEY = `faux/${MODEL}`;
@@ -221,6 +221,24 @@ describe("0.9.0: Claude's count_tokens, simulated", () => {
 		expect(s.lines.filter((l) => l.includes("silent truncation"))).toEqual([]);
 	});
 
+	it("above 1 MB, the request before isn't counted when it named fallbacks and its response named no model", async () => {
+		// As apply: such a response may be a fallback model's, so its count must not become the next delta's base.
+		const { s, calls } = await countSession({
+			window: 32_000,
+			payload: () => ({
+				system: [{ type: "text", text: "x".repeat(1_100_000) }],
+				fallbacks: [{ model: "claude-fallback" }],
+			}),
+		});
+		await work(s, 10, [6_000, 7_000, 6_500]);
+		const of = calls.map((c) =>
+			s.sim.calls.findIndex((sc) => JSON.stringify(sc.payload.messages) === JSON.stringify(c.body.messages)),
+		);
+		expect(of.length).toBeGreaterThan(0);
+		expect(of.filter((i, k) => k > 0 && i === of[k - 1] - 1)).toEqual([]);
+		expect(s.lines.filter((l) => l.includes("silent truncation"))).toEqual([]);
+	});
+
 	it("a 429 on a count pauses counting; a 429 on the request is never evidence", async () => {
 		const limited = () => new Response("{}", { status: 429, headers: { "retry-after": "30" } });
 		const { s, calls } = await countSession({ count: { fail: (n) => (n === 0 ? limited() : undefined) } });
@@ -305,6 +323,21 @@ describe("0.9.0: Claude's count_tokens, simulated", () => {
 		expect(tailsMatch({ toolIds: ["a1"], toolNames: ["read"] }, payloadTail("claude", payload))).toBe(false);
 	});
 
+	it("a redirect is a count failure: the key never reaches the other origin", async () => {
+		const pair = await redirectPair();
+		try {
+			const target: CountTarget = { ...TARGET, url: `${pair.from}/v1/messages/count_tokens` };
+			// The engine's own fetch (globalThis.fetch), not a fake: the redirect is followed or refused by fetch itself.
+			const { s } = await countSession({ engine: { countApiTarget: () => target, countApiFetch: undefined } });
+			await work(s, 2);
+			expect(pair.first).toBeGreaterThan(0);
+			expect(pair.reached).toEqual([]);
+			expect(s.lines.some((l) => l.includes("count API failure 1/"))).toBe(true);
+		} finally {
+			await pair.close();
+		}
+	});
+
 	it("the cache warmer's payload (max_tokens 1) is never counted", async () => {
 		expect(isWarmPayload({ max_tokens: 1, messages: [] })).toBe(true);
 		expect(isWarmPayload({ max_tokens: 4_000, messages: [] })).toBe(false);
@@ -367,6 +400,13 @@ describe("0.9.0: the count API's direct-key check", () => {
 			await directCountTarget(model({}), registry({ apiKey: "k", baseUrl: "https://proxy.example.com" })),
 		).toBeUndefined();
 		expect(await directCountTarget(model({}), registry({}))).toBeUndefined();
+		// Plain HTTP, as the model's address or the key's: the key would go in plain text.
+		expect(
+			await directCountTarget(model({ baseUrl: "http://api.anthropic.com" }), registry({ apiKey: "k" })),
+		).toBeUndefined();
+		expect(
+			await directCountTarget(model({}), registry({ apiKey: "k", baseUrl: "http://api.anthropic.com" })),
+		).toBeUndefined();
 		expect(await directCountTarget(model({}), undefined)).toBeUndefined();
 	});
 });

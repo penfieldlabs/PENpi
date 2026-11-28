@@ -2,7 +2,7 @@
  * 0.9.0: the provider count API on Gemini (countapi.ts, design section 6), all simulated: the count goes to a fake
  * countTokens endpoint answering with the simulated provider's own count, and no key is read. Flash counts exactly;
  * Gemini 4 counts a tool call with its thoughtSignature 8 below billed and an image above it (29 measured, varied here
- * up to 58).
+ * up to 58), so any request with an image is a fallback sample.
  */
 import type { Api, Model, TranscriptContext } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
@@ -15,7 +15,7 @@ import {
 	isWarmPayload,
 } from "../../../../../.pi/extensions/penpi/engine/countapi.ts";
 import { type ExactSession, endExactSessions, exactSession, prompt } from "./exact-session.ts";
-import { finalTurn, geminiPayload, resendAnswered } from "./helpers.ts";
+import { finalTurn, geminiPayload, redirectPair, resendAnswered } from "./helpers.ts";
 
 const PNG = {
 	type: "image" as const,
@@ -41,6 +41,7 @@ async function geminiSession(
 		image?: (k: number) => number;
 		bump?: () => number;
 		sim?: Record<string, unknown>;
+		engine?: Record<string, unknown>;
 	} = {},
 ): Promise<{ s: ExactSession; calls: CountCall[] }> {
 	const calls: CountCall[] = [];
@@ -75,6 +76,7 @@ async function geminiSession(
 		engine: {
 			countApiTarget: (key: string) => (key === `faux/${model}` ? target : undefined),
 			countApiFetch: fake,
+			...options.engine,
 		},
 		sim: {
 			responseDelayMs: 40,
@@ -127,7 +129,7 @@ describe("0.9.0: Gemini's countTokens, simulated", () => {
 		expect(s.lines.some((l) => l.includes("silent truncation evidence"))).toBe(true);
 	});
 
-	it("an image appended is a fallback sample; with one in the history, an honest total and an honest repeat at the maximum are no evidence", async () => {
+	it("an image appended is a fallback sample, and so is every request after it: an honest total and an honest repeat at the maximum are no evidence", async () => {
 		// Gemini 4 counts each image 29 to 58 above billed, by image, the same in every count of it.
 		const { s } = await geminiSession("gemini-4-test", {
 			signed: true,
@@ -136,16 +138,78 @@ describe("0.9.0: Gemini's countTokens, simulated", () => {
 		});
 		await work(s, 3);
 		expect(s.lines.some((l) => l.includes("exactness gate set"))).toBe(true);
-		// Forty images, billed small: their excess is well past the drift share of the text, which the bound allows.
+		// Forty images, billed small: their excess is well past the drift share of the text.
 		s.model.push(finalTurn("seen"));
 		await s.harness.session.prompt("Look at these.", { images: Array.from({ length: 40 }, () => PNG) });
 		expect(s.lines.some((l) => l.includes("exact sample on the fallback rules: an image appended"))).toBe(true);
 		await work(s, 2, 10);
+		expect(s.lines.some((l) => l.includes("exact sample on the fallback rules: an image in the history"))).toBe(true);
 		// The largest request again: exactly the maximum, an honest repeat.
 		await resendAnswered(s.harness, "done 11");
 		expect(s.lines.filter((l) => l.includes("silent truncation"))).toEqual([]);
 		expect(s.lines.filter((l) => l.includes("under the request's exact text count"))).toEqual([]);
 		expect(s.lines.filter((l) => l.includes("exact tokens above the request that set it"))).toEqual([]);
+	});
+
+	it("an image whose count varies from one count to the next: an honest session with images gives no evidence", async () => {
+		// Each count of each image off by up to 15 from the last, which growth on the exact rules would read as shortfalls.
+		let n = 0;
+		const { s } = await geminiSession("gemini-4-test", {
+			signed: true,
+			image: () => 29,
+			bump: () => [0, 15, -15, 10, -10][n++ % 5],
+			sim: { imageTokens: () => 30 },
+		});
+		await work(s, 3);
+		expect(s.lines.some((l) => l.includes("exactness gate set"))).toBe(true);
+		s.model.push(finalTurn("seen"));
+		await s.harness.session.prompt("Look at these.", { images: Array.from({ length: 10 }, () => PNG) });
+		await work(s, 6, 10);
+		expect(s.lines.some((l) => l.includes("exact sample on the fallback rules: an image in the history"))).toBe(true);
+		expect(s.lines.filter((l) => l.includes("silent truncation"))).toEqual([]);
+		expect(s.lines.filter((l) => l.includes("exact count off"))).toEqual([]);
+	});
+
+	it("a provider that drops messages, with an image early in the session: the gate never sets while the image is there", async () => {
+		const { s } = await geminiSession("gemini-4-test", {
+			signed: true,
+			image: () => 29,
+			sim: { imageTokens: () => 30, silentLimit: 7_000, silentReport: "remainder" },
+		});
+		s.model.push(finalTurn("seen"));
+		await s.harness.session.prompt("Look at this.", { images: [PNG] });
+		await work(s, 6);
+		// Counted, and truncated with the image in the history: without the rule, these deltas match and the gate sets.
+		expect(s.stats.countApi.counted).toBeGreaterThan(5);
+		expect(s.sim.calls.some((c) => c.truncatedInput)).toBe(true);
+		// The fallback rules find the truncation, and the engine's cut takes the image out of the history. Only then,
+		// against a provider no longer truncating, may the gate set.
+		const cut = s.lines.findIndex((l) => l.includes("cut #1"));
+		const gate = s.lines.findIndex((l) => l.includes("exactness gate set"));
+		expect(s.lines.some((l) => l.includes("silent truncation:"))).toBe(true);
+		expect(cut).toBeGreaterThan(-1);
+		expect(gate === -1 || gate > cut).toBe(true);
+	});
+
+	it("a redirect is a count failure: the key never reaches the other origin", async () => {
+		const pair = await redirectPair();
+		try {
+			const target: CountTarget = {
+				kind: "gemini",
+				url: `${pair.from}/v1beta/models/gemini-flash-test:countTokens`,
+				headers: { "x-goog-api-key": "test-key" },
+			};
+			// The engine's own fetch (globalThis.fetch), not a fake: the redirect is followed or refused by fetch itself.
+			const { s } = await geminiSession("gemini-flash-test", {
+				engine: { countApiTarget: () => target, countApiFetch: undefined },
+			});
+			await work(s, 2);
+			expect(pair.first).toBeGreaterThan(0);
+			expect(pair.reached).toEqual([]);
+			expect(s.lines.some((l) => l.includes("count API failure 1/"))).toBe(true);
+		} finally {
+			await pair.close();
+		}
 	});
 
 	it("the cache warmer's payload (maxOutputTokens 1) is never counted", () => {
@@ -215,6 +279,19 @@ describe("0.9.0: Gemini's direct-key check", () => {
 		).toBeUndefined();
 		expect(
 			await directCountTarget(model({ baseUrl: "https://proxy.example.com/v1beta" }), registry({ apiKey: "k" })),
+		).toBeUndefined();
+		// Plain HTTP, as the model's address or the key's: the key would go in plain text.
+		expect(
+			await directCountTarget(
+				model({ baseUrl: "http://generativelanguage.googleapis.com/v1beta" }),
+				registry({ apiKey: "k" }),
+			),
+		).toBeUndefined();
+		expect(
+			await directCountTarget(
+				model({}),
+				registry({ apiKey: "k", baseUrl: "http://generativelanguage.googleapis.com/v1beta" }),
+			),
 		).toBeUndefined();
 	});
 });

@@ -22,9 +22,9 @@
  *   betas as the `anthropic-beta` header. A response served by another model than the one asked for, or by an unnamed
  *   model when the request names fallbacks, is a fallback sample.
  * - **Gemini:** the `contents`, `systemInstruction` and `tools`, as a `generateContentRequest`, with the key only in
- *   the `x-goog-api-key` header, never in the URL. Gemini 4 counts an image above billed (29 measured), so an append
- *   with an image is a fallback sample, and while the history holds one the absolute bound and the exact repeat are
- *   off. It counts a tool call with its `thoughtSignature` below billed (8 measured): an appended one is allowed
+ *   the `x-goog-api-key` header, never in the URL. Gemini 4 counts an image above billed (29 measured), by an amount
+ *   not yet shown to be the same in every count of it, so a request with an image anywhere in it is a fallback
+ *   sample. It counts a tool call with its `thoughtSignature` below billed (8 measured): an appended one is allowed
  *   GEMINI_SIGNED_CALL_ALLOWANCE on the surplus side only, and billed may run GEMINI_SIGNED_CALL_EXCESS above the count
  *   per one in the history (detector.ts). Flash counts exactly; each generation has its own key, by model.
  * - **Detection:** a counted sample is an exact sample (detector.ts judgeExact): its count is the request's whole
@@ -132,9 +132,11 @@ export interface CountApi {
 
 type Json = Record<string, unknown>;
 const isObject = (v: unknown): v is Json => typeof v === "object" && v !== null && !Array.isArray(v);
-const hostOf = (url: string | undefined): string | undefined => {
+/** An HTTPS URL's host; undefined for any other protocol, so a key is never sent in plain text. */
+const httpsHost = (url: string | undefined): string | undefined => {
 	try {
-		return url ? new URL(url).host : undefined;
+		const u = url ? new URL(url) : undefined;
+		return u?.protocol === "https:" ? u.host : undefined;
 	} catch {
 		return undefined;
 	}
@@ -311,10 +313,10 @@ export async function directCountTarget(
 	const gemini = model.api === "google-generative-ai" && model.provider === "google";
 	if (!claude && !gemini) return undefined;
 	const host = claude ? "api.anthropic.com" : "generativelanguage.googleapis.com";
-	if (hostOf(model.baseUrl) !== host) return undefined;
+	if (httpsHost(model.baseUrl) !== host) return undefined;
 	if (!registry || registry.isUsingOAuth(model)) return undefined;
 	const auth = (await registry.getProviderAuth(model.provider).catch(() => undefined))?.auth;
-	if (!auth?.apiKey || (auth.baseUrl && hostOf(auth.baseUrl) !== host)) return undefined;
+	if (!auth?.apiKey || (auth.baseUrl && httpsHost(auth.baseUrl) !== host)) return undefined;
 	const base = (auth.baseUrl ?? model.baseUrl).replace(/\/+$/, "");
 	if (gemini)
 		return {
@@ -386,6 +388,9 @@ export function installCountApi(core: EngineCore): void {
 				headers: { "content-type": "application/json", ...t.headers, ...headers },
 				body: JSON.stringify(body),
 				signal: abort.signal,
+				// fetch carries custom headers, the key among them, across a redirect to another origin: a redirect is a
+				// failure instead.
+				redirect: "error",
 			});
 			if (response.status === 429) {
 				const after = Number(response.headers.get("retry-after"));
@@ -473,7 +478,9 @@ export function installCountApi(core: EngineCore): void {
 				before.seq === sent.seq - 1 &&
 				before.key === sent.key &&
 				before.slot.total === undefined &&
-				(before.slot.served === undefined || before.slot.served === before.slot.model)
+				(before.slot.served === undefined || before.slot.served === before.slot.model) &&
+				// As apply: fallbacks named and no model reported may be a fallback's total, never a delta's base.
+				!(before.slot.served === undefined && before.slot.fallbacksNamed)
 			) {
 				const earlier = { ...before.slot, judged: false, failed: undefined, skipped: undefined };
 				void count(before.target, before.body, before.headers, earlier, (total) => {
@@ -528,12 +535,18 @@ export function installCountApi(core: EngineCore): void {
 				band: 0,
 				appendedMessages: counts.messages,
 				appendedBand: 0,
-				// Claude counts images as it bills them; Gemini 4 above, so an image appended is a fallback sample there.
+				// Claude counts images as it bills them. Gemini 4 counts them above billed, by an amount not yet shown to be
+				// the same in every count of an image: any image in the request makes it a fallback sample there.
 				appendedImages: false,
 				appendedCalls: counts.calls,
 				appendedArguments: counts.args,
-				...(slot.kind === "gemini" && sent.appendedImages > 0
-					? { fallback: "an image appended (Gemini counts images above billed)" }
+				...(slot.kind === "gemini" && slot.images > 0
+					? {
+							fallback:
+								sent.appendedImages > 0
+									? "an image appended (Gemini counts images above billed)"
+									: "an image in the history (Gemini counts images above billed)",
+						}
 					: {}),
 			};
 			sent.exactRequest = request;

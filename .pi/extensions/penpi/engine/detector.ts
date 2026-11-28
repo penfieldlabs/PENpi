@@ -296,17 +296,15 @@ export function installDetector(core: EngineCore): void {
 		// Gemini 4 bills a tool call with its thoughtSignature above the count: allowed on the surplus side only, so it
 		// never widens the window a truncation could hide in.
 		const surplusAllowance = counted?.kind === "gemini" ? GEMINI_SIGNED_CALL_ALLOWANCE * ex.appendedCalls : 0;
-		// Gemini 4 counts an image above billed: while the history holds one, the bound and the repeat are off.
-		const imageOffset = counted?.kind === "gemini" && counted.images > 0;
 		const consecutive = !!prev && prev.seq === sent.seq - 1 && sent.appendOnly && !sent.afterLengthStop && !switched;
 		const delta = consecutive ? reported - prev!.reported : 0;
 		const exactDelta =
 			consecutive && prev!.exactRendered !== undefined ? ex.rendered - prev!.exactRendered : undefined;
 		const judged = exactDelta !== undefined && !ex.fallback && ex.appendedBand <= 0.25 * Math.max(exactDelta, 0);
 		// A count API's totals check is two-sided, so a generation with a constant excess never sets the gate. Gemini's
-		// signed calls in the history bill above the count, and its images below it.
+		// signed calls in the history bill above the count. (A Gemini request with an image is a fallback sample.)
 		const totals = counted
-			? (imageOffset || reported >= ex.text - COUNT_API_TOLERANCE) &&
+			? reported >= ex.text - COUNT_API_TOLERANCE &&
 				reported <=
 					ex.text +
 						COUNT_API_TOLERANCE +
@@ -331,7 +329,7 @@ export function installDetector(core: EngineCore): void {
 		}
 		// The absolute bound: a sample under its own text count is truncated, whatever its delta.
 		const bound = ex.text - ex.band - appended() - EXACT_DRIFT_SHARE * ex.text;
-		if (!imageOffset && reported < bound)
+		if (reported < bound)
 			return {
 				path: true,
 				suspect: `reported ${reported}, under the request's exact text count ${ex.text} (band ${ex.band}, so at least ${Math.round(bound)})`,
@@ -357,7 +355,7 @@ export function installDetector(core: EngineCore): void {
 		}
 		// The exact repeat, reversed: an honest request whose exact size is the maximum's reports exactly the maximum; a
 		// truncated one is over it.
-		if (!imageOffset && reported === state.maxReported && state.maxRendered !== undefined && !sent.afterLengthStop) {
+		if (reported === state.maxReported && state.maxRendered !== undefined && !sent.afterLengthStop) {
 			const over = ex.rendered - state.maxRendered;
 			if (over > tol(1))
 				return {
