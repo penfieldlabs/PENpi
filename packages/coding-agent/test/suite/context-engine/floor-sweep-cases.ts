@@ -18,31 +18,19 @@ import { readFileSync } from "node:fs";
 export interface SweepCase {
 	name: string;
 	text: () => string;
-	/** The repository file the text is read from, for a case whose text changes whenever that file does. */
-	readsFile?: string;
 }
 
-const AGENT_SESSION = "packages/coding-agent/src/core/agent-session.ts";
-
 /**
- * The cases whose text is read from a repository file, with the file. Their text changes with the file, and so it
- * differs on stock upstream; the random whitespace soup draws from the generator after the source case, so it moves
- * when that file's line count does. The sweep prices them as they are; a test that holds counts of the text, as
- * claude-counts.test.ts does, can only check them when the text is the one counted.
+ * The texts some cases take from repository files, frozen in floor-sweep-texts/ as those files were at 0.8.0
+ * (`agent-session.ts` whole, `package-lock.json` from character 40,000 to 56,000, `README.md` to 16,000), so each
+ * case keeps the text that was counted, here and on stock upstream. The random whitespace soup with Unicode
+ * separators draws from the generator after the source case, so it rests on the frozen source too.
  */
-const READS_FILE: Record<string, string> = {
-	"TypeScript source, 16,000 characters": AGENT_SESSION,
-	"TypeScript source, a whole file": AGENT_SESSION,
-	"package-lock.json, 16,000 characters": "package-lock.json",
-	"README.md, 16,000 characters": "README.md",
-	"recheck: source code with CRLF and doubled blank lines": AGENT_SESSION,
-	"third recheck: source with all-blank-line-heavy CRLF and trailing spaces": AGENT_SESSION,
-	"third recheck: random whitespace soup incl Unicode separators": AGENT_SESSION,
-};
+const frozen = (name: string) => readFileSync(new URL(`./floor-sweep-texts/${name}`, import.meta.url), "utf8");
+const AGENT_SESSION = "agent-session.ts.txt";
 
-/** A case of a fixed text, marked with the file it is read from, if any. */
-const fixedCase = ([name, text]: readonly [string, string]): SweepCase =>
-	READS_FILE[name] ? { name, text: () => text, readsFile: READS_FILE[name] } : { name, text: () => text };
+/** A case of a fixed text. */
+const fixedCase = ([name, text]: readonly [string, string]): SweepCase => ({ name, text: () => text });
 
 /** mulberry32. */
 function rng(seed: number): () => number {
@@ -273,7 +261,6 @@ export function whitespaceCases(size = 4_000): SweepCase[] {
 }
 
 const lines = (n: number, f: (i: number) => string) => Array.from({ length: n }, (_, i) => f(i)).join("\n");
-const repo = (path: string) => readFileSync(new URL(`../../../../../${path}`, import.meta.url), "utf8");
 
 /** The named cases. */
 export function namedCases(): SweepCase[] {
@@ -294,7 +281,7 @@ export function namedCases(): SweepCase[] {
 	const unittest = (t: number) => `${".".repeat(t)}\n${"-".repeat(70)}\nRan ${t} tests in 41.512s\n\nOK\n`;
 	const pytest = (files: number, tests: number) =>
 		`${"=".repeat(30)} test session starts ${"=".repeat(29)}\ncollected ${files * tests} items\n\n${lines(files, (i) => `tests/test_mod_${i}.py ${".".repeat(tests)} [${String(Math.round(((i + 1) * 100) / files)).padStart(3)}%]`)}\n\n${"=".repeat(28)} ${files * tests} passed in 12.34s ${"=".repeat(28)}\n`;
-	const source = repo(AGENT_SESSION);
+	const source = frozen(AGENT_SESSION);
 	const hash = createHash("sha256").update("x").digest("hex");
 	const named: Array<[string, string]> = [
 		["unittest, 2,000 tests", unittest(2_000)],
@@ -402,8 +389,8 @@ export function namedCases(): SweepCase[] {
 		["emoji run", "😀".repeat(2_000)],
 		["TypeScript source, 16,000 characters", source.slice(0, 16_000)],
 		["TypeScript source, a whole file", source],
-		["package-lock.json, 16,000 characters", repo("package-lock.json").slice(40_000, 56_000)],
-		["README.md, 16,000 characters", repo("README.md").slice(0, 16_000)],
+		["package-lock.json, 16,000 characters", frozen("package-lock.json.txt")],
+		["README.md, 16,000 characters", frozen("README.md.txt")],
 	];
 	for (let d = 1; d <= 41; d += 2)
 		for (const n of [3_000, 30_000]) {
@@ -420,7 +407,7 @@ export function namedCases(): SweepCase[] {
  * its own order, so the texts are the ones it measured.
  */
 export function recheckCases(): SweepCase[] {
-	const source = repo(AGENT_SESSION);
+	const source = frozen(AGENT_SESSION);
 	let seed = 987654321;
 	const rnd = () => {
 		seed = (seed * 1103515245 + 12345) % 2147483648;
@@ -667,7 +654,7 @@ export function nonAsciiRunCases(size = 4_000): SweepCase[] {
  * 16), built in its order, so the texts are the ones it measured.
  */
 export function thirdRecheckCases(): SweepCase[] {
-	const src = repo(AGENT_SESSION);
+	const src = frozen(AGENT_SESSION);
 	const b64zero = Buffer.alloc(1500).toString("base64");
 	const rep = (n: number, f: (i: number) => string) => Array.from({ length: n }, (_, i) => f(i)).join("");
 	const lcg = (seed: number) => () => {

@@ -1,4 +1,7 @@
+import { newCountApiStats } from "./countapi.ts";
 import type { FaultConfig, ProviderErrorClass } from "./recovery.ts";
+import type { TokenizerWorker } from "./tokenizers/counter.ts";
+import type { ReasoningRule, TemplateTokens } from "./tokenizers/reasoning.ts";
 
 /** Mode "a" (persistent window) is the only mode. */
 export type EngineMode = "a";
@@ -128,6 +131,14 @@ export interface EngineOptions {
 	 * window and every request stay as they were. Internal, for tests; no user setting.
 	 */
 	silentNameRescale: boolean;
+	/**
+	 * The exact-repeat rule's allowance for the estimate's error on one request after calibration: a sample that reports
+	 * exactly the largest usage reported so far again is evidence when its request was expected at or above that, less
+	 * this share of it. A working allowance, not a measured bound: ADR 0032's grader caps the error it excuses at the
+	 * same 5%, and the error can run higher (six truncated o200k requests at 32k reached 5.2% to 8.1%, ADR 0032).
+	 * Internal, for tests; no user setting.
+	 */
+	silentEstimateError: number;
 	/** H3: clean requests near a learned limit before a re-probe, and confirmations that end probing. */
 	probeAfterParsed: number;
 	probeAfterUnparsed: number;
@@ -185,11 +196,41 @@ export interface EngineOptions {
 	 * through openai-completions, anthropic-messages or bedrock-converse-stream). Default: the model's API.
 	 */
 	serializeAs?: Record<string, string>;
+	/**
+	 * 0.9.0: where tokenizer files come from (tokenizers/download.ts). "auto" (default) downloads a missing file on
+	 * first use; "local" uses bundled and already-cached files only and makes no request; "estimate" uses none.
+	 * PENPI_TOKENIZER overrides it.
+	 */
+	tokenizer?: "auto" | "local" | "estimate";
+	/** 0.9.0: the tokenizer cache folder (default `<agent dir>/cache/penpi/tokenizers`). Tests use their own. */
+	tokenizerCacheDir?: string;
+	/**
+	 * 0.9.0: the provider count APIs (countapi.ts) on a direct key: Claude's count_tokens and Gemini's countTokens.
+	 * "auto" (default) uses them; "off" keeps every sample on the fallback rules.
+	 */
+	countApi?: "auto" | "off";
+	/** 0.9.0, tests and E2 only (not a setting): by model key, where its count goes, in place of the direct-key check. */
+	countApiTarget?: (modelKey: string) => import("./countapi.ts").CountTarget | undefined;
+	/** 0.9.0, tests and E2 only (not a setting): the count API's fetch, and its time limit (default 2 s). */
+	countApiFetch?: typeof fetch;
+	countApiTimeoutMs?: number;
+	/**
+	 * 0.9.0, tests and E2 only (not a setting): by model key ("provider/id"), the table entry that counts it, whether
+	 * the name is only assumed, and its reasoning rule, in place of the classifier and the pinned rules.
+	 */
+	exactModels?: Record<
+		string,
+		{ entry: string; status?: "exact" | "assumed"; reasoning?: ReasoningRule; templateTokens?: TemplateTokens }
+	>;
+	/** 0.9.0, tests only (not a setting): starts the tokenizer worker in place of the real one. */
+	tokenizerWorker?: () => TokenizerWorker;
+	/** A telemetry report line, as the engine log writes it ("telemetry {json}"); the counting path's goes here. */
+	report?: (json: string) => void;
 	/** D1: fault injection (tests only), a FaultConfig or a PENPI_FAULTS spec; also read from PENPI_FAULTS. */
 	faults?: FaultConfig | string | null;
 	/** D1: marks a production deployment (fault injection is refused); also PENPI_PRODUCTION=1. Not a setting. */
 	production?: boolean;
-	/** Environment for PENPI_FAULTS and PENPI_PRODUCTION (default process.env). */
+	/** Environment for PENPI_FAULTS, PENPI_PRODUCTION, PENPI_TOKENIZER and PI_OFFLINE (default process.env). */
 	env?: Record<string, string | undefined>;
 	log?: (line: string) => void;
 	/** Shared across reloads so tests can observe the engine. */
@@ -198,6 +239,13 @@ export interface EngineOptions {
 
 export interface EngineStats {
 	cuts: Array<{ seq: number; mode: string; where: string; omitted: number; before: number; after: number }>;
+	/**
+	 * 0.9.0: exact counts (exact.ts): worker calls and the texts sent in them, requests counted whole (exact samples),
+	 * and requests with a tokenizer ready but a part still uncounted (mixed).
+	 */
+	exact: { calls: number; texts: number; samples: number; mixed: number };
+	/** 0.9.0: the provider count APIs (countapi.ts). */
+	countApi: import("./countapi.ts").CountApiStats;
 	/** Pin on: per cut, the header size planned with (fixedAfter - base) and the header actually rendered. */
 	headerPlans: Array<{ upper: number; planned: number; rendered: number; secondPass: boolean }>;
 	/** Times the rendered header exceeded the upper bound (expected 0). */
@@ -216,7 +264,7 @@ export interface EngineStats {
 	cancelledCompactions: Record<string, number>;
 	calibrationSamples: number[];
 	/** Per request: the budget estimate, the ratio and budget it was planned with, and the detector's appended estimate. */
-	sent: Array<{ estimate: number; ratio: number; budget: number; appended?: number }>;
+	sent: Array<{ estimate: number; ratio: number; budget: number; appended?: number; priced?: number; exact?: number }>;
 	clampedOutput: number;
 	handlerMs: number[];
 	plateaus: Array<{ key: string; window: number }>;
@@ -293,6 +341,8 @@ export interface TruncatedTurn {
 export function newStats(): EngineStats {
 	return {
 		cuts: [],
+		exact: { calls: 0, texts: 0, samples: 0, mixed: 0 },
+		countApi: newCountApiStats(),
 		headerPlans: [],
 		headerBoundMisses: 0,
 		guardTrims: 0,
@@ -361,6 +411,7 @@ export const DEFAULTS: EngineOptions = {
 	silentEvidenceSpan: 30,
 	silentMarginalPair: true,
 	silentNameRescale: true,
+	silentEstimateError: 0.05,
 	probeAfterParsed: 16,
 	probeAfterUnparsed: 8,
 	probeConfirmations: 2,

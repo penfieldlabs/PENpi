@@ -237,6 +237,18 @@ export function normalize(context: TranscriptContext): ChatMessage[] {
 			if (images.length > 0) out.push({ role: "user", text: "Attached image(s) from tool result:", images });
 		}
 	}
+	// 0.9.0, E2_REASONING_TEMPLATE=drop: a template that renders reasoning only after the last user message (Qwen 3's
+	// last_query_index), so earlier turns' reasoning leaves the prompt at each new user message.
+	if (process.env.E2_REASONING_TEMPLATE === "drop") {
+		let last = -1;
+		out.forEach((m, i) => {
+			if (m.role === "user") last = i;
+		});
+		for (let i = 0; i < last; i++) {
+			const m = out[i];
+			if (m.role === "assistant" && m.reasoning) out[i] = { ...m, reasoning: undefined };
+		}
+	}
 	return out;
 }
 

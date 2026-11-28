@@ -75,7 +75,15 @@ export interface ModelState {
 		provider?: string;
 	}>;
 	/** The previous successful sample (send sequence number and reported usage). */
-	lastSample?: { seq: number; reported: number };
+	lastSample?: { seq: number; reported: number; exactRendered?: number };
+	/**
+	 * 0.9.0: the exactness gate (detector.ts, design section 5): judged exact samples matching on deltas and totals in a
+	 * row, for one exact key; set after EXACT_GATE_SAMPLES. Not persisted. A mismatch after it sets never drops it; a
+	 * provider switch or another model or tokenizer does.
+	 */
+	exactGate?: { key: string; matches: number; set: boolean };
+	/** 0.9.0: the rendered exact size of the request that set maxReported, when it was counted whole. */
+	maxRendered?: number;
 	/**
 	 * D24: the upstream provider that served the previous sample, when the response names it (OpenRouter's
 	 * `provider` field). Providers behind one route count tokens differently. Not persisted.
@@ -92,14 +100,20 @@ export interface ModelState {
 		{
 			maxReported: number;
 			maxExpected?: number;
+			maxEstimate?: number;
+			maxShape?: string;
 			suspects: ModelState["suspects"];
 			marginals?: ModelState["marginals"];
 		}
 	>;
 	/** The largest usage reported by a sample that was not quarantined. */
 	maxReported: number;
-	/** The expectation of the sample that set maxReported (a repeat of the same request is no evidence). */
+	/** The expectation of the sample that set maxReported. */
 	maxExpected?: number;
+	/** The request estimate of the sample that set maxReported (a repeat of the same request is no evidence). */
+	maxEstimate?: number;
+	/** The shape hash of the request that set maxReported (lastSent.shapeHash). */
+	maxShape?: string;
 	/** Quarantined samples (evidence of silent truncation), with the sample count when seen. */
 	suspects: Array<{ reported: number; at: number; sample: number; why: string }>;
 	/**
@@ -217,6 +231,8 @@ export function newEngineState(faults: FaultConfig | undefined) {
 		lastSent: undefined as
 			| {
 					estimate: number;
+					/** SHA-1 of the request's shape keys (requestShape): which messages, by identity. */
+					shapeHash: string;
 					key: string;
 					seq: number;
 					appendOnly: boolean;
@@ -235,6 +251,24 @@ export function newEngineState(faults: FaultConfig | undefined) {
 					chain: number;
 					cum: number;
 					slack: number;
+					/**
+					 * 0.9.0: the request's exact count and the exact ratio's key, when every part of it was counted
+					 * (exact.ts). A mixed request has none: its sample moves the fallback ratio only.
+					 */
+					exact?: number;
+					exactKey?: string;
+					/** 0.9.0: what exact detection reads (exact.ts exactRequest), the entry counting it, and an assumed name. */
+					exactRequest?: import("./exact.ts").ExactRequest;
+					exactEntry?: string;
+					exactAssumed?: boolean;
+					/** The model's template tokens around tool calls (tokenizers/reasoning.ts), when pinned. */
+					exactTemplate?: import("./tokenizers/reasoning.ts").TemplateTokens;
+					/** 0.9.0 count APIs (countapi.ts): the planned request's end, what it appended, and its count. */
+					plannedTail?: import("./countapi.ts").PlannedTail;
+					appendedCounts?: import("./countapi.ts").AppendedCounts;
+					count?: import("./countapi.ts").CountSlot;
+					/** A counted sample: which count API, and what Gemini's rules read of its history. */
+					countApi?: import("./countapi.ts").CountedSample;
 			  }
 			| undefined,
 		sendSeq: 0,
@@ -318,6 +352,14 @@ export function newEngineState(faults: FaultConfig | undefined) {
 
 export type EngineState = ReturnType<typeof newEngineState>;
 
+/** 0.9.0: a Claude model's ratio before its first sample, on the fallback path (state.ts priorRatio). */
+export const CLAUDE_PRIOR = 1.6;
+
+/** A model key ("provider/id") naming a Claude model, by provider or id. */
+export function isClaudeKey(key: string): boolean {
+	return /claude|anthropic/i.test(key.split("#")[0]);
+}
+
 export function installState(core: EngineCore): void {
 	const { pi, opts, stats, log, st } = core;
 
@@ -325,10 +367,8 @@ export function installState(core: EngineCore): void {
 	function modelState(key: string): ModelState {
 		let state = st.models.get(key);
 		if (!state) {
-			// Unknown model: the densest known ratio is the safe prior (it under-sends until learned).
-			const known = [...st.models.values()].filter((m) => m.samples > 0).map((m) => m.ratio);
 			state = {
-				ratio: Math.max(1, ...known),
+				ratio: priorRatio(key),
 				samples: 0,
 				history: [],
 				recent: [],
@@ -342,6 +382,23 @@ export function installState(core: EngineCore): void {
 		return state;
 	}
 	core.modelState = modelState;
+
+	/**
+	 * A key's ratio before its first sample.
+	 * - An exact key (`model#tokenizer`, exact.ts) starts at 1: the exact count is the tokenizer's own.
+	 * - A fallback key starts at the densest ratio known on the fallback path: the safe prior, which under-sends until
+	 *   learned. Exact keys are left out of that pool: their ratios sit near 1, and would leave the estimate's
+	 *   under-count on CJK, base64 or minified JSON unscaled.
+	 * - A Claude model starts at CLAUDE_PRIOR at least: on 73 real tool outputs Claude counts a median 1.60 times the
+	 *   estimate (1.57 summed), so a first request priced at 1 is about 40% low.
+	 */
+	function priorRatio(key: string): number {
+		if (key.includes("#")) return 1;
+		const known = [...st.models.entries()]
+			.filter(([k, m]) => m.samples > 0 && !k.includes("#"))
+			.map(([, m]) => m.ratio);
+		return Math.max(isClaudeKey(key) ? CLAUDE_PRIOR : 1, ...known);
+	}
 
 	function snapshot(key: string): Record<string, unknown> {
 		const s = modelState(key);

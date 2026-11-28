@@ -18,6 +18,7 @@ import {
 import { clampMaxTokensToContext } from "@earendil-works/pi-ai/api/simple-options";
 import { getApiProvider, registerApiProvider } from "@earendil-works/pi-ai/compat";
 import { Type } from "typebox";
+import { emitSessionShutdownEvent } from "../../../src/core/extensions/runner.ts";
 import type { ExtensionAPI } from "../../../src/core/extensions/types.ts";
 import type { Harness } from "../harness.ts";
 
@@ -56,6 +57,15 @@ export function syntheticText(size: number, seed: number): string {
 		length += text.length + 1;
 	}
 	return lines.join("\n").slice(0, size);
+}
+
+/**
+ * 0.9.0: end a harness's session as Pi's runtime does at quit (session_shutdown), so the engine frees its tokenizer
+ * worker, then clean up. The harness's own cleanup only disposes of the session.
+ */
+export async function endSession(harness: Harness): Promise<void> {
+	await emitSessionShutdownEvent(harness.session.extensionRunner, { type: "session_shutdown", reason: "quit" });
+	harness.cleanup();
 }
 
 /** Registers `work`, a tool whose output size is chosen by the model's arguments. */
@@ -108,6 +118,12 @@ export function serializeForProvider(message: Message): string {
 
 /** Faux provider prompt text length (mirrors packages/ai/src/providers/faux.ts). */
 export function fauxPromptChars(context: TranscriptContext): number {
+	const parts = fauxPromptParts(context);
+	return parts.reduce((sum, p) => sum + p.length, 0) + Math.max(0, parts.length - 1) * 2;
+}
+
+/** 0.9.0: the faux provider's prompt text per message, `<role>:<text>`, for a provider that counts with a tokenizer. */
+export function fauxPromptParts(context: TranscriptContext): string[] {
 	const text = (message: Message): string => {
 		if (message.role === "system") {
 			return [
@@ -151,8 +167,7 @@ export function fauxPromptChars(context: TranscriptContext): number {
 			)
 			.join("\n");
 	};
-	const parts = context.messages.map((m) => `${m.role}:${text(m)}`);
-	return parts.reduce((sum, p) => sum + p.length, 0) + Math.max(0, parts.length - 1) * 2;
+	return context.messages.map((m) => `${m.role}:${text(m)}`);
 }
 
 const digestCache = new WeakMap<object, string>();
@@ -199,6 +214,29 @@ export function toolTurn(size: number, seed: number, note = ""): ScriptItem {
 
 export function finalTurn(text: string, stopReason: AssistantMessage["stopReason"] = "stop"): ScriptItem {
 	return () => fauxAssistantMessage(text, { stopReason });
+}
+
+/**
+ * Sends the request that an earlier answer answered again, from the same point: the session's leaf moves back to the
+ * entry before that answer and the agent continues from there. When the engine has cut since, what it sends differs;
+ * for the last answer, the request is the same one again, append-only with nothing appended. The
+ * move sends no tree event, so the engine keeps its state, as for a resend it is not told about (Pi's own tree
+ * navigation reloads the engine's state and resets its running maximum). Call it with the session idle.
+ */
+export async function resendAnswered(harness: Harness, answerText: string): Promise<void> {
+	const answer = [...harness.sessionManager.getBranch()]
+		.reverse()
+		.find(
+			(e) =>
+				e.type === "message" &&
+				e.message.role === "assistant" &&
+				e.message.content.some((b) => b.type === "text" && b.text === answerText),
+		);
+	if (!answer?.parentId) throw new Error(`no answer "${answerText}" to resend`);
+	harness.sessionManager.branch(answer.parentId);
+	// The agent's messages from the session at the new leaf, as tree navigation installs them.
+	(harness.session as unknown as { _refreshFinalizedContext(): void })._refreshFinalizedContext();
+	await harness.session.agent.continue();
 }
 
 // ---------------------------------------------------------------- prefix analysis
@@ -301,6 +339,11 @@ export interface ProviderSim {
 export interface SimOptions {
 	/** Provider tokens per faux token (chars / 4); a number or per model. */
 	scale?: number | ((model: Model<string>) => number);
+	/**
+	 * 0.9.0: a provider that counts with a tokenizer: its prompt tokens from the faux prompt's parts (fauxPromptParts),
+	 * in place of chars / 4 x scale. Images are still added by `imageTokens`.
+	 */
+	countTokens?: (parts: string[], model: Model<string>) => number;
 	/** Reject requests above this many provider tokens (number, or per call). */
 	realLimit?: number | ((callIndex: number, promptTokens: number, model: Model<string>) => number | undefined);
 	/** Overflow error text. Default: Anthropic style. */
@@ -349,6 +392,17 @@ export interface SimOptions {
 	 * provider counts of a cut answer is provider-specific).
 	 */
 	cutAnswerShare?: number;
+	/**
+	 * 0.9.0 count APIs: fields merged into the synthetic payload, built from the request (anthropicPayload makes an
+	 * Anthropic-shaped one), so the engine's count API client sees a payload to match and count.
+	 */
+	payload?: (context: TranscriptContext, model: Model<string>, callIndex: number) => Record<string, unknown>;
+	/** 0.9.0: provider stream data emitted before the response (a Messages message_start naming the served model). */
+	streamData?: (callIndex: number) => unknown;
+	/** 0.9.0: the status Pi's after_provider_response reports for a call; a 429 rejects the call. */
+	responseStatus?: (callIndex: number) => number | undefined;
+	/** 0.9.0: how long the provider takes to answer (the faux model answers at once; a count API takes less). */
+	responseDelayMs?: number;
 	/** Round 4: reject a request with this error text (output limits, combined errors, ...). */
 	reject?: (request: {
 		index: number;
@@ -450,6 +504,7 @@ export function installProviderSim(harness: Harness, options: SimOptions = {}): 
 		const context = options.cutAnswerShare !== undefined ? cutAnswers(replayed, options.cutAnswerShare) : replayed;
 		const images = imagesIn(context);
 		const imageCost = options.imageTokens ? images.reduce((sum, image) => sum + options.imageTokens!(image), 0) : 0;
+		if (options.countTokens) return options.countTokens(fauxPromptParts(context), model) + imageCost;
 		return Math.ceil((fauxPromptChars(context) / 4) * scaleFor(model)) + imageCost;
 	};
 	const errorStream = (model: Model<string>, errorMessage: string) => {
@@ -474,6 +529,7 @@ export function installProviderSim(harness: Harness, options: SimOptions = {}): 
 			messages: context.messages.length,
 		};
 		if (options.thinkingBudget) payload.thinking = { type: "enabled", budget_tokens: options.thinkingBudget };
+		if (options.payload) payload = { ...payload, ...options.payload(context, model, index) };
 		if (streamOptions?.onPayload) {
 			const replaced = await streamOptions.onPayload(payload, model);
 			if (replaced !== undefined) payload = replaced as Record<string, unknown>;
@@ -494,6 +550,27 @@ export function installProviderSim(harness: Harness, options: SimOptions = {}): 
 			...(streamOptions?.signal?.aborted ? { aborted: true } : {}),
 		};
 		sim.calls.push(call);
+		const status = options.responseStatus?.(index);
+		if (status !== undefined) {
+			await harness.session.extensionRunner.emit({ type: "after_provider_response", status, headers: {} });
+			if (status === 429) {
+				call.rejected = true;
+				return errorStream(
+					model,
+					"429 rate_limit_error: Number of request tokens has exceeded your per-minute rate limit",
+				);
+			}
+		}
+		if (options.responseDelayMs) await new Promise((resolve) => setTimeout(resolve, options.responseDelayMs));
+		const data = options.streamData?.(index);
+		if (data !== undefined)
+			await harness.session.extensionRunner.emit({
+				type: "provider_stream_event",
+				provider: model.provider,
+				api: model.api,
+				model: model.id,
+				data,
+			});
 		const served = options.servedBy?.(index);
 		if (served?.name)
 			await harness.session.extensionRunner.emit({
@@ -583,6 +660,104 @@ export function installProviderSim(harness: Harness, options: SimOptions = {}): 
 		return outer;
 	};
 	return sim;
+}
+
+/**
+ * 0.9.0 count APIs: an Anthropic Messages payload's messages for a request, as Pi's converter shapes them: tool results
+ * as user messages of tool_result blocks, consecutive ones merged, and system messages left out.
+ */
+export function anthropicPayload(context: TranscriptContext): Record<string, unknown> {
+	const messages: Array<{ role: string; content: unknown }> = [];
+	const text = (content: unknown): string =>
+		typeof content === "string"
+			? content
+			: Array.isArray(content)
+				? (content as Array<{ type: string; text?: string }>)
+						.filter((b) => b.type === "text")
+						.map((b) => b.text ?? "")
+						.join("")
+				: "";
+	for (const m of context.messages) {
+		if (m.role === "system") continue;
+		if (m.role === "toolResult") {
+			const block = { type: "tool_result", tool_use_id: m.toolCallId, content: text(m.content) };
+			const last = messages.at(-1);
+			if (
+				last?.role === "user" &&
+				Array.isArray(last.content) &&
+				(last.content as Array<{ type: string }>)[0]?.type === "tool_result"
+			)
+				(last.content as unknown[]).push(block);
+			else messages.push({ role: "user", content: [block] });
+		} else if (m.role === "assistant") {
+			messages.push({
+				role: "assistant",
+				content: m.content.flatMap(
+					(b): Array<Record<string, unknown>> =>
+						b.type === "text"
+							? [{ type: "text", text: b.text }]
+							: b.type === "toolCall"
+								? [{ type: "tool_use", id: b.id, name: b.name, input: b.arguments }]
+								: [],
+				),
+			});
+		} else messages.push({ role: "user", content: text((m as { content?: unknown }).content) });
+	}
+	return { messages, system: [{ type: "text", text: "SYSTEM" }] };
+}
+
+/**
+ * 0.9.0 count APIs: a Gemini generateContent payload for a request, as Pi's converter shapes it: the assistant as
+ * "model" with functionCall parts (each with a thoughtSignature when `signed`, as Gemini 4 returns them), tool results
+ * as user functionResponse parts, consecutive ones merged, images as inlineData parts, and the system prompt in config.
+ */
+export function geminiPayload(context: TranscriptContext, options: { signed?: boolean } = {}): Record<string, unknown> {
+	type Part = Record<string, unknown>;
+	const contents: Array<{ role: string; parts: Part[] }> = [];
+	const parts = (content: unknown): Part[] =>
+		typeof content === "string"
+			? [{ text: content }]
+			: Array.isArray(content)
+				? (content as Array<{ type: string; text?: string; mimeType?: string }>).flatMap((b): Part[] =>
+						b.type === "text"
+							? [{ text: b.text ?? "" }]
+							: b.type === "image"
+								? [{ inlineData: { mimeType: b.mimeType, data: "" } }]
+								: [],
+					)
+				: [];
+	for (const m of context.messages) {
+		if (m.role === "system") continue;
+		if (m.role === "toolResult") {
+			const own = parts(m.content);
+			const text = own
+				.filter((p) => "text" in p)
+				.map((p) => p.text)
+				.join("");
+			const part: Part = { functionResponse: { name: m.toolName, id: m.toolCallId, response: { output: text } } };
+			const last = contents.at(-1);
+			if (last?.role === "user" && last.parts.some((p) => p.functionResponse)) last.parts.push(part);
+			else contents.push({ role: "user", parts: [part] });
+			for (const image of own.filter((p) => "inlineData" in p)) contents.at(-1)!.parts.push(image);
+		} else if (m.role === "assistant") {
+			contents.push({
+				role: "model",
+				parts: m.content.flatMap((b): Part[] =>
+					b.type === "text"
+						? [{ text: b.text }]
+						: b.type === "toolCall"
+							? [
+									{
+										functionCall: { name: b.name, args: b.arguments, id: b.id },
+										...(options.signed ? { thoughtSignature: "c2ln" } : {}),
+									},
+								]
+							: [],
+				),
+			});
+		} else contents.push({ role: "user", parts: parts((m as { content?: unknown }).content) });
+	}
+	return { contents, config: { systemInstruction: "SYSTEM" } };
 }
 
 export function countEntries(harness: Harness): Record<string, number> {
@@ -761,4 +936,43 @@ export function anthropicCacheModel(
 		entries.add(keys[breakpoint]);
 	}
 	return { total, read, written, tail, missShare: total ? (written + tail) / total : 0 };
+}
+
+/**
+ * 0.9.0: two local servers, the first answering every request with a 307 to the second, which records the headers of
+ * whatever reaches it. For the count API: a redirect must never carry the key to another origin.
+ */
+export async function redirectPair(): Promise<{
+	from: string;
+	reached: Array<Record<string, string | string[] | undefined>>;
+	first: number;
+	close: () => Promise<void>;
+}> {
+	const { createServer } = await import("node:http");
+	const reached: Array<Record<string, string | string[] | undefined>> = [];
+	const state = { first: 0 };
+	const to = createServer((req, res) => {
+		reached.push(req.headers);
+		res.writeHead(200, { "content-type": "application/json" }).end('{"input_tokens":1,"totalTokens":1}');
+	});
+	await new Promise<void>((resolve) => to.listen(0, "127.0.0.1", resolve));
+	const toPort = (to.address() as { port: number }).port;
+	const from = createServer((req, res) => {
+		state.first++;
+		req.resume();
+		res.writeHead(307, { location: `http://localhost:${toPort}${req.url}` }).end();
+	});
+	await new Promise<void>((resolve) => from.listen(0, "127.0.0.1", resolve));
+	const fromPort = (from.address() as { port: number }).port;
+	return {
+		from: `http://127.0.0.1:${fromPort}`,
+		reached,
+		get first() {
+			return state.first;
+		},
+		close: async () => {
+			await new Promise((resolve) => from.close(resolve));
+			await new Promise((resolve) => to.close(resolve));
+		},
+	};
 }

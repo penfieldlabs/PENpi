@@ -1,6 +1,6 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { EngineCore } from "./core.ts";
-import { type AgentMessage, type Block, imageTokens, messageTokens, textTokens } from "./estimator.ts";
+import { type AgentMessage, type Block, textTokens as estimateText, imageTokens, messageTokens } from "./estimator.ts";
 
 /**
  * The model a request is serialized for. Pi's converters decide per API (and, for assistant
@@ -75,7 +75,11 @@ export const ERROR_TOOL_IMAGE_PLACEHOLDER = "(image attached after the tool resu
  * this is the placeholders and the caption. (Bedrock's check also reads the model's name; the engine sees its id,
  * which carries "claude" for Claude models.)
  */
-function errorImageCaptionTokens(message: AgentMessage, target: SerializeTarget | undefined): number {
+function errorImageCaptionTokens(
+	message: AgentMessage,
+	target: SerializeTarget | undefined,
+	count: (text: string) => number,
+): number {
 	if (!target) return 0;
 	const api = target.converter ?? target.api;
 	const claudeOnBedrock = api === "bedrock-converse-stream" && /claude/i.test(target.modelId);
@@ -91,7 +95,7 @@ function errorImageCaptionTokens(message: AgentMessage, target: SerializeTarget 
 	}
 	if (runs === 0) return 0;
 	const caption = `Images from the error result of tool call ${result.toolCallId} (${result.toolName}):`;
-	return runs * textTokens(ERROR_TOOL_IMAGE_PLACEHOLDER) + textTokens(caption);
+	return runs * count(ERROR_TOOL_IMAGE_PLACEHOLDER) + count(caption);
 }
 
 /**
@@ -118,10 +122,13 @@ function errorImageCaptionTokens(message: AgentMessage, target: SerializeTarget 
 export function serializedParts(
 	message: AgentMessage,
 	target?: SerializeTarget,
+	count?: (text: string) => number,
 ): { tokens: number; reasoning: number; asText?: number } {
-	const all = messageTokens(message);
+	const all = messageTokens(message, count);
+	const textTokens = count ?? estimateText;
 	const role = message.role;
-	if (role === "toolResult") return { tokens: all + errorImageCaptionTokens(message, target), reasoning: 0 };
+	if (role === "toolResult")
+		return { tokens: all + errorImageCaptionTokens(message, target, textTokens), reasoning: 0 };
 	if (role !== "assistant" && role !== "user") return { tokens: all, reasoning: 0 };
 	const content = (message as { content?: unknown }).content;
 	const modelled = !!target && (MODELLED_APIS as readonly string[]).includes(target.converter ?? target.api);

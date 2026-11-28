@@ -9,6 +9,7 @@ import { type EngineUnderTest, loadEngine } from "./engine-under-test.ts";
 import { knownFailure, loadKnownFailures, penpiVersion, validateKnownFailures } from "./known-failures.ts";
 import { matrixConfigs } from "./matrix.ts";
 import type { MixName } from "./mixes.ts";
+import { selectRun } from "./resume.ts";
 import { outDir, runOne } from "./runner.ts";
 
 export function recordEngine(engine: EngineUnderTest): string {
@@ -35,9 +36,15 @@ export async function matrixSuite(mix: MixName): Promise<void> {
 	const known = loadKnownFailures();
 	const knownEntries = validateKnownFailures(known).length ? [] : known;
 	const version = penpiVersion();
+	// A resume (run-e2.sh, resume.ts) keeps the runs that already passed under the same stamp.
+	const resuming = process.env.E2_RESUME === "1";
 	describe(`E2 ${mix} (engine ${engine.label} ${engine.sha256.slice(0, 12)})`, () => {
 		if (configs.length === 0) it.skip("no runs selected for this mix", () => {});
 		for (const config of configs) {
+			if (selectRun(dir, config, resuming)) {
+				it.skip(`${config.id} (kept: passed in an earlier attempt)`, () => {});
+				continue;
+			}
 			it(config.id, async () => {
 				const { metrics, failures } = await runOne(engine, config);
 				const c = metrics.criteria;

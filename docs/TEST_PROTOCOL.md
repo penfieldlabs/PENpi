@@ -11,17 +11,19 @@ release and whenever an auth/hook/tool path changes, since they need external se
 npm ci                 # install from the committed lockfile
 npm run build          # REQUIRED before check/test — see note
 npm run check          # biome lint/format + tsc + supply-chain checks + check:penpi (extension tsc)
-npm test               # all workspace tests
-npm test -w penpi      # just the PENpi extension suite
+npm test               # all workspace tests, isolated (./test.sh: no keys, a temporary home)
 npm audit --omit=dev   # production advisories — must be clean
 npm audit              # including dev advisories — must be clean
 npm audit signatures --omit=dev   # registry signatures/attestations — must verify
 ```
 
-**`npm run build` is not optional.** `@earendil-works/pi-coding-agent` resolves through
-`packages/coding-agent/dist`, which does not exist in a fresh checkout. Without it,
-`npm run check:penpi` and `npm test -w penpi` fail with
-`Failed to resolve entry for package "@earendil-works/pi-coding-agent"`.
+**`npm run build` is not optional for the gate.** `npm run check:penpi` type-checks the
+extension against the built types in `packages/coding-agent/dist`, which does not exist in a
+fresh checkout; without it, it fails with
+`Failed to resolve entry for package "@earendil-works/pi-coding-agent"`. The extension's tests
+don't need it: they load Pi from source (`.pi/extensions/penpi/vitest.config.ts`), as the engine
+suite does, all but `mcp-integration.test.ts`, which starts the built Pi: without a build its
+tests skip, and its prerequisite check says to run `npm run build`.
 
 **Install with `npm ci`, not `npm install`.** Regenerating the lockfile from scratch
 currently crashes npm 10.x in this workspace (`Cannot read properties of null (reading
@@ -45,6 +47,26 @@ divergence to merge against at every upstream merge, in exchange for
 silencing a warning about a workspace that is not part of the runtime. Revisit at the next
 upstream merge: either the example's engine requirement will have moved, or it can be
 dropped as part of a change that is already reconciling upstream.
+
+### Heavy runs on a local machine
+
+The runs too long for CI's main job, on macOS (Apple Silicon) or Linux, with one bundle to hand
+back:
+
+```bash
+scripts/run-heavy-local.sh                       # the full engine suite, the honest test's full run, E2
+scripts/run-heavy-local.sh --parts engine,e2-exact --workers 4
+```
+
+- **Parts:**
+  - `engine`: the full engine suite;
+  - `honest`: the honest test's full run in its three profiles, on upstream v1.4.0, v1.5.0 and v1.5.1 (seeds 0-16, 17-33 and 34-49), then the Power bar;
+  - `e2`: E2's default matrix on the pinned corpus;
+  - `e2-exact`: E2's exact mode on the o200k silent runs.
+- **What it needs:** a clean checkout, Node 22, `npm ci`, and, for `honest` and the E2 parts, a clone with the full history, which holds the corpora. It refuses to start otherwise and says why.
+- **Isolation:** each part runs as `npm test` does, with `env -i`, an empty temporary home and no keys. The tokenizer setup downloads only from the npm registry and huggingface.co, checked by hash.
+- **Workers:** set from the cores and memory, about 2 GB a worker; `--workers` overrides them.
+- **Output:** `bundle.md` under `.cache/heavy/<commit>-<time>/`, or `--out`, with the commit, the engine's hash, the machine, each part's result, time and failures, and E2's lags. It holds no home paths, user names or host names. Each part's full log sits beside it.
 
 ### Release / review archives
 
@@ -71,9 +93,21 @@ match. PENpi releases ship source only — see `.github/workflows/release.yml`.
 
 ### Developer quick checks
 
-Once you already have a built tree, `npm run check` / `npm test` / `npm test -w penpi`
-are enough for an edit-test loop. All must be green before commit (husky) and in CI.
-Unit tests use fixtures only — they **never** touch real session logs or live network.
+For an edit-test loop, `npm run test:penpi` runs the scripts' tests, the extension's suite
+and the engine suite without its sweeps and honest runs (`vitest.fast.config.ts`), isolated as
+`npm test` is: about 13 minutes on two cores, where `npm test` takes about 76. It leaves out
+upstream's packages, the full sweeps, the honest test's full run and E2. `npm run check` and `npm test` must be green before commit (husky) and
+in CI.
+Unit tests use fixtures only — they **never** touch real session logs.
+
+**`npm test` is isolated.** It runs `./test.sh`, which starts the tests with `env -i`, a
+temporary empty home and no API keys, OAuth tokens or cloud credentials. The provider tests
+that need a key or a token skip, and no request can carry one, so `npm test` can't spend
+money. It isn't offline: without keys, npm itself and a few tests still open connections
+(npm's registry, and openrouter.ai from pi-ai's tests), and `npm run setup:tokenizers` fetches
+from the npm registry and huggingface.co. **`npm run test:live`** runs the same tests with your
+environment, so the gated provider tests reach live APIs with your keys and can spend money. It
+refuses to start without `PI_LIVE_E2E=1`. It is the only way to run them.
 
 Covered by unit tests: config precedence, the context engine's settings, entry points and
 telemetry, `mcp-config` generation, `TokenManager` (single-flight and device-login guard),

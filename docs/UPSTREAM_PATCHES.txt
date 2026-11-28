@@ -6,7 +6,7 @@
 # fails the check: patch it or delete it, and say why.
 # A directory line, ending in "/", deletes the whole directory: it covers every path under it, and the check
 # fails while the index holds any file there.
-base: dd30101cfc5b0609411dd80b6f93adbc14db14cf (upstream Pi v1.5.1)
+base: faac585884ae2c013a6b1400f3e9e77f10b34bac (upstream Pi v1.6.0)
 # The E2 corpus (context-engine-e2/corpus.ts): an upstream revision and its fingerprint, moved on its own
 # commit with a full E2 comparison, not with the base. An E2 run at this revision fails on another fingerprint.
 e2-corpus: dd30101cfc5b0609411dd80b6f93adbc14db14cf e917a3cbd38a1bd6ae8bb72a99be52fe5761ff224ada1908c747a12a015464ab (upstream Pi v1.5.1)
@@ -17,7 +17,7 @@ e2-corpus: dd30101cfc5b0609411dd80b6f93adbc14db14cf e917a3cbd38a1bd6ae8bb72a99be
 .github/ISSUE_TEMPLATE/package-report.yml	deleted: upstream package-report template
 .github/workflows/approve-contributor.yml	deleted: upstream contributor gate
 .github/workflows/build-binaries.yml	deleted: PENpi ships source only
-.github/workflows/ci.yml	PENpi CI: offline build, split checks, archive dry run, script modes, patch manifest, context engine tokenizers, the engine suite on stock upstream Pi; no env daemon or MCP conformance job
+.github/workflows/ci.yml	PENpi CI: offline build, split checks, archive dry run, script modes, patch manifest, context engine tokenizers, the engine suite on stock upstream Pi, the Claude counts on the full sweep, a path filter that runs upstream's suites and the engine-on-upstream job only when they could be affected; no env daemon or MCP conformance job; upstream's released-changelog check (it would compare PENpi's own tags) and its separate chord job (npm test covers chord) left out
 .github/workflows/e2-weekly.yml	PENpi: weekly E2 run of the context engine (ADR 0032)
 .github/workflows/env-daemons.yml	deleted: PENpi does not ship the pi-env daemon
 .github/workflows/env.yml	deleted: PENpi does not ship the pi-env daemon
@@ -27,13 +27,14 @@ e2-corpus: dd30101cfc5b0609411dd80b6f93adbc14db14cf e917a3cbd38a1bd6ae8bb72a99be
 .github/workflows/nix.yml	deleted: PENpi has no Nix packaging
 .github/workflows/npm-audit.yml	weekly schedule, job timeout, no persisted credentials; runs upstream's npm-audit.mjs
 .github/workflows/p2-cloud-bundle.yml	deleted: upstream web UI upload to R2; PENpi ships source only
+.github/workflows/p2-mac-nightly.yml	deleted: upstream nightly build of apps/p2-mac, which PENpi does not ship
 .github/workflows/pr-gate.yml	deleted: upstream contributor gate
 .github/workflows/preview-packages.yml	deleted: upstream preview-package publishing (pkg.earendil.com); PENpi ships source only
 .github/workflows/publish-model-catalog.yml	deleted: PENpi publishes no model catalog
 .github/workflows/release.yml	PENpi source-only manual release, first-parent tag check
-.github/workflows/remove-inprogress-on-close.yml	deleted: upstream issue automation
+.github/workflows/remove-labels-on-close.yml	deleted: upstream issue automation
 .gitignore	track the model-data snapshot; ignore .env.*, the runtime .pi/mcp.json and the local .cache/
-.husky/pre-commit	no apps/p2 check: PENpi deletes upstream's apps/
+.husky/pre-commit	no apps/p2 check: PENpi deletes upstream's apps/; no second browser smoke run, since npm run check has one
 .pi/extensions/import-repro.ts	deleted: upstream in-repo dev extension, would load in PENpi sessions
 .pi/extensions/penpi/README.md	PENpi extension
 .pi/extensions/penpi/__fixtures__/penfield-server.ts	PENpi extension
@@ -42,12 +43,14 @@ e2-corpus: dd30101cfc5b0609411dd80b6f93adbc14db14cf e917a3cbd38a1bd6ae8bb72a99be
 .pi/extensions/penpi/config.ts	PENpi extension
 .pi/extensions/penpi/engine-only.ts	PENpi: context engine (ADR 0032)
 .pi/extensions/penpi/engine/core.ts	PENpi: context engine (ADR 0032)
+.pi/extensions/penpi/engine/countapi.ts	PENpi: context engine (ADR 0032)
 .pi/extensions/penpi/engine/detector.ts	PENpi: context engine (ADR 0032)
 .pi/extensions/penpi/engine/detector.test.ts	PENpi: context engine (ADR 0032)
 .pi/extensions/penpi/engine/entry-points.test.ts	PENpi: context engine (ADR 0032)
 .pi/extensions/penpi/engine/entry.ts	PENpi: context engine (ADR 0032)
 .pi/extensions/penpi/engine/estimator.test.ts	PENpi: context engine (ADR 0032)
 .pi/extensions/penpi/engine/estimator.ts	PENpi: context engine (ADR 0032)
+.pi/extensions/penpi/engine/exact.ts	PENpi: context engine tokenizers (0.9.0)
 .pi/extensions/penpi/engine/header.ts	PENpi: context engine (ADR 0032)
 .pi/extensions/penpi/engine/index.ts	PENpi: context engine (ADR 0032)
 .pi/extensions/penpi/engine/limits.ts	PENpi: context engine (ADR 0032)
@@ -64,6 +67,18 @@ e2-corpus: dd30101cfc5b0609411dd80b6f93adbc14db14cf e917a3cbd38a1bd6ae8bb72a99be
 .pi/extensions/penpi/engine/state.ts	PENpi: context engine (ADR 0032)
 .pi/extensions/penpi/engine/telemetry.test.ts	PENpi: context engine (ADR 0032)
 .pi/extensions/penpi/engine/telemetry.ts	PENpi: context engine (ADR 0032)
+.pi/extensions/penpi/engine/tokenizer-worker.mjs	PENpi: context engine tokenizers (0.9.0)
+.pi/extensions/penpi/engine/tokenizers/classify.test.ts	PENpi: context engine tokenizers (0.9.0)
+.pi/extensions/penpi/engine/tokenizers/classify.ts	PENpi: context engine tokenizers (0.9.0)
+.pi/extensions/penpi/engine/tokenizers/counter.test.ts	PENpi: context engine tokenizers (0.9.0)
+.pi/extensions/penpi/engine/tokenizers/counter.ts	PENpi: context engine tokenizers (0.9.0)
+.pi/extensions/penpi/engine/tokenizers/describe.test.ts	PENpi: context engine tokenizers (0.9.0)
+.pi/extensions/penpi/engine/tokenizers/describe.ts	PENpi: context engine tokenizers (0.9.0)
+.pi/extensions/penpi/engine/tokenizers/download.test.ts	PENpi: context engine tokenizers (0.9.0)
+.pi/extensions/penpi/engine/tokenizers/download.ts	PENpi: context engine tokenizers (0.9.0)
+.pi/extensions/penpi/engine/tokenizers/reasoning.ts	PENpi: context engine tokenizers (0.9.0)
+.pi/extensions/penpi/engine/tokenizers/table.test.ts	PENpi: context engine tokenizers (0.9.0)
+.pi/extensions/penpi/engine/tokenizers/table.ts	PENpi: context engine tokenizers (0.9.0)
 .pi/extensions/penpi/engine/tools/doctor.ts	PENpi: context engine (ADR 0032)
 .pi/extensions/penpi/engine/tools/notes.ts	PENpi: context engine (ADR 0032)
 .pi/extensions/penpi/engine/tools/recall.ts	PENpi: context engine (ADR 0032)
@@ -81,10 +96,11 @@ e2-corpus: dd30101cfc5b0609411dd80b6f93adbc14db14cf e917a3cbd38a1bd6ae8bb72a99be
 .pi/extensions/penpi/transcript-search.test.ts	PENpi extension
 .pi/extensions/penpi/transcript-search.ts	PENpi extension
 .pi/extensions/penpi/tsconfig.json	PENpi extension
+.pi/extensions/penpi/vitest.config.ts	PENpi extension: its tests load Pi from source
 .pi/settings.json	PENpi project defaults (compaction off)
 .pi/skills/p2-ui.md	deleted: upstream skill for apps/p2, which PENpi does not ship
 AGENTS.md	PENpi's agent rules (upstream's live in AGENTS.pi.md)
-AGENTS.pi.md	upstream AGENTS.md kept as Pi's rules, with PENpi's contribution, upstream-merge and release notes; no apps/p2 rules
+AGENTS.pi.md	upstream AGENTS.md kept as Pi's rules, with PENpi's contribution, upstream-merge and release notes; no apps/ rules
 CHANGELOG.md	PENpi changelog
 CONTRIBUTING.md	PENpi contribution process
 LICENSE	adds the Penfield copyright line; MIT terms and Mario Zechner's notice unchanged
@@ -135,10 +151,12 @@ docs/adr/0031-upstream-ancestry-and-patch-manifest.md	PENpi decision record
 docs/adr/0032-context-engine.md	PENpi decision record
 docs/adr/0033-marginal-pair.md	PENpi decision record
 docs/adr/0034-names-at-the-ratio-before-doubt.md	PENpi decision record
+docs/adr/0035-exact-repeat-within-the-allowance.md	PENpi decision record
 docs/adr/README.md	PENpi decision record
-package-lock.json	follows package.json (PENpi workspaces and pins; nothing for upstream's apps/); pi-mcp-adapter installed with --legacy-peer-deps (CONTRIBUTING.md); overrides include recheck 4.6.2 (pi-mcp-adapter pins 4.6.0-beta.3) and miniflare's undici 7.30.1
+docs/tokenizers.md	PENpi documentation
+package-lock.json	follows package.json (PENpi workspaces and pins; nothing for upstream's apps/); pi-mcp-adapter installed with --legacy-peer-deps (CONTRIBUTING.md); overrides include recheck 4.6.2 (pi-mcp-adapter pins 4.6.0-beta.3) and miniflare's undici 7.30.2
 package.json	PENpi version, workspaces (no apps/*), checks and pins, context engine suite and tokenizer scripts; no npm publishing or model-catalog scripts
-packages/ai/package.json	build uses the committed model-data snapshot (offline); vitest 4.1.12 security update (as upstream 2685de7a1)
+packages/ai/package.json	build uses the committed model-data snapshot (offline)
 packages/ai/src/providers/data/.manifest.json	committed model-data snapshot (offline builds)
 packages/ai/src/providers/data/amazon-bedrock.json	committed model-data snapshot (offline builds)
 packages/ai/src/providers/data/ant-ling.json	committed model-data snapshot (offline builds)
@@ -185,7 +203,7 @@ packages/ai/src/providers/data/zai-coding-cn.json	committed model-data snapshot 
 packages/ai/src/providers/data/zai.json	committed model-data snapshot (offline builds)
 packages/coding-agent/README.md	upstream README plus a PENpi note
 packages/coding-agent/docs/settings.md	documents PENpi's compaction-off default
-packages/coding-agent/install-lock/package-lock.json	generated from packages/coding-agent/package.json: undici 8.12.3 security update; minimatch 11.0.3 security update (GHSA-g3hv-75wg-m249) in place of 10.2.6, with its new dependency @isaacs/nonrecursive-glob-match 1.0.3
+packages/coding-agent/install-lock/package-lock.json	generated from the root lockfile: minimatch 11.0.3 (GHSA-g3hv-75wg-m249) sits under pi-coding-agent, as in PENpi's root lockfile, where upstream's sits at the root
 packages/coding-agent/schemas/settings.schema.json	generated: compaction.enabled defaults to false (settings-defaults.ts)
 packages/coding-agent/src/cli/args.ts	core patch: hidden extension CLI flags
 packages/coding-agent/src/core/extensions/loader.ts	core patch: hidden extension CLI flags
@@ -212,11 +230,13 @@ packages/coding-agent/test/suite/context-engine-e2/README.md	PENpi: E2, the cont
 packages/coding-agent/test/suite/context-engine-e2/content.ts	PENpi: E2, the context engine against real tokenizers (ADR 0032)
 packages/coding-agent/test/suite/context-engine-e2/corpus-pin.test.ts	PENpi: E2, the context engine against real tokenizers (ADR 0032)
 packages/coding-agent/test/suite/context-engine-e2/corpus.ts	PENpi: E2, the context engine against real tokenizers (ADR 0032)
+packages/coding-agent/test/suite/context-engine-e2/count-profile.ts	PENpi: E2, the context engine against real tokenizers (ADR 0032)
 packages/coding-agent/test/suite/context-engine-e2/e2-cjk.e2.ts	PENpi: E2, the context engine against real tokenizers (ADR 0032)
 packages/coding-agent/test/suite/context-engine-e2/e2-coding.e2.ts	PENpi: E2, the context engine against real tokenizers (ADR 0032)
 packages/coding-agent/test/suite/context-engine-e2/e2-data.e2.ts	PENpi: E2, the context engine against real tokenizers (ADR 0032)
 packages/coding-agent/test/suite/context-engine-e2/e2-research.e2.ts	PENpi: E2, the context engine against real tokenizers (ADR 0032)
 packages/coding-agent/test/suite/context-engine-e2/engine-under-test.ts	PENpi: E2, the context engine against real tokenizers (ADR 0032)
+packages/coding-agent/test/suite/context-engine-e2/fetch-templates.ts	PENpi: E2, the context engine against real tokenizers (ADR 0032)
 packages/coding-agent/test/suite/context-engine-e2/known-failures.json	PENpi: E2, the context engine against real tokenizers (ADR 0032)
 packages/coding-agent/test/suite/context-engine-e2/known-failures.test.ts	PENpi: E2, the context engine against real tokenizers (ADR 0032)
 packages/coding-agent/test/suite/context-engine-e2/known-failures.ts	PENpi: E2, the context engine against real tokenizers (ADR 0032)
@@ -226,6 +246,8 @@ packages/coding-agent/test/suite/context-engine-e2/mixes.ts	PENpi: E2, the conte
 packages/coding-agent/test/suite/context-engine-e2/provider-sim.ts	PENpi: E2, the context engine against real tokenizers (ADR 0032)
 packages/coding-agent/test/suite/context-engine-e2/render-header.ts	PENpi: E2, the context engine against real tokenizers (ADR 0032)
 packages/coding-agent/test/suite/context-engine-e2/render.ts	PENpi: E2, the context engine against real tokenizers (ADR 0032)
+packages/coding-agent/test/suite/context-engine-e2/resume.test.ts	PENpi: E2, the context engine against real tokenizers (ADR 0032)
+packages/coding-agent/test/suite/context-engine-e2/resume.ts	PENpi: E2, the context engine against real tokenizers (ADR 0032)
 packages/coding-agent/test/suite/context-engine-e2/run-e2.sh	PENpi: E2, the context engine against real tokenizers (ADR 0032)
 packages/coding-agent/test/suite/context-engine-e2/runner.ts	PENpi: E2, the context engine against real tokenizers (ADR 0032)
 packages/coding-agent/test/suite/context-engine-e2/setup-tokenizers.sh	PENpi: E2, the context engine against real tokenizers (ADR 0032)
@@ -257,6 +279,20 @@ packages/coding-agent/test/suite/context-engine/bench.test.ts	PENpi: context eng
 packages/coding-agent/test/suite/context-engine/calibration.test.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/context-engine/claude-counts.test.ts	PENpi: the floor sweep counted with Claude's token counter (ADR 0033)
 packages/coding-agent/test/suite/context-engine/claude-counts.txt	PENpi: the floor sweep counted with Claude's token counter (ADR 0033)
+packages/coding-agent/test/suite/context-engine/claude-real-counts.test.ts	PENpi: real tool outputs counted with Claude's token counter (0.9.0)
+packages/coding-agent/test/suite/context-engine/claude-real-counts.txt	PENpi: real tool outputs counted with Claude's token counter (0.9.0)
+packages/coding-agent/test/suite/context-engine/claude-real-texts/find.txt	PENpi: real tool outputs counted with Claude's token counter (0.9.0)
+packages/coding-agent/test/suite/context-engine/claude-real-texts/git-ls-files.txt	PENpi: real tool outputs counted with Claude's token counter (0.9.0)
+packages/coding-agent/test/suite/context-engine/claude-real-texts/grep-exports.txt	PENpi: real tool outputs counted with Claude's token counter (0.9.0)
+packages/coding-agent/test/suite/context-engine/claude-real-texts/grep-n.txt	PENpi: real tool outputs counted with Claude's token counter (0.9.0)
+packages/coding-agent/test/suite/context-engine/claude-real-texts/read-js-script.txt	PENpi: real tool outputs counted with Claude's token counter (0.9.0)
+packages/coding-agent/test/suite/context-engine/claude-real-texts/read-json-package.txt	PENpi: real tool outputs counted with Claude's token counter (0.9.0)
+packages/coding-agent/test/suite/context-engine/claude-real-texts/read-json-tsconfig.txt	PENpi: real tool outputs counted with Claude's token counter (0.9.0)
+packages/coding-agent/test/suite/context-engine/claude-real-texts/read-md-adr.txt	PENpi: real tool outputs counted with Claude's token counter (0.9.0)
+packages/coding-agent/test/suite/context-engine/claude-real-texts/read-sh.txt	PENpi: real tool outputs counted with Claude's token counter (0.9.0)
+packages/coding-agent/test/suite/context-engine/claude-real-texts/read-ts-detector.txt	PENpi: real tool outputs counted with Claude's token counter (0.9.0)
+packages/coding-agent/test/suite/context-engine/claude-real-texts/read-ts-estimator.txt	PENpi: real tool outputs counted with Claude's token counter (0.9.0)
+packages/coding-agent/test/suite/context-engine/claude-real-texts/read-yaml-ci.txt	PENpi: real tool outputs counted with Claude's token counter (0.9.0)
 packages/coding-agent/test/suite/context-engine/d1-fault-injection.test.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/context-engine/d14-truncated-answers-named.test.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/context-engine/d15-reasoning-only-continuation.test.ts	PENpi: context engine behaviour suite (ADR 0032)
@@ -280,6 +316,9 @@ packages/coding-agent/test/suite/context-engine/floor-sweep-cases.ts	PENpi: cont
 packages/coding-agent/test/suite/context-engine/floor-sweep-claude.md	PENpi: the floor sweep counted with Claude's token counter (ADR 0033)
 packages/coding-agent/test/suite/context-engine/floor-sweep-claude.mjs	PENpi: the floor sweep counted with Claude's token counter (ADR 0033)
 packages/coding-agent/test/suite/context-engine/floor-sweep.test.ts	PENpi: context engine behaviour suite (ADR 0032)
+packages/coding-agent/test/suite/context-engine/floor-sweep-texts/README.md.txt	PENpi: the floor sweep's texts from repository files, frozen (ADR 0033)
+packages/coding-agent/test/suite/context-engine/floor-sweep-texts/agent-session.ts.txt	PENpi: the floor sweep's texts from repository files, frozen (ADR 0033)
+packages/coding-agent/test/suite/context-engine/floor-sweep-texts/package-lock.json.txt	PENpi: the floor sweep's texts from repository files, frozen (ADR 0033)
 packages/coding-agent/test/suite/context-engine/g1-error-fixtures.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/context-engine/g1-output-errors.test.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/context-engine/g2-plateau-report.test.ts	PENpi: context engine behaviour suite (ADR 0032)
@@ -296,6 +335,7 @@ packages/coding-agent/test/suite/context-engine/helpers.ts	PENpi: context engine
 packages/coding-agent/test/suite/context-engine/honest-provider.test.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/context-engine/honest-scripts.test.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/context-engine/honest-ratio-cap.test.ts	PENpi: context engine behaviour suite (ADR 0032)
+packages/coding-agent/test/suite/context-engine/no-count-endpoints.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/context-engine/prose-scripts.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/context-engine/length.test.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/context-engine/limits.test.ts	PENpi: context engine behaviour suite (ADR 0032)
@@ -315,7 +355,10 @@ packages/coding-agent/test/suite/context-engine/penpi-briefing.test.ts	0.5.0 con
 packages/coding-agent/test/suite/context-engine/persistence.test.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/context-engine/properties.test.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/context-engine/context-search.test.ts	PENpi: context engine behaviour suite (ADR 0032)
+packages/coding-agent/test/suite/context-engine/exact-session.ts	PENpi: context engine behaviour suite (ADR 0032)
+packages/coding-agent/test/suite/context-engine/jinja-lite.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/context-engine/length-stop-anomalies.test.ts	PENpi: context engine behaviour suite (ADR 0032)
+packages/coding-agent/test/suite/context-engine/reasoning-rules.test.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/context-engine/silent-detector.test.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/context-engine/recovery.test.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/context-engine/reference/p2-context-engine.ts	PENpi: earlier engine versions the suite compares against (ADR 0032)
@@ -340,11 +383,24 @@ packages/coding-agent/test/suite/context-engine/v080-marginal-pair.test.ts	PENpi
 packages/coding-agent/test/suite/context-engine/v080-name-rescale.test.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/context-engine/v080-result-hit-call.test.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/context-engine/v080-search-offset.test.ts	PENpi: context engine behaviour suite (ADR 0032)
+packages/coding-agent/test/suite/context-engine/v090-cached-input.test.ts	PENpi: context engine behaviour suite (ADR 0032)
+packages/coding-agent/test/suite/context-engine/v090-count-api-gemini.test.ts	PENpi: context engine behaviour suite (ADR 0032)
+packages/coding-agent/test/suite/context-engine/v090-count-api.test.ts	PENpi: context engine behaviour suite (ADR 0032)
+packages/coding-agent/test/suite/context-engine/v090-exact-budget.test.ts	PENpi: context engine behaviour suite (ADR 0032)
+packages/coding-agent/test/suite/context-engine/v090-exact-detection.test.ts	PENpi: context engine behaviour suite (ADR 0032)
+packages/coding-agent/test/suite/context-engine/v090-exact-repeat.test.ts	PENpi: context engine behaviour suite (ADR 0032)
+packages/coding-agent/test/suite/context-engine/v090-exact-scripts.test.ts	PENpi: context engine behaviour suite (ADR 0032)
+packages/coding-agent/test/suite/context-engine/v090-honest-detection.test.ts	PENpi: context engine behaviour suite (ADR 0032)
+packages/coding-agent/test/suite/context-engine/v090-recall-hidden.test.ts	PENpi: context engine behaviour suite (ADR 0032)
 packages/coding-agent/test/suite/context-engine/vitest.config.ts	PENpi: context engine behaviour suite (ADR 0032)
+packages/coding-agent/test/suite/context-engine/vitest.fast.config.ts	PENpi: context engine behaviour suite (ADR 0032)
+packages/coding-agent/test/suite/harness.ts	PENpi: an optional fixed working folder, so the context engine's honest test can replay a session
 packages/coding-agent/test/suite/regressions/copilot-request-size-overflow.test.ts	upstream test adapted to PENpi's compaction-off default
 packages/coding-agent/test/suite/virtual-models.test.ts	upstream test adapted to PENpi's compaction-off default
 packages/coding-agent/vitest.config.ts	the context engine suite runs with its own config (ADR 0032)
 packages/env/vitest.config.ts	skip daemon tests when the pi-env daemon is not built
+scripts/check-extension-graph.mjs	PENpi check: the extension's import graph and its workers (0.9.0, DP1)
+scripts/check-extension-graph.test.mjs	tests a PENpi script
 scripts/check-lockfile-versions.mjs	PENpi version-surface check; fails on a registry pi-ai (pi-mcp-adapter 7.x peer range)
 scripts/check-lockfile-versions.test.mjs	PENpi: test of the registry pi-ai check
 scripts/check-release-assets.mjs	PENpi release asset interlock
@@ -352,6 +408,8 @@ scripts/check-shell-script-modes.mjs	CI check: invoked shell scripts are executa
 scripts/check-shell-script-modes.test.mjs	tests a PENpi script
 scripts/check-upstream-patches.mjs	CI check: this manifest matches the diff from the upstream base
 scripts/check-upstream-patches.test.mjs	tests a PENpi script
+scripts/ci-changed-paths.sh	PENpi CI: the path filter, which test sets a run needs
+scripts/ci-changed-paths.test.mjs	tests a PENpi script
 scripts/e2-summarize.test.mjs	PENpi: context engine E2 summary gates (ADR 0032)
 scripts/engine-suite-upstream.sh	PENpi: the context engine suite against stock upstream Pi at the base (ADR 0032)
 scripts/make-review-archive.sh	PENpi release/review archive
@@ -368,6 +426,8 @@ scripts/release-notes.mjs	accepts PENpi's changelog heading format; carries the 
 scripts/release-notes.test.mjs	tests a PENpi script
 scripts/release.mjs	bumps and tags PENpi's version, not upstream's
 scripts/release.test.mjs	tests a PENpi script
-scripts/sync-versions.js	upstream's version from before apps/: PENpi deletes upstream's apps/
-scripts/sync-versions.test.mjs	upstream's test from before apps/: PENpi deletes upstream's apps/
+scripts/run-heavy-local.sh	PENpi: the heavy test runs on a local machine (macOS or Linux), isolated, with one bundle
+scripts/test-live.mjs	PENpi: npm run test:live, the workspace tests with the caller's environment, only with PI_LIVE_E2E=1
+scripts/test-live.test.mjs	tests a PENpi script
 scripts/zod-override.test.mjs	tests a PENpi dependency override
+test.sh	PENpi: npm test runs it, and it takes npm script names (test:workspaces by default)

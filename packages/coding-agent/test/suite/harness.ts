@@ -122,6 +122,17 @@ export interface HarnessOptions {
 	modelsJson?: Record<string, unknown>;
 	/** Session to continue, for example to test a resume. Default: a new in-memory session. */
 	sessionManager?: SessionManager;
+	/**
+	 * The working folder, emptied first. Default: a new one under the system's temp folder, named by the time. The
+	 * folder is in the system prompt, so a fixed one makes a session's requests the same from one run to the next.
+	 */
+	tempDir?: string;
+	/**
+	 * The package folder Pi's system prompt names for its docs and examples (PI_PACKAGE_DIR), set for this harness and
+	 * restored at cleanup. Default: the checkout's. A fixed one makes a session's requests the same from any checkout
+	 * path.
+	 */
+	packageDir?: string;
 }
 
 export interface Harness {
@@ -142,14 +153,17 @@ export interface Harness {
 	cleanup: () => void;
 }
 
-function createTempDir(): string {
-	const tempDir = join(tmpdir(), `pi-suite-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+function createTempDir(fixed?: string): string {
+	const tempDir = fixed ?? join(tmpdir(), `pi-suite-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+	if (fixed) rmSync(tempDir, { recursive: true, force: true });
 	mkdirSync(tempDir, { recursive: true });
 	return tempDir;
 }
 
 export async function createHarness(options: HarnessOptions = {}): Promise<Harness> {
-	const tempDir = createTempDir();
+	const tempDir = createTempDir(options.tempDir);
+	const packageDirBefore = process.env.PI_PACKAGE_DIR;
+	if (options.packageDir !== undefined) process.env.PI_PACKAGE_DIR = options.packageDir;
 	const fauxProvider: FauxProviderRegistration = registerFauxProvider({
 		provider: options.provider,
 		models: options.models,
@@ -270,6 +284,10 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 		cleanup() {
 			session.dispose();
 			fauxProvider.unregister();
+			if (options.packageDir !== undefined) {
+				if (packageDirBefore === undefined) delete process.env.PI_PACKAGE_DIR;
+				else process.env.PI_PACKAGE_DIR = packageDirBefore;
+			}
 			if (existsSync(tempDir)) {
 				rmSync(tempDir, { recursive: true });
 			}

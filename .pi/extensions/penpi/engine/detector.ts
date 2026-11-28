@@ -1,8 +1,10 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { ExtensionContext, SessionBoundaryDraft } from "@earendil-works/pi-coding-agent";
 import type { EngineCore } from "./core.ts";
+import { COUNT_API_TOLERANCE, GEMINI_SIGNED_CALL_ALLOWANCE, GEMINI_SIGNED_CALL_EXCESS } from "./countapi.ts";
 import { STATE_TYPE, type TruncatedTurn } from "./options.ts";
 import type { ModelState } from "./state.ts";
+import type { TemplateTokens } from "./tokenizers/reasoning.ts";
 
 /**
  * ADR 0033: whether a judged sample completes a marginal pair. An evidence sample does with a marginal sample in the
@@ -34,6 +36,17 @@ export function clearsMarginals(
 	return (
 		marginals.length > 0 && reported > Math.max(maxReported, ...marginals.map((e) => e.reported)) * (1 + flatness)
 	);
+}
+
+/**
+ * The exact-repeat rule's test: a sample reports exactly the largest usage reported so far again, and its request was
+ * expected above that, or below it by no more than `error` of it (silentEstimateError), since a request expected that
+ * close may still have reached the limit, and servers that fill their context report exactly the limit. An honest count
+ * lands on one given number only by chance. Not when expected more than 1.6 times above it: the estimate is off, not
+ * the provider.
+ */
+export function repeatsMaximum(expected: number, reported: number, max: number, error: number): boolean {
+	return reported === max && expected >= (1 - error) * reported && expected <= 1.6 * reported;
 }
 
 /**
@@ -125,6 +138,57 @@ export function answersProduced(count: number): string {
 	return count === 1 ? "1 answer was produced" : `${count} answers were produced`;
 }
 
+/** 0.9.0: judged exact samples in a row that set the exactness gate. */
+export const EXACT_GATE_SAMPLES = 3;
+/** 0.9.0: the smallest exact-growth shortfall that is evidence, in tokens. */
+export const EXACT_MIN_SHORTFALL = 64;
+/** 0.9.0: an exact-growth shortfall above this share of the append, and above silentStrongGrowth, is strong. */
+export const EXACT_STRONG_SHARE = 0.85;
+/**
+ * 0.9.0: the share of an exact count a provider's own count may differ by, either way, beyond the tolerance, and still be
+ * honest (design section 5). An honest server counting with the same tokenizer file differs by a share of the text, by
+ * kind of content (a tokenizer version, text it normalizes), not by a fixed amount, and by a few percent. Truncation
+ * loses what it drops: whole messages or the front of the prompt, tens of percent of an append and up to all of it
+ * once the window is full. So exact growth, a surplus and the absolute bound each allow this share of their exact count.
+ */
+export const EXACT_DRIFT_SHARE = 0.1;
+/**
+ * 0.9.0: the chat template's tokens per message, by entry, as an upper bound (design section 5): what a template adds
+ * around each message, which the exact count leaves out. o200k's and cl100k's chat format is 3 tokens a message plus the
+ * role; Qwen's `<|im_start|>role\n … <|im_end|>\n` is 5. An entry not listed takes 8.
+ */
+export const TEMPLATE_TOKENS: Record<string, number> = {
+	o200k: 4,
+	cl100k: 4,
+	qwen35: 5,
+	qwen38: 5,
+	qwen3: 5,
+	"qwen3-coder": 5,
+	"qwen3-vl": 5,
+	qwen25: 5,
+};
+const TEMPLATE_DEFAULT = 8;
+/** And a constant, for the few tokens where a server renders a tool call or trims text its own way. */
+export const EXACT_TOLERANCE_CONSTANT = 16;
+
+/**
+ * The exact rules' tolerance for an append of `messages` messages, with `calls` tool calls of `args` arguments: the
+ * entry's tokens a message, and the model's template tokens per call and argument when its rule pins them.
+ */
+export function exactTolerance(
+	entry: string | undefined,
+	messages: number,
+	template?: TemplateTokens,
+	calls = 0,
+	args = 0,
+): number {
+	return (
+		(TEMPLATE_TOKENS[entry ?? ""] ?? TEMPLATE_DEFAULT) * Math.max(1, messages) +
+		(template ? template.call * calls + template.argument * args : 0) +
+		EXACT_TOLERANCE_CONSTANT
+	);
+}
+
 export function installDetector(core: EngineCore): void {
 	const { opts, stats, log, st } = core;
 
@@ -187,6 +251,127 @@ export function installDetector(core: EngineCore): void {
 		};
 	};
 
+	/**
+	 * 0.9.0: detection on exact counts (design section 5), for one sample. Returns whether the exact path judged it
+	 * (`path`; otherwise the fallback rules do), and its evidence.
+	 * - **The gate** sets after EXACT_GATE_SAMPLES judged samples in a row that match on deltas (the reported growth is
+	 *   the exact delta of the append, within the tolerance and the band) and on totals (reported is at least the
+	 *   request's text count, less its band). Assumed names never set it. A mismatch after it sets never drops it; a
+	 *   provider switch or another exact key does.
+	 * - **Judged samples** are counted whole, not assumed, not marked for the fallback rules (exact.ts exactRequest), with
+	 *   an append whose band is at most a quarter of it, and follow the previous sample append-only.
+	 * - **Once set:** exact growth (a shortfall beyond the tolerance and the drift share of the append, and at least 64
+	 *   tokens, is evidence; strong above silentStrongGrowth and 85% of the append; a surplus beyond the same is a
+	 *   fallback sample), the absolute bound (reported under the text count, less the band, the tolerance and the drift
+	 *   share of the text, is evidence whatever its delta), and the exact repeat reversed (exactly the maximum again,
+	 *   with a rendered size above the maximum's by more than the tolerance).
+	 */
+	function judgeExact(
+		state: ModelState,
+		sent: NonNullable<typeof st.lastSent>,
+		reported: number,
+		prev: ModelState["lastSample"],
+		switched: boolean,
+	): { path: boolean; suspect?: string; strong: boolean; off?: boolean } {
+		const none = { path: false, strong: false };
+		const ex = sent.exactRequest;
+		const key = sent.exactKey;
+		if (switched) {
+			if (state.exactGate?.set) log("exactness gate dropped: the serving provider changed");
+			state.exactGate = undefined;
+			state.maxRendered = undefined;
+		}
+		if (!ex || !key || sent.exactAssumed) return none;
+		if (state.exactGate && state.exactGate.key !== key) {
+			if (state.exactGate.set) log(`exactness gate dropped: ${state.exactGate.key} -> ${key}`);
+			state.exactGate = undefined;
+		}
+		if (!state.exactGate) state.exactGate = { key, matches: 0, set: false };
+		const gate = state.exactGate;
+		// A count API's count is the request's whole size: COUNT_API_TOLERANCE a request (countapi.ts).
+		const counted = sent.countApi;
+		const tol = (messages: number, calls = 0, args = 0) =>
+			counted ? COUNT_API_TOLERANCE : exactTolerance(sent.exactEntry, messages, sent.exactTemplate, calls, args);
+		const appended = () => tol(ex.appendedMessages, ex.appendedCalls, ex.appendedArguments);
+		// Gemini 4 bills a tool call with its thoughtSignature above the count: allowed on the surplus side only, so it
+		// never widens the window a truncation could hide in.
+		const surplusAllowance = counted?.kind === "gemini" ? GEMINI_SIGNED_CALL_ALLOWANCE * ex.appendedCalls : 0;
+		const consecutive = !!prev && prev.seq === sent.seq - 1 && sent.appendOnly && !sent.afterLengthStop && !switched;
+		const delta = consecutive ? reported - prev!.reported : 0;
+		const exactDelta =
+			consecutive && prev!.exactRendered !== undefined ? ex.rendered - prev!.exactRendered : undefined;
+		const judged = exactDelta !== undefined && !ex.fallback && ex.appendedBand <= 0.25 * Math.max(exactDelta, 0);
+		// A count API's totals check is two-sided, so a generation with a constant excess never sets the gate. Gemini's
+		// signed calls in the history bill above the count. (A Gemini request with an image is a fallback sample.)
+		const totals = counted
+			? reported >= ex.text - COUNT_API_TOLERANCE &&
+				reported <=
+					ex.text +
+						COUNT_API_TOLERANCE +
+						(counted.kind === "gemini" ? GEMINI_SIGNED_CALL_EXCESS * counted.signedCalls : 0)
+			: reported >= ex.text - ex.band;
+		if (!gate.set) {
+			// An append with an image can't show a match: the provider prices images by its own rule.
+			if (!judged || ex.appendedImages) return none;
+			const off = delta - exactDelta!;
+			const matches =
+				off >= -(appended() + ex.appendedBand) && off <= appended() + ex.appendedBand + surplusAllowance && totals;
+			gate.matches = matches ? gate.matches + 1 : 0;
+			if (gate.matches >= EXACT_GATE_SAMPLES) {
+				gate.set = true;
+				log(`exactness gate set for ${key}: ${EXACT_GATE_SAMPLES} samples matched on deltas and totals`);
+			}
+			return none;
+		}
+		if (ex.fallback) {
+			log(`exact sample on the fallback rules: ${ex.fallback}`);
+			return none;
+		}
+		// The absolute bound: a sample under its own text count is truncated, whatever its delta.
+		const bound = ex.text - ex.band - appended() - EXACT_DRIFT_SHARE * ex.text;
+		if (reported < bound)
+			return {
+				path: true,
+				suspect: `reported ${reported}, under the request's exact text count ${ex.text} (band ${ex.band}, so at least ${Math.round(bound)})`,
+				strong: false,
+			};
+		if (judged) {
+			const shortfall = exactDelta! - delta - ex.appendedBand;
+			const t = appended() + Math.round(EXACT_DRIFT_SHARE * Math.max(exactDelta!, 0));
+			// A surplus is a count error, unless the append's images made it: those only add to what the provider reports.
+			if (!ex.appendedImages && delta - exactDelta! > t + ex.appendedBand + surplusAllowance) {
+				log(
+					`exact count off: reported usage grew ${delta} for an exact append of ${exactDelta} (tolerance ${t}); a fallback sample`,
+				);
+				// The next sample's delta would start from this count: it is judged on the fallback rules too.
+				return { path: false, strong: false, off: true };
+			}
+			if (shortfall > t && shortfall >= EXACT_MIN_SHORTFALL)
+				return {
+					path: true,
+					suspect: `exact append ${exactDelta}, reported usage ${delta >= 0 ? "+" : ""}${delta}: ${shortfall} short (tolerance ${t})`,
+					strong: shortfall > opts.silentStrongGrowth && shortfall > EXACT_STRONG_SHARE * exactDelta!,
+				};
+		}
+		// The exact repeat, reversed: an honest request whose exact size is the maximum's reports exactly the maximum; a
+		// truncated one is over it.
+		if (reported === state.maxReported && state.maxRendered !== undefined && !sent.afterLengthStop) {
+			const over = ex.rendered - state.maxRendered;
+			if (over > tol(1))
+				return {
+					path: true,
+					suspect: `reported exactly the previous maximum ${reported} again, ${over} exact tokens above the request that set it (tolerance ${tol(1)})`,
+					strong: false,
+				};
+			log(
+				`exact repeat not judged: reported exactly the previous maximum ${reported} again, ${over} exact tokens from the request that set it`,
+			);
+		}
+		// An append-only sample the exact rules couldn't judge (its band, or a previous request not counted whole) falls to
+		// the fallback rules; any other sample was judged here, by the bound and the repeat.
+		return judged || !consecutive ? { path: true, strong: false } : none;
+	}
+
 	function calibrate(assistant: AssistantMessage, ctx: ExtensionContext): void {
 		st.overflowRetries = 0;
 		st.outputRetries = 0;
@@ -203,6 +388,8 @@ export function installDetector(core: EngineCore): void {
 		const servedBy = st.streamProvider;
 		st.streamProvider = undefined;
 		if (!sent || sent.estimate <= 0 || reported <= 0) return;
+		// 0.9.0: a provider count that settled in time makes this an exact sample (countapi.ts).
+		core.countApi?.apply(sent);
 		const key = sent.key;
 		const state = core.modelState(key);
 		const switched = servedBy !== undefined && state.servedBy !== undefined && servedBy !== state.servedBy;
@@ -218,6 +405,8 @@ export function installDetector(core: EngineCore): void {
 			parked.set(servedBefore, {
 				maxReported: state.maxReported,
 				maxExpected: state.maxExpected,
+				maxEstimate: state.maxEstimate,
+				maxShape: state.maxShape,
 				suspects: state.suspects,
 				marginals: state.marginals,
 			});
@@ -225,6 +414,8 @@ export function installDetector(core: EngineCore): void {
 			parked.delete(servedBy);
 			state.maxReported = back?.maxReported ?? 0;
 			state.maxExpected = back?.maxExpected;
+			state.maxEstimate = back?.maxEstimate;
+			state.maxShape = back?.maxShape;
 			state.suspects = back?.suspects ?? [];
 			state.marginals = back?.marginals ?? [];
 			const last = state.providerLast?.get(servedBy);
@@ -242,7 +433,8 @@ export function installDetector(core: EngineCore): void {
 		// grow by about what was appended (text only: image costs differ too much between providers).
 		// A sample that does not is quarantined: it is evidence, and it never moves the ratio or the
 		// running maximum. A sample reporting exactly the running maximum again while it was expected
-		// above it is evidence too (servers that fill their context report exactly the limit).
+		// above it, or below it within the allowance silentEstimateError, is evidence too (servers that
+		// fill their context report exactly the limit).
 		const ratioBefore = core.clampRatio(state.ratio);
 		const expected = sent.estimate * ratioBefore;
 		const prev = state.lastSample;
@@ -251,11 +443,23 @@ export function installDetector(core: EngineCore): void {
 		const max = state.maxReported;
 		// The exact-repeat rule below compares with the largest usage ever reported: only with settled
 		// calibration (not during warm-up or after a model switch) and only for a different request than
-		// the one that set it (identical windows report identical counts).
-		const levelRepeat =
-			max > 0 &&
-			state.samples >= opts.silentSettledSamples &&
-			Math.abs(expected - (state.maxExpected ?? 0)) >= 0.005 * expected;
+		// the one that set it (identical windows report identical counts). Two requests are the same when their
+		// shapes match (the same messages, by identity) and their own estimates are within 0.5%. The estimates, not
+		// the expected sizes: an identical resend's expected size moves with the ratio step after the first answer,
+		// and with the allowance below the maximum that step alone would pass. The shape too: a different request,
+		// such as the first after a cut, can land within 0.5% of the maximum's estimate.
+		const settledAtMax = max > 0 && state.samples >= opts.silentSettledSamples;
+		// 0.9.0: detection on exact counts (design section 5). The gate, then exact growth on raw deltas, the absolute
+		// bound and the reversed exact repeat; a sample they don't judge falls to the fallback rules below.
+		const exact = judgeExact(state, sent, reported, prev, switched);
+		const exactPath = exact.path;
+		// Both requests, for the log: shape (12 hex) and estimate, this one's and the maximum-setter's.
+		const requests = () =>
+			`shape ${sent.shapeHash.slice(0, 12)}, the maximum's ${(state.maxShape ?? "none").slice(0, 12)}; estimate ${sent.estimate}, the maximum's ${state.maxEstimate}`;
+		const sameRequest =
+			sent.shapeHash === state.maxShape &&
+			Math.abs(sent.estimate - (state.maxEstimate ?? 0)) < 0.005 * sent.estimate;
+		const levelRepeat = settledAtMax && !sameRequest;
 		// A sample whose growth falls short but not far enough to be evidence never clears evidence.
 		let marginal = false;
 		// ADR 0033: marginal by its growth (not a length stop or an unjudged switch), with its log text.
@@ -272,6 +476,11 @@ export function installDetector(core: EngineCore): void {
 			// D24: a router (OpenRouter) moved the model to another upstream provider, which counts the same request
 			// differently, and that provider served nothing since the last cut: nothing to judge this sample against.
 			marginal = true;
+		} else if (exactPath) {
+			if (exact.suspect) {
+				suspect = exact.suspect;
+				strong = exact.strong;
+			}
 		} else if (reference || (prev && prev.seq === sent.seq - 1 && sent.appendOnly)) {
 			// The previous sample, or at a switch the new provider's own last sample in this append chain (D24):
 			// usage must have grown by about the text appended since.
@@ -318,14 +527,28 @@ export function installDetector(core: EngineCore): void {
 		}
 		if (
 			!suspect &&
+			!exactPath &&
 			!sent.afterLengthStop &&
 			(!switched || reference !== undefined) &&
 			levelRepeat &&
-			reported === max &&
-			expected > reported &&
-			expected <= 1.6 * reported
+			repeatsMaximum(expected, reported, max, opts.silentEstimateError)
 		) {
-			suspect = `reported exactly the previous maximum ${reported} again, expected about ${Math.round(expected)}`;
+			// The log shows what the rule compared: the expected size against the range it accepts.
+			const lowest = Math.round((1 - opts.silentEstimateError) * reported);
+			suspect = `reported exactly the previous maximum ${reported} again, expected about ${Math.round(expected)} (accepted from ${lowest} to ${Math.round(1.6 * reported)}); ${requests()}`;
+		} else if (
+			!suspect &&
+			!exactPath &&
+			!sent.afterLengthStop &&
+			(!switched || reference !== undefined) &&
+			settledAtMax &&
+			sameRequest &&
+			repeatsMaximum(expected, reported, max, opts.silentEstimateError)
+		) {
+			// The same request again (a resend reports the same count): no evidence. Logged, so tests can count it.
+			log(
+				`exact repeat not judged: reported exactly the previous maximum ${reported} again for the same request (${requests()}); expected about ${Math.round(expected)}, the maximum's ${Math.round(state.maxExpected ?? 0)}`,
+			);
 		}
 		// ADR 0033: marginal samples older than the evidence span are forgotten, as weak evidence is.
 		const inSpan = (e: { sample: number }) => state.samples - e.sample < opts.silentEvidenceSpan;
@@ -340,7 +563,12 @@ export function installDetector(core: EngineCore): void {
 		if (pairs) suspect = short;
 		if (!suspect && !sent.afterLengthStop && !switched && prev && prev.seq === sent.seq - 1 && sent.appendOnly)
 			checkReplay(key, sent, reported - prev.reported, ctx);
-		state.lastSample = { seq: sent.seq, reported };
+		// A sample whose count was off leaves no exact reference: the next delta would start from it.
+		state.lastSample = {
+			seq: sent.seq,
+			reported,
+			...(sent.exactRequest && !exact.off ? { exactRendered: sent.exactRequest.rendered } : {}),
+		};
 		if (servedBy !== undefined) {
 			if (!state.providerLast) state.providerLast = new Map();
 			state.providerLast.set(servedBy, {
@@ -426,12 +654,27 @@ export function installDetector(core: EngineCore): void {
 		if (reported > state.maxReported) {
 			state.maxReported = reported;
 			state.maxExpected = expected;
+			state.maxEstimate = sent.estimate;
+			state.maxShape = sent.shapeHash;
+			state.maxRendered = sent.exactRequest?.rendered;
 		}
 		const alpha = state.samples < 3 ? 0.5 : 0.2;
 		const previous = state.ratio;
 		state.ratio = core.clampRatio(state.samples === 0 ? sample : state.ratio * (1 - alpha) + sample * alpha);
 		state.samples++;
 		let dirty = Math.abs(state.ratio - previous) / previous > 0.03 || state.samples % 50 === 0;
+		// 0.9.0: a request counted whole teaches its exact key's ratio as well, on the same clean samples. Detection
+		// still reads the estimate and the fallback ratio.
+		if (sent.exact !== undefined && sent.exact > 0 && sent.exactKey) {
+			const exact = core.modelState(sent.exactKey);
+			const exactSample = reported / sent.exact;
+			const a = exact.samples < 3 ? 0.5 : 0.2;
+			const before = exact.ratio;
+			exact.ratio = core.clampRatio(exact.samples === 0 ? exactSample : exact.ratio * (1 - a) + exactSample * a);
+			exact.samples++;
+			if (Math.abs(exact.ratio - before) / before > 0.03 || exact.samples % 50 === 0)
+				core.persistModel(sent.exactKey);
+		}
 		// H3: count clean requests near a learned limit, then re-probe toward the declared window.
 		// H8: only evidence retires a learned limit: a successful request above it. Stepping up to the
 		// declared window does not, so a re-probe that fails near the old limit still counts as a

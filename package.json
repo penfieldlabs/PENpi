@@ -8,7 +8,6 @@
 		"packages/chord/test/examples/61-tutorial",
 		"packages/coding-agent/examples/extensions/with-deps",
 		"packages/coding-agent/examples/extensions/custom-provider-anthropic",
-		"packages/coding-agent/examples/extensions/custom-provider-gitlab-duo",
 		"packages/coding-agent/examples/extensions/gondolin"
 	],
 	"scripts": {
@@ -23,9 +22,10 @@
 		"check:pinned-deps": "node scripts/check-pinned-deps.mjs",
 		"check:runtime-deps": "node scripts/check-runtime-deps.mjs",
 		"check:package-install": "node scripts/check-package-install.mjs",
+		"check:released-changelogs": "node scripts/check-released-changelogs.mjs",
 		"check:install-lock:coding-agent": "node scripts/generate-coding-agent-install-lock.mjs --check",
 		"check:ts-imports": "node scripts/check-ts-relative-imports.mjs",
-		"check:entry-graphs": "node scripts/check-entry-graphs.mjs",
+		"check:entry-graphs": "node scripts/check-entry-graphs.mjs && node scripts/check-extension-graph.mjs",
 		"generate:models": "npm --prefix packages/ai run generate-models",
 		"hydrate:model-data": "npm --prefix packages/ai run hydrate-model-data",
 		"check:model-data": "npm --prefix packages/ai run check:model-data",
@@ -35,15 +35,21 @@
 		"eval": "npm run eval --workspace=@earendil-works/pi-evals --",
 		"profile:tui": "node scripts/profile-coding-agent-node.mjs --mode tui",
 		"profile:rpc": "node scripts/profile-coding-agent-node.mjs --mode rpc",
-		"test": "npm run test:scripts && npm run test --workspace packages --workspace .pi/extensions/penpi --if-present && npm run test:context-engine",
+		"test": "./test.sh",
+		"test:workspaces": "npm run test:scripts && npm run test:packages && npm run test:extension && npm run test:context-engine",
+		"test:packages": "npm run test --workspace packages --if-present",
+		"test:extension": "npm run test --workspace .pi/extensions/penpi",
+		"test:live": "node scripts/test-live.mjs",
 		"test:context-engine": "cd packages/coding-agent && vitest --run --config test/suite/context-engine/vitest.config.ts",
+		"test:context-engine:fast": "cd packages/coding-agent && vitest --run --config test/suite/context-engine/vitest.fast.config.ts",
+		"test:penpi": "./test.sh test:scripts test:extension test:context-engine:fast",
 		"setup:tokenizers": "packages/coding-agent/test/suite/context-engine-e2/setup-tokenizers.sh",
 		"test:scripts": "node --test scripts/*.test.mjs scripts/*.test.ts",
 		"test:mcp-conformance": "node packages/coding-agent/test/mcp-conformance/run.ts",
-		"version:patch": "npm version patch --workspaces --no-git-tag-version --no-workspaces-update && node scripts/sync-versions.js && npm install --package-lock-only --ignore-scripts",
-		"version:minor": "npm version minor --workspaces --no-git-tag-version --no-workspaces-update && node scripts/sync-versions.js && npm install --package-lock-only --ignore-scripts",
-		"version:major": "npm version major --workspaces --no-git-tag-version --no-workspaces-update && node scripts/sync-versions.js && npm install --package-lock-only --ignore-scripts",
-		"version:set": "npm version --workspaces --no-workspaces-update",
+		"version:patch": "npm version patch --workspace packages --no-git-tag-version --no-workspaces-update && node scripts/sync-versions.js && npm install --package-lock-only --ignore-scripts",
+		"version:minor": "npm version minor --workspace packages --no-git-tag-version --no-workspaces-update && node scripts/sync-versions.js && npm install --package-lock-only --ignore-scripts",
+		"version:major": "npm version major --workspace packages --no-git-tag-version --no-workspaces-update && node scripts/sync-versions.js && npm install --package-lock-only --ignore-scripts",
+		"version:set": "npm version --workspace packages --no-workspaces-update",
 		"prepublishOnly": "npm run clean && npm run build && npm run check",
 		"release:local": "node scripts/local-release.mjs",
 		"pack:packages": "node scripts/pack-packages.mjs",
@@ -76,7 +82,7 @@
 	"overrides": {
 		"protobufjs": "7.6.6",
 		"hono": "4.13.18",
-		"@hono/node-server": "2.1.8",
+		"@hono/node-server": "2.1.11",
 		"nanoid": "3.3.20",
 		"rimraf": "6.1.2",
 		"zod": "4.6.6",
@@ -88,7 +94,7 @@
 			"undici": "6.29.1"
 		},
 		"miniflare": {
-			"undici": "7.30.1"
+			"undici": "7.30.2"
 		}
 	}
 }

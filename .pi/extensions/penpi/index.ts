@@ -314,8 +314,8 @@ export function stockAdapterSettingsPaths(cwd: string = process.cwd(), agentDir:
 			const packages = (JSON.parse(readFileSync(p, "utf8")) as { packages?: unknown }).packages;
 			return (
 				Array.isArray(packages) &&
-				packages.some((entry) => {
-					const source = typeof entry === "string" ? entry : (entry as { source?: unknown } | null)?.source;
+				packages.some((pkg) => {
+					const source = typeof pkg === "string" ? pkg : (pkg as { source?: unknown } | null)?.source;
 					return typeof source === "string" && /(^|[:/])pi-mcp-adapter(@|$)/.test(source);
 				})
 			);
@@ -848,8 +848,8 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps): void | Promise<voi
 	 * without a token; session_start's orientation reports the missing login as before.
 	 */
 	async function publishTokenBeforeAdapter(config: AdapterConfig, cfg: PenfieldConfig): Promise<void> {
-		const entry = config.mcpServers.penfield as { lifecycle?: string } | undefined;
-		if (!entry || (entry.lifecycle !== "eager" && entry.lifecycle !== "keep-alive")) return;
+		const penfield = config.mcpServers.penfield as { lifecycle?: string } | undefined;
+		if (!penfield || (penfield.lifecycle !== "eager" && penfield.lifecycle !== "keep-alive")) return;
 		let token: string | undefined;
 		try {
 			const tokens = deps.makeClient(cfg);
@@ -868,7 +868,7 @@ export function penpiCore(pi: ExtensionAPI, deps: PenpiDeps): void | Promise<voi
 			token = undefined;
 		}
 		if (token) process.env[JWT_ENV] = token;
-		else config.mcpServers.penfield = { ...entry, lifecycle: "lazy" };
+		else config.mcpServers.penfield = { ...penfield, lifecycle: "lazy" };
 	}
 
 	// --- orientation + token sharing (closures over client/status/deps) ---
@@ -1088,7 +1088,7 @@ function composeOrientation(
 function recordedSection(ctx: ExtensionContext): string | undefined {
 	const systems = ctx.sessionManager
 		.getBranch()
-		.flatMap((entry) => (entry.type === "message" && entry.message.role === "system" ? [entry.message] : []));
+		.flatMap((e) => (e.type === "message" && e.message.role === "system" ? [e.message] : []));
 	const wrapped = getCurrentSystemMessage(systems as Message[])?.sections?.[BRIEFING_SECTION];
 	const open = `<${BRIEFING_SECTION}>\n`;
 	const close = `\n</${BRIEFING_SECTION}>`;

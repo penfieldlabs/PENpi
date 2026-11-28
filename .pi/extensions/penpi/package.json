@@ -16,11 +16,13 @@
 		"test": "vitest run"
 	},
 	"dependencies": {
+		"@huggingface/tokenizers": "0.2.0",
 		"@modelcontextprotocol/sdk": "1.32.1",
+		"js-tiktoken": "1.0.21",
 		"pi-mcp-adapter": "7.0.0"
 	},
 	"devDependencies": {
-		"undici": "8.12.3",
+		"undici": "8.12.4",
 		"vitest": "4.1.12"
 	}
 }

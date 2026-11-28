@@ -176,11 +176,12 @@ new group, or as not counted (the API answers 404 for a model it does not know).
 **The committed counts.** `claude-counts.txt`, beside the script, holds Claude's counts of the full sweep: one row per
 case, the first 8 hex digits of the SHA-256 of the case's text, then the real tokens of each group. The groups are the
 models that count every case alike. `claude-counts.test.ts`, in the engine suite, re-prices them with the floor in your
-checkout, with no network. It fails if any case is below 0.25 of the floor in any group, and if a case of the sweep has
-no row, as a new case or one whose text changed has none. Seven cases are read from repository files
-(`agent-session.ts`, `README.md`, `package-lock.json`), so their text changes whenever the file does, and it differs on
-stock upstream: the test checks each of them when its text has a row, and otherwise skips it, as a skipped test named
-after the case and its file (shown by the verbose reporter). To count such cases:
+checkout, with no network. It fails if any case is below 0.25 of the floor in any group; if a group has more cases
+below 0.5 than its pinned band, or any below its pinned lowest (each sweep size has its own figures, `KNOWN` in the
+test); and if a case of the sweep has no row, as a new case or one whose text changed has none. Seven cases take their
+text from repository files (`agent-session.ts`, `README.md`, `package-lock.json`); they read frozen copies of them in
+`floor-sweep-texts/`, as the files were at 0.8.0, so their text stays the one counted, on stock upstream too. To count
+a new or changed case:
 
 ```sh
 MODELS=all node $F sweep       # counts only what is new or changed; the rest is already in OUT

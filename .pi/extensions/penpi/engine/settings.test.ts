@@ -34,6 +34,7 @@ describe("engine settings (penpi block)", () => {
 			serializeAs: { "faux/x": "openai-completions" },
 			replayedReasoning: { "openrouter/z-ai/glm-5.3-flash": "counted" },
 			reasoningOnlyContinuation: "continue",
+			tokenizer: "local",
 			pinUserMessages: { capFraction: 0.05, sources: ["interactive"] },
 			// PENpi's own settings are not engine settings and are left alone.
 			penfield: { env: "prod" },
@@ -49,8 +50,16 @@ describe("engine settings (penpi block)", () => {
 			serializeAs: { "faux/x": "openai-completions" },
 			replayedReasoning: { "openrouter/z-ai/glm-5.3-flash": "counted" },
 			reasoningOnlyContinuation: "continue",
+			tokenizer: "local",
 			pinUserMessages: { capFraction: 0.05, sources: ["interactive"] },
 		});
+	});
+
+	it("tokenizer takes auto, local or estimate", () => {
+		for (const v of ["auto", "local", "estimate"]) expect(read({ tokenizer: v }).options.tokenizer).toBe(v);
+		const { options, warnings } = read({ tokenizer: "offline" });
+		expect(options.tokenizer).toBeUndefined();
+		expect(warnings).toEqual(['ignoring penpi.tokenizer="offline": "auto", "local" or "estimate"']);
 	});
 
 	it("0 or null disables the ceiling and null disables the pin", () => {

@@ -75,12 +75,19 @@ Narrow the matrix for a quick look (all runs of one mix at 60 turns take about 1
 | `E2_SILENT_LIMIT` | `half` | silent server context: `half` = min(window, 200k)/2, `window` = the declared window, or a fraction |
 | `E2_ENGINE_OPTIONS` | | JSON merged into `createContextEngine` options |
 | `E2_DUMP_DROPPED` | | `1`: each silently truncated request's removed segments (role, tokens, first characters) in `<id>.dropped.jsonl` |
+| `E2_TEMPLATE_TOKENS` | `0` | 0.9.0: tokens a chat template adds to every message on top of the rendered one, which an engine counting exactly has to learn in its ratio |
+| `E2_CACHE_SPLIT` | | `1`: usage reported split, as Anthropic's API does: `cacheRead` holds the tokens of the segments shared with the previous accepted request, `input` the rest |
+| `PENPI_TOKENIZER` | `estimate` | 0.9.0: the engine's tokenizer mode; E2 measures the estimate path unless a run sets it |
+| `E2_EXACT` | | 0.9.0, `1` with `PENPI_TOKENIZER=local`: the exact mode. The engine counts the faux model with the simulator's own tokenizer (o200k, or GLM-5.3-Flash's verified file placed by its SHA-256 in `E2_ENGINE_TOKENIZER_DIR`, default `.cache/engine-tokenizers`) |
+| `E2_REASONING_TEMPLATE` | | 0.9.0, `drop`: the simulator renders reasoning only after the last user message (Qwen 3's rule), and the exact mode pins that rule |
+| `E2_PLANTED` | | 0.9.0, `1`: one tool result in four carries a line of special-token strings (added tokens and a rendered-prompt log), counted as the provider's file does |
 | `E2_REASONING_COUNT` | `sent` | reasoning mode: `ignored`, the provider ignores replayed reasoning and the model is set to match (`replayedReasoning: "ignored"`); `misconfigured`, the provider counts it but the model is set to `"ignored"`. Run ids get `-ignored` / `-misconfigured`. Misconfigured runs are reported in their own summary section (C1, C2, rejections, overflow retries, qualifying pairs, median share, warned) and gated only on the warning; the summary fails when one has no replay warning, or any other run has one. Run them at thinking high (`E2_THINKING=high`): at minimal, a run may not reach the 20 qualifying pairs the check needs and then fails for a missing warning |
 | `E2_SYSTEM_SECTION_TOKENS` | | a system prompt section (`<penpi-memory>`, set in `before_agent_start` as PENpi sets its briefing) of about this many tokens on every run; run ids get `.section<N>` |
 | `E2_PROBE_CONFIRMATIONS` | `2` | C1 allowance per learned limit is 1 + this (the engine's `probeConfirmations` default); `E2_ENGINE_OPTIONS.probeConfirmations` wins |
 | `E2_WORKERS` | `2` | parallel vitest workers (one mix file each) |
 | `E2_OUT` | `.cache/results/<label>-<sha12>` | results directory |
 | `E2_SKIP_SETUP`, `E2_SKIP_SELFTEST` | | skip those steps |
+| `E2_FRESH` | | `1` reruns every run; by default a retry into the same results directory keeps the runs that passed under the same checkout, engine, corpus and settings, and reruns the missing, failed or changed ones (`resume.ts`) |
 | `E2_ASSERT=0` | | record FAILs without failing the vitest test (the summary still exits 1) |
 
 **Runtime on 2 cores** (`E2_WORKERS=2`, measured on the machine E2 was built on): one `run-e2.sh`
@@ -246,14 +253,16 @@ corpus, such as one with `E2_CORPUS_REV` set, is not excused.
   (`run-e2.sh` with no selection). In any other set, such as a selection or the misconfigured runs, an entry whose
   run is not there is reported as not run. Anything an entry does not cover fails as before.
 
-Today's entries, both C6 lag 4 (limit 3) until 0.9.0, measured on the upstream v1.5.1 corpus (`dd30101cf`, the
-`e2-corpus:` pin). 0.8.0 passes both runs at lag 3 on the v1.5.0 corpus (`f9a263655`), and 0.7.0's engine fails
-both the same way on the v1.5.1 corpus:
+Today's entry, C6 lag 4 (limit 3) until 0.9.0, measured on the upstream v1.5.1 corpus (`dd30101cf`, the
+`e2-corpus:` pin). 0.8.0 passes the run at lag 3 on the v1.5.0 corpus (`f9a263655`), and 0.7.0's engine fails it
+the same way on the v1.5.1 corpus:
 
 - data.o200k.1m.silent-messages: call 47 is truncated by 398 tokens and reads as ordinary growth; on v1.5.0 that
   request was under the server's limit. Accepted since 0.6.0. It fails C6 alone because ADR 0034 names call 31.
-- data.o200k.32k.silent-front: the truncation starts at call 6, earlier than on v1.5.0, and two of the truncated
-  requests cannot be told from honest growth.
+
+0.8.0 had a second entry until 0.9.0 on that corpus: data.o200k.32k.silent-front, whose truncation starts at call
+6, earlier than on v1.5.0, with two truncated requests that could not be told from honest growth. 0.9.0's exact
+repeat within its allowance (ADR 0035) makes call 12 evidence and detects the run at lag 3; the entry is deleted.
 
 0.7.0 had two other entries, until 0.8.0, on the v1.5.0 corpus: data.o200k.1m.silent-messages and
 research.glm.32k.silent-messages (new with Pi 1.5.0's shorter system prompt). 0.8.0's marginal pair (ADR 0033)

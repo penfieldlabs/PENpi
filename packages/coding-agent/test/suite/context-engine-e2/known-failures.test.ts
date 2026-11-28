@@ -112,15 +112,15 @@ describe("E2 known failures", () => {
 		expect(validateKnownFailures(loadKnownFailures())).toEqual([]);
 	});
 
-	it("the repository has exactly 0.8.0's two entries, each valid, KNOWN at 0.8.0 and EXPIRED at 0.9.0", () => {
+	it("the repository has exactly the one entry left of 0.8.0's two, valid, KNOWN at 0.8.0 and EXPIRED at 0.9.0", () => {
 		// 0.7.0 accepted two C6 failures on the upstream v1.5.0 corpus (f9a263655) until 0.8.0:
 		// data.o200k.1m.silent-messages and research.glm.32k.silent-messages. 0.8.0's marginal pair (ADR 0033) detects
 		// them at lag 3 and 2, and those entries are gone. On the upstream v1.5.1 corpus (dd30101cf, the e2-corpus: pin)
-		// two runs fail C6 alone at lag 4, accepted for 0.8.0 until 0.9.0 by decision.
+		// two runs fail C6 alone at lag 4, accepted for 0.8.0 until 0.9.0 by decision. 0.9.0's exact repeat within its
+		// allowance (ADR 0035) detects data.o200k.32k.silent-front at lag 3 there, and its entry is gone.
 		const entries = loadKnownFailures();
 		expect(entries.map((e) => [e.run, e.criterion, e.maxLag, e.corpus, e.until])).toEqual([
 			["data.o200k.1m.silent-messages", "C6 detection-lag", 4, PIN, "0.9.0"],
-			["data.o200k.32k.silent-front", "C6 detection-lag", 4, PIN, "0.9.0"],
 		]);
 		for (const e of entries) expect(validateKnownFailures([e])).toEqual([]);
 		for (const { run: name } of entries) {

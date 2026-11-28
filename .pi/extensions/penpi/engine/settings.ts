@@ -67,6 +67,8 @@ const ENGINE_OTHER_SETTINGS = [
 	"serializeAs",
 	"replayedReasoning",
 	"reasoningOnlyContinuation",
+	"tokenizer",
+	"countApi",
 	"pinUserMessages",
 	"faults",
 	"production",
@@ -277,6 +279,16 @@ export function engineOptionsFromSettings(
 		const v = s.reasoningOnlyContinuation;
 		if (v === "answer" || v === "continue") out.reasoningOnlyContinuation = v;
 		else warn(`ignoring ${label("reasoningOnlyContinuation")}=${JSON.stringify(v)}: "answer" or "continue"`);
+	}
+	if (s.tokenizer !== undefined) {
+		const v = s.tokenizer;
+		if (v === "auto" || v === "local" || v === "estimate") out.tokenizer = v;
+		else warn(`ignoring ${label("tokenizer")}=${JSON.stringify(v)}: "auto", "local" or "estimate"`);
+	}
+	if (s.countApi !== undefined) {
+		const v = s.countApi;
+		if (v === "auto" || v === "off") out.countApi = v;
+		else warn(`ignoring ${label("countApi")}=${JSON.stringify(v)}: "auto" or "off"`);
 	}
 	if (s.pinUserMessages !== undefined) {
 		const v = pinSettings(s.pinUserMessages, warn);

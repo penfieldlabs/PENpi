@@ -4,6 +4,7 @@ import {
 	clearsMarginals,
 	completesMarginalPair,
 	meetsSizeGuard,
+	repeatsMaximum,
 	replayRecommendation,
 	replayVerdict,
 } from "./detector.ts";
@@ -111,5 +112,25 @@ describe("ADR 0033: the size guard of evidence and of the pair's marginal side",
 		expect(meetsSizeGuard(11_312, 18_434)).toBe(false);
 		// Nothing reported yet.
 		expect(meetsSizeGuard(1_000, 0)).toBe(true);
+	});
+});
+
+describe("the exact-repeat rule: a request that may have reached the limit reports exactly it again", () => {
+	it("expected above the maximum, or below it within the allowance, counts; further below does not", () => {
+		expect(repeatsMaximum(17_987, 16_384, 16_384, 0.05)).toBe(true);
+		// E2's data.o200k.32k.silent-front on the v1.5.1 corpus: call 12 lost 41 tokens and was expected under the
+		// maximum, at 0.963 of it.
+		expect(repeatsMaximum(15_781, 16_384, 16_384, 0.05)).toBe(true);
+		expect(repeatsMaximum(15_565, 16_384, 16_384, 0.05)).toBe(true);
+		expect(repeatsMaximum(15_564, 16_384, 16_384, 0.05)).toBe(false);
+		// With no allowance, as before: only above.
+		expect(repeatsMaximum(15_781, 16_384, 16_384, 0)).toBe(false);
+	});
+
+	it("only exactly the maximum, and not when the estimate is far above it", () => {
+		expect(repeatsMaximum(17_000, 16_383, 16_384, 0.05)).toBe(false);
+		expect(repeatsMaximum(17_000, 16_385, 16_384, 0.05)).toBe(false);
+		expect(repeatsMaximum(1.6 * 16_384, 16_384, 16_384, 0.05)).toBe(true);
+		expect(repeatsMaximum(1.61 * 16_384, 16_384, 16_384, 0.05)).toBe(false);
 	});
 });

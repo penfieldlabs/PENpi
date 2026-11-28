@@ -40,7 +40,7 @@ export function installPenpiEngine(
 			// The 0.4 orientation briefing message is a system prompt section now (index.ts); old sessions keep it.
 			hiddenCustomTypes: [BRIEFING_CUSTOM_TYPE],
 			stats,
-			...(writer ? { log: writer.line } : {}),
+			...(writer ? { log: writer.line, report: writer.report } : {}),
 		},
 		{
 			registerCommand: wiring.registerCommand,

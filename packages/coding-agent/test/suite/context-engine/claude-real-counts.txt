@@ -1,0 +1,17 @@
+# Claude's real tokens for twelve real tool outputs (claude-real-texts/), counted with Anthropic's token counter
+# (count_tokens, free) and read by claude-real-counts.test.ts. Each output is one user message; the model's framing,
+# measured with a one-character message, is taken off (8 tokens on Haiku 5.5, 11 on Opus 4.7). The outputs are
+# repository content only: file reads, git ls-files, find and grep, with no local paths and no names.
+# A row: the output's name, its tokens on claude-haiku-5-5, its tokens on claude-opus-4-7.
+read-ts-detector	7778	7778
+read-ts-estimator	5393	5394
+read-md-adr	5181	5181
+read-json-package	2520	2520
+read-json-tsconfig	272	272
+read-yaml-ci	2645	2645
+read-sh	2478	2478
+read-js-script	1727	1727
+git-ls-files	5352	5352
+find	12121	12122
+grep-n	3183	3183
+grep-exports	3284	3284
